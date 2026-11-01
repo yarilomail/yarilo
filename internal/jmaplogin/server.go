@@ -158,6 +158,7 @@ var serverTimeout = 60 * time.Second
 
 // Serve runs until ctx is cancelled, then drains in-flight requests.
 func (s *Server) Serve(ctx context.Context) error {
+	var fresh sync.Map // connections that have sent no request yet
 	srv := &http.Server{
 		Addr:              s.opts.Addr,
 		Handler:           s.mux,
@@ -166,6 +167,13 @@ func (s *Server) Serve(ctx context.Context) error {
 		ReadTimeout:       serverTimeout,
 		WriteTimeout:      serverTimeout,
 		IdleTimeout:       120 * time.Second,
+		ConnState: func(c net.Conn, st http.ConnState) {
+			if st == http.StateNew {
+				fresh.Store(c, struct{}{})
+			} else {
+				fresh.Delete(c)
+			}
+		},
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			st := &connState{ip: hostOnly(c.RemoteAddr().String()), conn: c}
 			s.conns.Store(c, st)
@@ -207,7 +215,21 @@ func (s *Server) Serve(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		done := make(chan error, 1)
+		go func() { done <- srv.Shutdown(shutdownCtx) }()
+		// net/http waits 5 s on a connection that has sent no request, such as
+		// the spare one a client's pool dials; it has nothing in flight (#2462).
+		for {
+			fresh.Range(func(c, _ any) bool {
+				c.(net.Conn).Close() //nolint:errcheck
+				return true
+			})
+			select {
+			case err := <-done:
+				return err
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
