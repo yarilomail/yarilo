@@ -5,7 +5,7 @@ platform: linux
 version: ${VERSION}
 section: mail
 priority: optional
-maintainer: "YariloMail <0k.a.b.a0@gmail.com>"
+maintainer: "YariloMail <bsdport@yarilomail.org>"
 description: |
   Multi-process IMAP, POP3, LMTP, Submission and JMAP mail server.
   Login proxies terminate TLS, per-protocol session backends serve the
