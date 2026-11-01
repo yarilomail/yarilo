@@ -32,6 +32,7 @@ func TestTheExamplesLoadWithoutAWarning(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join("..", "..", "deploy", "compose", "config", "yarilo.yaml"),
 		filepath.Join("..", "..", "config", "yarilo.yaml"),
+		filepath.Join("..", "..", "deploy", "systemd", "yarilo.yaml"),
 	} {
 		var buf bytes.Buffer
 		prev := slog.Default()

@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+systemctl daemon-reload >/dev/null 2>&1 || true
+[ "$1" = purge ] || exit 0
+
+rm -rf /run/yarilo /var/lib/yarilo /etc/yarilo
+# Mail is never deleted: with messages left, the store and its owner stay.
+rmdir /var/mail/vhosts 2>/dev/null || true
+if [ -d /var/mail/vhosts ]; then
+	echo "yarilo: /var/mail/vhosts still holds mail; it and the yarilo user are kept" >&2
+	exit 0
+fi
+for u in yarilo-login yarilo-auth yarilo; do
+	getent passwd "$u" >/dev/null && userdel "$u"
+	getent group "$u" >/dev/null && groupdel "$u"
+done
+exit 0
