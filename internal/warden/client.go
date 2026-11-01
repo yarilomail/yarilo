@@ -203,7 +203,11 @@ func (c *Conn) Dump() (*StateDump, error) {
 			}
 			counter, _ := strconv.Atoi(fields[2])
 			live, _ := strconv.Atoi(fields[3])
-			d.Counters = append(d.Counters, CounterStat{UserIP: fields[1], Counter: counter, Live: live})
+			cs := CounterStat{UserIP: fields[1], Counter: counter, Live: live}
+			if len(fields) > 4 {
+				cs.Service = fields[4]
+			}
+			d.Counters = append(d.Counters, cs)
 		case "PEN":
 			if len(fields) < 4 {
 				continue

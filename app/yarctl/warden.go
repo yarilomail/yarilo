@@ -52,6 +52,7 @@ func wardenDump(args []string) error {
 
 	var d struct {
 		Counters []struct {
+			Service string `json:"service"`
 			UserIP  string `json:"user_ip"`
 			Counter int    `json:"counter"`
 			Live    int    `json:"live"`
@@ -72,16 +73,21 @@ func wardenDump(args []string) error {
 	}
 
 	if len(d.Counters) > 0 {
-		sort.Slice(d.Counters, func(i, j int) bool { return d.Counters[i].UserIP < d.Counters[j].UserIP })
+		sort.Slice(d.Counters, func(i, j int) bool {
+			if d.Counters[i].UserIP != d.Counters[j].UserIP {
+				return d.Counters[i].UserIP < d.Counters[j].UserIP
+			}
+			return d.Counters[i].Service < d.Counters[j].Service
+		})
 		tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-		fmt.Fprintln(tw, "USER@IP\tCOUNTER\tLIVE\tDRIFT")
+		fmt.Fprintln(tw, "USER@IP\tPROTOCOL\tCOUNTER\tLIVE\tDRIFT")
 		for _, c := range d.Counters {
 			drift := c.Counter - c.Live
 			mark := ""
 			if drift != 0 {
 				mark = " *"
 			}
-			fmt.Fprintf(tw, "%s\t%d\t%d\t%d%s\n", c.UserIP, c.Counter, c.Live, drift, mark)
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d%s\n", c.UserIP, c.Service, c.Counter, c.Live, drift, mark)
 		}
 		tw.Flush()
 	}

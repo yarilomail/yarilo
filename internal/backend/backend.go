@@ -167,8 +167,9 @@ func New(cfg *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("backend: namespace mailboxes: %w", err)
 	}
-	// ---- shared connection limiter (IMAP + POP3) ----
-	connLimiter := connlimit.New(cfg.General.Limits.MaxUserIPConnections)
+	// ---- connection limiters, one per protocol as warden counts them (#2457) ----
+	imapConnLimiter := connlimit.New(cfg.MaxUserIPConnections("imap"))
+	pop3ConnLimiter := connlimit.New(cfg.MaxUserIPConnections("pop3"))
 
 	// ---- HAProxy shared nets ----
 	haproxyNets := parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks)
@@ -295,7 +296,7 @@ func New(cfg *config.Config) (*Server, error) {
 			MasterTLS:          authTLS,
 			IdleNotifyInterval: time.Duration(p.IdleNotifyInterval) * time.Second,
 			MaxLineLength:      p.MaxLineLength,
-			ConnLimit:          connLimiter,
+			ConnLimit:          imapConnLimiter,
 			// warden push of the SELECTed mailbox, used by `yarctl who`
 			WardenAddr:           cfg.WardenService.ClientAddr(),
 			WardenEventQueue:     cfg.WardenService.EventQueueSize,
@@ -373,7 +374,7 @@ func New(cfg *config.Config) (*Server, error) {
 			DeletedFlag:        p.DeletedFlag,
 			SaveUIDL:           p.SaveUIDL,
 			LockSession:        p.LockSession,
-			ConnLimit:          connLimiter,
+			ConnLimit:          pop3ConnLimiter,
 			Locker:             locker,
 			FailureDelay:       time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 

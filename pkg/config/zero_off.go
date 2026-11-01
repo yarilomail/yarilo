@@ -214,6 +214,11 @@ func checkNumbers(cfg *Config) error {
 			}
 		}
 	}
+	for _, name := range UserIPProtocols {
+		if v := cfg.Protocol.userIPOverride(name); v != nil && *v < 0 {
+			return fmt.Errorf("config: protocol.%s.mail_max_userip_connections: %d is negative; 0 lifts the limit", name, *v)
+		}
+	}
 	// No size means no rotation by size, which an mdbox has no use for.
 	for path, raw := range map[string]string{"storage.mdbox_rotate_size": cfg.Storage.MdboxRotateSize,
 		"fts.fts_detection_sample_bytes": cfg.FTS.DetectionSampleBytesRaw} {

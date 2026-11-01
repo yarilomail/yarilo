@@ -117,6 +117,7 @@ type Server struct {
 	sessionTTL    time.Duration
 	sweepInterval time.Duration
 	penaltyDecay  time.Duration
+	limits        ConnLimits
 
 	// state holds sessions, penalties and the kick bus, in memory or
 	// Redis; the Redis backend fans kicks out cross-replica via Pub/Sub.
@@ -141,20 +142,27 @@ func WithPenaltyDecay(d time.Duration) ServerOption {
 	return func(s *Server) { s.penaltyDecay = d }
 }
 
-// NewServer creates an warden server with the given per-user@IP connection limit.
-// max ≤ 0 means unlimited (server still runs but always returns OK).
+// WithConnLimits gives each protocol its own per-user@IP limit (#2457).
+func WithConnLimits(l ConnLimits) ServerOption {
+	return func(s *Server) { s.limits = l }
+}
+
+// NewServer creates an warden server with the given per-user@IP connection limit,
+// counted apart per protocol. max ≤ 0 means unlimited (server still runs but
+// always returns OK).
 func NewServer(max int, opts ...ServerOption) *Server {
 	s := &Server{
 		sessionTTL:    DefaultSessionTTL,
 		sweepInterval: DefaultSweepInterval,
 		penaltyDecay:  DefaultPenaltyDecay,
+		limits:        ConnLimits{Default: max},
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	// build after options so decay/TTL/limit reflect them
 	if s.state == nil {
-		s.state = newMemoryBackend(s.penaltyDecay, s.sessionTTL, max)
+		s.state = newMemoryBackend(s.penaltyDecay, s.sessionTTL, s.limits)
 	}
 	return s
 }
@@ -364,7 +372,7 @@ func (s *Server) handleDump(conn net.Conn) {
 		return
 	}
 	for _, c := range d.Counters {
-		fmt.Fprintf(conn, "CNT\t%s\t%d\t%d\n", c.UserIP, c.Counter, c.Live)
+		fmt.Fprintf(conn, "CNT\t%s\t%d\t%d\t%s\n", c.UserIP, c.Counter, c.Live, c.Service)
 	}
 	for _, p := range d.Penalties {
 		fmt.Fprintf(conn, "PEN\t%s\t%d\t%d\n", p.IP, p.Count, p.TTLSecs)
