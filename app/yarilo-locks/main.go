@@ -152,9 +152,8 @@ func buildBackend(lcfg config.LocksServiceConfig) (locks.Backend, func() bool, e
 	}
 }
 
-// buildListener returns the net.Listener for the mode: embedded a Unix socket
-// (one a dead process left is replaced, a live one's is not), remote a TCP
-// listener wrapped in cfg.InternalTLS mTLS.
+// buildListener returns the mode's listener: embedded a Unix socket by the
+// pkg/sockaddr rules, remote a TCP listener wrapped in cfg.InternalTLS mTLS.
 func buildListener(cfg *config.Config, lcfg config.LocksServiceConfig) (net.Listener, error) {
 	switch lcfg.Mode {
 	case "embedded":
