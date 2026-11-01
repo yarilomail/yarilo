@@ -16,7 +16,7 @@ import (
 func TestPOP3IsWiredWithTheMutationHooks(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.MaildirRoot = t.TempDir()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

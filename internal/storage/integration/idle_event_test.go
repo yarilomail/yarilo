@@ -107,7 +107,7 @@ func mustShortTempDir(t *testing.T) string {
 func waitDialUnix(path string) bool {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("unix", path, 50*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(context.Background(), "unix", path)
 		if err == nil {
 			_ = c.Close()
 			return true

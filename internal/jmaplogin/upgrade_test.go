@@ -54,9 +54,9 @@ func openUpgrade(t *testing.T, base string, client *tls.Config) net.Conn {
 	var c net.Conn
 	var err error
 	if client != nil {
-		c, err = tls.Dial("tcp", addr, client)
+		c, err = (&tls.Dialer{Config: client}).DialContext(t.Context(), "tcp", addr)
 	} else {
-		c, err = net.Dial("tcp", addr)
+		c, err = new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	}
 	if err != nil {
 		t.Fatal(err)

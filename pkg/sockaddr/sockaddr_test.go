@@ -105,7 +105,7 @@ func TestASocketWithoutTheRightsRefusesTheConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	if c, err := net.Dial("unix", path); err == nil {
+	if c, err := new(net.Dialer).DialContext(t.Context(), "unix", path); err == nil {
 		c.Close()
 		t.Fatal("connected to a socket whose owner bits grant nothing")
 	}
@@ -142,7 +142,7 @@ func TestAnUnknownGroupFailsTheListen(t *testing.T) {
 // A socket file left by a dead process is replaced.
 func TestAStaleSocketIsReplaced(t *testing.T) {
 	path := sockPath(t)
-	old, err := net.Listen("unix", path)
+	old, err := new(net.ListenConfig).Listen(t.Context(), "unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestAStaleSocketIsReplaced(t *testing.T) {
 		t.Fatalf("stale socket not replaced: %v", err)
 	}
 	defer ln.Close()
-	c, err := net.Dial("unix", path)
+	c, err := new(net.Dialer).DialContext(t.Context(), "unix", path)
 	if err != nil {
 		t.Fatalf("new socket not accepting: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestALiveSocketIsKept(t *testing.T) {
 			c.Close()
 		}
 	}()
-	c, err := net.Dial("unix", path)
+	c, err := new(net.Dialer).DialContext(t.Context(), "unix", path)
 	if err != nil {
 		t.Fatalf("the live socket stopped accepting: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestASocketThisProcessCannotOpenIsKept(t *testing.T) {
 		t.Skip("root opens whatever the mode")
 	}
 	path := sockPath(t)
-	old, err := net.Listen("unix", path)
+	old, err := new(net.ListenConfig).Listen(t.Context(), "unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}

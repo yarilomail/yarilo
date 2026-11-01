@@ -30,7 +30,7 @@ func (lmtpOff) UsesRequest() bool { return true }
 // The recipient lookup names lmtp, so a userdb rule refuses the delivery; the
 // owner lookup names nothing and is answered (#2227).
 func TestTheRecipientLookupNamesLMTP(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

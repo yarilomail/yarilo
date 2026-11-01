@@ -36,7 +36,7 @@ func registered(t *testing.T, h http.Handler, path string) bool {
 	if !ok {
 		t.Fatalf("telemetry handler is %T, not *http.ServeMux; this test can no longer see the routing table", h)
 	}
-	_, pattern := mux.Handler(httptest.NewRequest(http.MethodGet, path, nil))
+	_, pattern := mux.Handler(httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	return pattern != ""
 }
 
@@ -44,7 +44,7 @@ func registered(t *testing.T, h http.Handler, path string) bool {
 func status(t *testing.T, h http.Handler, path string) int {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	return rec.Code
 }
 

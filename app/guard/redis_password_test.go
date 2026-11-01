@@ -18,7 +18,7 @@ var redisUsers = []string{"yarilo-auth", "yarilo-warden", "yarilo-locks", "yaril
 // With redis.passwordSecret set, the password reaches every Redis user as
 // YARILO_REDIS_PASSWORD and the ConfigMap names it only by that variable.
 func TestRedisPasswordComesFromTheSecret(t *testing.T) {
-	out, err := exec.Command("helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	out, err := exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

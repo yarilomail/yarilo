@@ -19,7 +19,7 @@ import (
 // and which counts BACKEND-UNREACHABLE reports.
 func rerouteStubDirector(t *testing.T, lookupAddr func() string, reports *int32) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func rerouteStubDirector(t *testing.T, lookupAddr func() string, reports *int32)
 // deadLoopbackAddr returns a loopback address with nothing listening.
 func deadLoopbackAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestReroute_SameBackendDoesNotLoop(t *testing.T) {
 func TestReroute_ToLiveBackendSucceeds(t *testing.T) {
 	dead := deadLoopbackAddr(t)
 
-	live, err := net.Listen("tcp", "127.0.0.1:0")
+	live, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func blackholing(t *testing.T, dead string) {
 func TestReroute_ABlackholedAddressLeavesTheRerouteItsShare(t *testing.T) {
 	dead := "10.255.255.1:10143"
 	blackholing(t, dead)
-	live, err := net.Listen("tcp", "127.0.0.1:0")
+	live, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

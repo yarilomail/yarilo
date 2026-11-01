@@ -41,7 +41,7 @@ func dboxMdboxLocker(t *testing.T) func() locks.Locker {
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("unix", sock, 50*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(ctx, "unix", sock)
 		if err == nil {
 			_ = c.Close()
 			break

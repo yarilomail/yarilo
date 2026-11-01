@@ -52,14 +52,14 @@ func startSCRAMServer(t *testing.T, auth protocol.Authenticator) *imapclient.Cli
 		Mailbox: maildir.New(), Index: file.New(),
 		Resolver: resolver, AuthRelay: authtest.RelayTo(t, auth),
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +183,11 @@ func TestIMAP_SCRAMSha256_RawWire(t *testing.T) {
 		Mailbox: maildir.New(), Index: file.New(),
 		Resolver: resolver, AuthRelay: authtest.RelayTo(t, auth),
 	})
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, _ := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	go srv.Serve(ln) //nolint:errcheck
 	defer ln.Close()
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,11 +219,11 @@ func TestIMAP_SCRAMSha256_WrongPasswordRejected(t *testing.T) {
 		Mailbox: maildir.New(), Index: file.New(),
 		Resolver: resolver, AuthRelay: authtest.RelayTo(t, auth),
 	})
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, _ := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	go srv.Serve(ln) //nolint:errcheck
 	defer ln.Close()
 
-	conn, _ := net.Dial("tcp", ln.Addr().String())
+	conn, _ := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	defer conn.Close()
 	br := bufio.NewReader(conn)
 	br.ReadString('\n') //nolint:errcheck

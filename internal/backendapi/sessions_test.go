@@ -17,7 +17,7 @@ import (
 // a subscription channel on "kick:imap".
 func startKickWarden(t *testing.T) (string, <-chan string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -33,7 +33,7 @@ func startKickWarden(t *testing.T) (string, <-chan string) {
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 		if err == nil {
 			_ = c.Close()
 			break

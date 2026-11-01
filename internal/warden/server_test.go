@@ -14,7 +14,7 @@ import (
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func startServer(t *testing.T, max int) (addr string, cancel context.CancelFunc)
 
 func dial(t *testing.T, addr string) (*bufio.Scanner, net.Conn) {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestHandshake(t *testing.T) {
 	go srv.ListenAndServe(ctx, addr, nil) //nolint:errcheck
 	time.Sleep(20 * time.Millisecond)
 
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

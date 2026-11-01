@@ -52,7 +52,7 @@ func (p *recordingPolicy) first(t *testing.T) protocol.PolicyRequest {
 // policyAuth runs a real auth service with the policy before the exchange.
 func policyAuth(t *testing.T, p *recordingPolicy) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestTheAuthLineSaysWhatTheConnectionIs(t *testing.T) {
 	got := make(chan string, 4)
 	srv := New(testOpts(Options{Protocol: ProtocolIMAPS, AuthAddr: capturingAuth(t, got), BackendAddr: "127.0.0.1:1",
 		LocalIP: "127.0.0.1", ExtTLS: serverTLS}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestTheAuthLineSaysWhatTheConnectionIs(t *testing.T) {
 		}
 	}()
 	clientTLS.ServerName = "mail.example.org"
-	c, err := tls.Dial("tcp", ln.Addr().String(), clientTLS)
+	c, err := (&tls.Dialer{Config: clientTLS}).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestARelayedRefusalCarriesItsReason(t *testing.T) {
 // capturingAuth answers every AUTH with FAIL and hands the line over.
 func capturingAuth(t *testing.T, got chan<- string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestATrustedPeerLogsInWithoutPenalty(t *testing.T) {
 			_, nets, _ := net.ParseCIDR(tc.trusted)
 			srv := New(testOpts(Options{Protocol: ProtocolIMAP, AuthAddr: capturingAuth(t, got), BackendAddr: "127.0.0.1:1",
 				LocalIP: "127.0.0.1", XClientNets: []*net.IPNet{nets}}))
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -315,7 +315,7 @@ func TestATrustedPeerLogsInWithoutPenalty(t *testing.T) {
 					srv.handleConn(c)
 				}
 			}()
-			c, err := net.Dial("tcp", ln.Addr().String())
+			c, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -342,13 +342,13 @@ func TestBehindAProxyTheRealPeerIsTheProxy(t *testing.T) {
 	_, loopback, _ := net.ParseCIDR("127.0.0.0/8")
 	srv := New(testOpts(Options{Protocol: ProtocolIMAP, AuthAddr: capturingAuth(t, got), BackendAddr: "127.0.0.1:1",
 		LocalIP: "127.0.0.1", HAProxy: true, HAProxyTimeout: 5 * time.Second, HAProxyNets: []*net.IPNet{loopback}}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	defer ln.Close() //nolint:errcheck
-	c, err := net.Dial("tcp", ln.Addr().String())
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,13 +381,13 @@ func authLineOver(t *testing.T, opts Options, lines ...string) string {
 	got := make(chan string, 4)
 	opts.Protocol, opts.AuthAddr, opts.BackendAddr, opts.LocalIP = ProtocolIMAP, capturingAuth(t, got), "127.0.0.1:1", "127.0.0.1"
 	srv := New(testOpts(opts))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Serve(ln)                 //nolint:errcheck
 	t.Cleanup(func() { ln.Close() }) //nolint:errcheck
-	c, err := net.Dial("tcp", ln.Addr().String())
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

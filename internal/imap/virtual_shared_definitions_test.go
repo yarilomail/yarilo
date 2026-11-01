@@ -106,7 +106,7 @@ func sharedDefsServer(t *testing.T, defs map[string]string) (net.Conn, *bufio.Re
 	}
 	opts.NamespaceMailboxes = map[string]mailbox.MailboxBackend{"Virtual/": virtualDriver(opts)}
 	srv := imapserver.New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

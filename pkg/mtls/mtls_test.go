@@ -106,7 +106,7 @@ func TestClientConfig_SessionResumption(t *testing.T) {
 			}
 			go func(c net.Conn) {
 				defer c.Close() //nolint:errcheck
-				_ = c.(*tls.Conn).Handshake()
+				_ = c.(*tls.Conn).HandshakeContext(t.Context())
 				_, _ = c.Write([]byte("ok")) // flush the post-handshake session ticket
 				_, _ = io.Copy(io.Discard, c)
 			}(c)
@@ -114,12 +114,13 @@ func TestClientConfig_SessionResumption(t *testing.T) {
 	}()
 
 	dialResumed := func() bool {
-		c, err := tls.Dial("tcp", ln.Addr().String(), cliCfg)
+		nc, err := (&tls.Dialer{Config: cliCfg}).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
+		c := nc.(*tls.Conn)
 		defer c.Close() //nolint:errcheck
-		if err := c.Handshake(); err != nil {
+		if err := c.HandshakeContext(t.Context()); err != nil {
 			t.Fatalf("handshake: %v", err)
 		}
 		// Reading the server's first bytes makes the client process the
@@ -158,7 +159,7 @@ func BenchmarkMTLSHandshake(b *testing.B) {
 			}
 			go func(c net.Conn) {
 				defer c.Close() //nolint:errcheck
-				_ = c.(*tls.Conn).Handshake()
+				_ = c.(*tls.Conn).HandshakeContext(b.Context())
 				_, _ = c.Write([]byte("ok"))
 				_, _ = io.Copy(io.Discard, c)
 			}(c)
@@ -166,10 +167,11 @@ func BenchmarkMTLSHandshake(b *testing.B) {
 	}()
 
 	dial := func(cfg *tls.Config) bool {
-		c, err := tls.Dial("tcp", ln.Addr().String(), cfg)
+		nc, err := (&tls.Dialer{Config: cfg}).DialContext(b.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			b.Fatal(err)
 		}
+		c := nc.(*tls.Conn)
 		defer c.Close() //nolint:errcheck
 		buf := make([]byte, 2)
 		_, _ = io.ReadFull(c, buf)

@@ -12,7 +12,7 @@ import (
 // listener offers is an input of the test rather than a property of the stand.
 func fakeMX(t *testing.T, caps ...string) (host, port string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestTheProxyProbeSenderSharesTheRecipientDomain(t *testing.T) {
 func fakeProxyReader(t *testing.T) (host, port string, got chan string) {
 	t.Helper()
 	got = make(chan string, 4)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

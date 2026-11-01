@@ -43,7 +43,7 @@ func raceTestLockServer(t *testing.T) func() locks.Locker {
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		c, dialErr := net.DialTimeout("unix", sock, 50*time.Millisecond)
+		c, dialErr := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(ctx, "unix", sock)
 		if dialErr == nil {
 			_ = c.Close()
 			break

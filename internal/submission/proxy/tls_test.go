@@ -49,7 +49,7 @@ func testCA(t *testing.T, ips []net.IP, names []string) (caPEM []byte, leaf tls.
 // startTLSRelay serves STARTTLS with leaf and returns its host and port.
 func startTLSRelay(t *testing.T, leaf tls.Certificate) (string, int) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

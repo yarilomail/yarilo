@@ -49,13 +49,13 @@ func startCloningServerAt(t *testing.T, dir string) (*imapclient.Client, dict.Di
 		QuotaClone:  quota.NewClone([]dict.Dict{d}, 50*time.Millisecond),
 	}
 	srv := imapserver.New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func startCloningServerAt(t *testing.T, dir string) (*imapclient.Client, dict.Di
 	}
 	dial := func(t *testing.T) *imapclient.Client {
 		t.Helper()
-		conn2, derr := net.Dial("tcp", ln.Addr().String())
+		conn2, derr := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if derr != nil {
 			t.Fatal(derr)
 		}

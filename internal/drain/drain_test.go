@@ -23,7 +23,7 @@ var servers = map[string]func(context.Context, net.Listener) error{
 // serve starts one server and returns its cancel, its WaitGroup and its address.
 func serve(t *testing.T, run func(context.Context, net.Listener) error) (context.CancelFunc, *sync.WaitGroup, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestTheShutdownWaitsForAnOpenConnection(t *testing.T) {
 	const open = 300 * time.Millisecond
 	for name, run := range servers {
 		cancel, serving, addr := serve(t, run)
-		conn, err := net.Dial("tcp", addr)
+		conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +78,7 @@ func TestTheShutdownWaitsForAnOpenConnection(t *testing.T) {
 // A connection that stays open past the grace does not hold the process.
 func TestTheGraceBoundsTheWait(t *testing.T) {
 	cancel, serving, addr := serve(t, servers["auth"])
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

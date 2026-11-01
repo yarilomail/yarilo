@@ -18,7 +18,7 @@ func TestBindTCPHoldsThePortBeforeReturning(t *testing.T) {
 	defer ln.Close()
 
 	// connectable immediately, even with nothing accepting yet
-	c, err := net.Dial("tcp", ln.Addr().String())
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("port not accepting right after bind: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestBindTCPHoldsThePortBeforeReturning(t *testing.T) {
 
 // A bind failure must be a returned error, not a log line in a goroutine.
 func TestBindTCPFailsLoudlyOnAPortInUse(t *testing.T) {
-	first, err := net.Listen("tcp", "127.0.0.1:0")
+	first, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

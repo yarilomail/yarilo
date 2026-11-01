@@ -39,7 +39,7 @@ func TestTheTLSModeIsOneOfThree(t *testing.T) {
 func plainGreeter(t *testing.T, offerSTLS bool) (host, port string) {
 	t.Helper()
 	_, cert, _, _ := issueMTLSFixtures(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func plainGreeter(t *testing.T, offerSTLS bool) (host, port string) {
 				}
 				fmt.Fprintf(c, "+OK begin TLS\r\n")
 				tc := tls.Server(c, &tls.Config{Certificates: []tls.Certificate{cert}})
-				if herr := tc.Handshake(); herr != nil {
+				if herr := tc.HandshakeContext(t.Context()); herr != nil {
 					return
 				}
 				fmt.Fprintf(tc, "+OK secure\r\n")
@@ -170,7 +170,7 @@ func TestTheGreetingCheckHonoursTheMode(t *testing.T) {
 // starttls asked for and not advertised is a refusal: continuing in the clear
 // would report a surface nobody serves.
 func TestManageSieveRefusesASilentDowngrade(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

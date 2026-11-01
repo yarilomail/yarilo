@@ -26,7 +26,7 @@ func serveOne(t *testing.T, name string) (dict.Dict, dict.Dict) {
 	if err != nil {
 		t.Fatalf("open memory dict: %v", err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func serveOneLimited(t *testing.T, name string, limit int) (dict.Dict, dict.Dict
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestOneFailingCloneTargetDoesNotFailTheSave(t *testing.T) {
 // released, so the dial is refused rather than routed somewhere real.
 func unreachableAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestAServiceRestartCostsNoCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestAServiceRestartCostsNoCommand(t *testing.T) {
 	// a green row that tested nothing.
 	var again net.Listener
 	for i := 0; i < 50; i++ {
-		if again, err = net.Listen("tcp", addr); err == nil {
+		if again, err = new(net.ListenConfig).Listen(ctx, "tcp", addr); err == nil {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -479,7 +479,7 @@ func TestARefusedMutationReleasesItsConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

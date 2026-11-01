@@ -108,7 +108,7 @@ func TestNetworkPoliciesAreTheRoleMatrix(t *testing.T) {
 			"--set", "components.backendAPI.enabled=true", "--set", "components.fts.enabled=true"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := exec.Command("helm", append([]string{"template", "yarilo", "../../helm"}, tc.args...)...).Output()
+			out, err := exec.CommandContext(t.Context(), "helm", append([]string{"template", "yarilo", "../../helm"}, tc.args...)...).Output()
 			if err != nil {
 				t.Fatalf("helm template: %v", err)
 			}

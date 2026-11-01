@@ -34,7 +34,7 @@ func (ts *testServer) acceptCount() int {
 func startTestServer(t *testing.T, max int, opts ...ServerOption) (*testServer, string) {
 	t.Helper()
 	ts := &testServer{Server: NewServer(max, opts...)}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -64,7 +64,7 @@ type testConn struct {
 
 func dialTestConn(t *testing.T, addr string) *testConn {
 	t.Helper()
-	c, err := net.Dial("tcp", addr)
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

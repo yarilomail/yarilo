@@ -153,7 +153,7 @@ func TestHelperEscapingHook(t *testing.T) {
 	if pidFile == "" {
 		t.Skip("helper process; runs only when the hook env is set")
 	}
-	child := exec.Command("sleep", strconv.Itoa(int(escapedDescendantLifetime.Seconds())))
+	child := exec.CommandContext(t.Context(), "sleep", strconv.Itoa(int(escapedDescendantLifetime.Seconds())))
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	// The pipes stay inherited: holding them is what used to hold the wait.
 	child.Stdout, child.Stderr = os.Stdout, os.Stderr

@@ -48,7 +48,7 @@ func TestEveryKeptValuesFileLoads(t *testing.T) {
 			for _, f := range set {
 				args = append(args, "-f", f)
 			}
-			out, err := exec.Command("helm", args...).Output()
+			out, err := exec.CommandContext(t.Context(), "helm", args...).Output()
 			if err != nil {
 				t.Fatalf("helm template: %v", err)
 			}

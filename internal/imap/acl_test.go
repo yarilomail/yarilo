@@ -48,14 +48,14 @@ func startACLServer(t *testing.T, aclEnabled bool) *imapclient.Client {
 		ACLEnabled: aclEnabled,
 	})
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go srv.Serve(ln) //nolint:errcheck
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

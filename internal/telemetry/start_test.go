@@ -12,7 +12,7 @@ import (
 // before it returns, rather than leaving a process without /healthz and
 // nothing but a log line to say so (#2419).
 func TestStartReturnsABindFailure(t *testing.T) {
-	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	taken, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestStartReturnsABindFailure(t *testing.T) {
 }
 
 func TestStartServesOnceItReturns(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

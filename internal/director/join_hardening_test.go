@@ -89,7 +89,7 @@ func TestMembership_Join_DialBackRejectsSpoofedME(t *testing.T) {
 // dial to it fails fast (connection refused), well within dialBackTimeout.
 func closedLoopbackPort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -148,7 +148,7 @@ func newJoinCluster(t *testing.T) *joinCluster {
 		lnOf:     map[string]net.Listener{},
 		srvOf:    map[string]*Server{},
 	}
-	seedLn, err := net.Listen("tcp", "127.0.0.1:0")
+	seedLn, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("seed listen: %v", err)
 	}
@@ -170,7 +170,7 @@ func newJoinCluster(t *testing.T) *joinCluster {
 				if target == "" {
 					return
 				}
-				b, dErr := net.Dial("tcp", target)
+				b, dErr := new(net.Dialer).DialContext(t.Context(), "tcp", target)
 				if dErr != nil {
 					return
 				}
@@ -195,7 +195,7 @@ func (c *joinCluster) addNode() *Server {
 		SeedPollInterval:    300 * time.Millisecond,
 	}))
 	srv.membership.probeTimeout = 500 * time.Millisecond
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		c.t.Fatalf("listen: %v", err)
 	}

@@ -21,7 +21,7 @@ func TestTheDirectorAPIIsMTLSForAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	free, err := net.Listen("tcp", "127.0.0.1:0")
+	free, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

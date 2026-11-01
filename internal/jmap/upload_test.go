@@ -35,7 +35,7 @@ func upload(t *testing.T, s *Server, account string, body io.Reader) *httptest.R
 	if account == "" {
 		path = "/jmap/upload/"
 	}
-	r := httptest.NewRequest(http.MethodPost, path, body)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, body)
 	r.RemoteAddr = trustedPeer
 	r.Header.Set(hdrUser, testUser)
 	r.Header.Set(hdrSessionID, "deadbeefdeadbeef")
@@ -191,7 +191,7 @@ func TestImportRefusesWhatItCannotRead(t *testing.T) {
 
 func uploadAs(t *testing.T, s *Server, user string, body string) string {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodPost, "/jmap/upload/"+jmapcore.AccountID(user)+"/", strings.NewReader(body))
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/jmap/upload/"+jmapcore.AccountID(user)+"/", strings.NewReader(body))
 	r.RemoteAddr = trustedPeer
 	r.Header.Set(hdrUser, user)
 	r.Header.Set(hdrSessionID, "deadbeefdeadbeef")

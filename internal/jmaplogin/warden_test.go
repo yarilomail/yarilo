@@ -100,7 +100,7 @@ func startProxy(t *testing.T, opts Options) string {
 		opts.Auth = fakeAuth{users: map[string]string{"u1": "pw", "u2": "pw"}}
 	}
 
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe listen: %v", err)
 	}
@@ -125,7 +125,7 @@ func startProxy(t *testing.T, opts Options) string {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 		if err == nil {
 			c.Close() //nolint:errcheck
 			return "http://" + addr

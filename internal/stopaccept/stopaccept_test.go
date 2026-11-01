@@ -12,7 +12,7 @@ import (
 // A stopping backend refuses a new session at once, so the login reroutes it;
 // a session already open is not cut by the listener closing (#2260).
 func TestAStoppingBackendRefusesNewSessions(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestAStoppingBackendRefusesNewSessions(t *testing.T) {
 	defer cancel()
 	Serve(ctx, "test", ln, serve)
 
-	open, err := net.Dial("tcp", addr)
+	open, err := new(net.Dialer).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestAStoppingBackendRefusesNewSessions(t *testing.T) {
 	cancel()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 		if err != nil {
 			break
 		}
@@ -73,7 +73,7 @@ func TestAServeThatEndsUnaskedIsFatal(t *testing.T) {
 	exited := make(chan int, 1)
 	exit = func(code int) { exited <- code }
 	t.Cleanup(func() { exit = os.Exit })
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

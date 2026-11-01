@@ -62,7 +62,7 @@ type scriptServer struct {
 
 func (s *scriptServer) listen(t *testing.T, network, addr string) net.Listener {
 	t.Helper()
-	ln, err := net.Listen(network, addr)
+	ln, err := new(net.ListenConfig).Listen(t.Context(), network, addr)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

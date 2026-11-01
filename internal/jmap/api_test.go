@@ -1,6 +1,7 @@
 package jmap
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -15,7 +16,7 @@ import (
 
 // apiRequest is a batch arriving from the login layer.
 func apiRequest(body string) *http.Request {
-	r := httptest.NewRequest(http.MethodPost, apiPath, strings.NewReader(body))
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, apiPath, strings.NewReader(body))
 	r.RemoteAddr = trustedPeer
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set(hdrUser, "u1@example.com")

@@ -40,7 +40,7 @@ func execSeed(t *testing.T, dsn, query string) {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(query); err != nil {
+	if _, err := db.ExecContext(t.Context(), query); err != nil {
 		t.Fatalf("seed %q: %v", query, err)
 	}
 }

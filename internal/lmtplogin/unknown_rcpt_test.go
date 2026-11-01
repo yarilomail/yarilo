@@ -17,7 +17,7 @@ import (
 // startLookupCountingDirector answers every LOOKUP with a HOST and counts them.
 func startLookupCountingDirector(t *testing.T) (string, *atomic.Int32) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("director listen: %v", err)
 	}
@@ -53,7 +53,7 @@ func startLookupCountingDirector(t *testing.T) (string, *atomic.Int32) {
 // A recipient userdb does not know is refused at RCPT, before the director is
 // asked: a LOOKUP would pin a name that does not exist in every director.
 func TestAnUnknownRecipientIsRefusedBeforeTheDirector(t *testing.T) {
-	down, err := net.Listen("tcp", "127.0.0.1:0")
+	down, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

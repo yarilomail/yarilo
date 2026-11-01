@@ -30,7 +30,7 @@ func n5Cluster(t *testing.T, n int) (srvs []*Server, addrsOf []string, kill func
 		lnOf     = map[string]net.Listener{}       // addr -> its listener, for a real kill
 	)
 
-	seedLn, err := net.Listen("tcp", "127.0.0.1:0")
+	seedLn, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("seed listen: %v", err)
 	}
@@ -52,7 +52,7 @@ func n5Cluster(t *testing.T, n int) (srvs []*Server, addrsOf []string, kill func
 				if target == "" {
 					return
 				}
-				b, dErr := net.Dial("tcp", target)
+				b, dErr := new(net.Dialer).DialContext(t.Context(), "tcp", target)
 				if dErr != nil {
 					return
 				}
@@ -74,7 +74,7 @@ func n5Cluster(t *testing.T, n int) (srvs []*Server, addrsOf []string, kill func
 			SeedPollInterval:    300 * time.Millisecond,
 		}))
 		srv.membership.probeTimeout = 500 * time.Millisecond
-		ln, lErr := net.Listen("tcp", "127.0.0.1:0")
+		ln, lErr := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if lErr != nil {
 			t.Fatalf("listen: %v", lErr)
 		}

@@ -54,7 +54,7 @@ func buildTestServer(t *testing.T) (addr string, cleanup func()) {
 		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
 	}
 	srv := New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func (s *stubRelaySession) Logout() error                              { return 
 
 func buildStubRelay(t *testing.T) config.RelayConfig {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestSubmission_Relay(t *testing.T) {
 	}
 
 	srv := New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,14 +259,14 @@ func TestSubmission_STARTTLS_Advertised(t *testing.T) {
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}},
 	}
 	srv := New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go func() { _ = srv.Serve(ln, nil) }()
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func (s *capturingRelaySession) Logout() error { return nil }
 func buildCapturingRelay(t *testing.T) (config.RelayConfig, *capturingRelayBackend) {
 	t.Helper()
 	be := &capturingRelayBackend{}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +381,7 @@ func runSubmissionWithReceivedHeader(t *testing.T, addReceived bool) []byte {
 		Proxy:     proxy.New(relayCfg, "mx.example.com"),
 	}
 	srv := New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func (s *identityRelaySession) Logout() error                          { return 
 
 // A user who logged in on the backend itself is the one the relay is told.
 func TestSubmission_RelayIsToldTheSessionUser(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +469,7 @@ func TestSubmission_RelayIsToldTheSessionUser(t *testing.T) {
 		AuthRelay: authtest.RelayTo(t, authtest.PlainOnly(stubAuth{})),
 		Proxy:     proxy.New(relayCfg, "mx.example.com"),
 	})
-	sl, err := net.Listen("tcp", "127.0.0.1:0")
+	sl, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +493,7 @@ func TestSubmission_RelayIsToldTheSessionUser(t *testing.T) {
 // is told the PLAIN authzid of every relay login.
 func relayedSubmission(t *testing.T, auth *authrelay.Client, oauth bool) (string, *identityRelay) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func relayedSubmission(t *testing.T, auth *authrelay.Client, oauth bool) (string
 		OAuth2Enabled: oauth,
 		Proxy:         proxy.New(relayCfg, "mx.example.com"),
 	})
-	sl, err := net.Listen("tcp", "127.0.0.1:0")
+	sl, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

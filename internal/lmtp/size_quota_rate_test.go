@@ -24,7 +24,7 @@ type lmtpWire struct {
 
 func dialWire(t *testing.T, addr string) *lmtpWire {
 	t.Helper()
-	c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func sizeServer(t *testing.T, cfg config.LMTPProtocolConfig, mailSize int64, rul
 	cfg.ReadTimeout, cfg.WriteTimeout = 5, 5
 	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: fileindex.New(),
 		Resolver: resolver, QuotaEngine: true, QuotaMailSize: mailSize}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestARateLimitedRecipientGets451AndTheSessionGoesOn(t *testing.T) {
 	cfg.RateLimit.Enabled, cfg.RateLimit.PerRecipientBurst, cfg.RateLimit.PerRecipientWindowSeconds = true, 1, 60
 	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: cfg, Mailbox: mb, Index: fileindex.New(),
 		Resolver: resolver, Locker: newFakeLocker()}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestGraceDoesNotDeliverIntoAMailboxAlreadyOver(t *testing.T) {
 	srv := New(testOpts(Options{Hostname: "lmtp.test", Config: config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5},
 		Mailbox: mb, Index: fileindex.New(), Resolver: resolver, QuotaEngine: true,
 		QuotaPolicy: quota.Policy{StorageGrace: 10 << 20}}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestTheMailboxMessageCapIsReachedThenRefused(t *testing.T) {
 				Config:  config.LMTPProtocolConfig{ReadTimeout: 5, WriteTimeout: 5, QuotaFullTempfail: tc.tempfail},
 				Mailbox: mb, Index: fileindex.New(), Resolver: resolver, QuotaEngine: true,
 				QuotaPolicy: quota.Policy{MailboxMessageCount: 2}}))
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}

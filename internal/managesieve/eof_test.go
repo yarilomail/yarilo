@@ -13,7 +13,7 @@ import (
 // io.EOF -- the error a peer that hangs up actually produces (#1668).
 func tcpPair(t *testing.T) (client, server net.Conn) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,7 @@ func tcpPair(t *testing.T) (client, server net.Conn) {
 		}
 		done <- c
 	}()
-	client, err = net.Dial("tcp", ln.Addr().String())
+	client, err = new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

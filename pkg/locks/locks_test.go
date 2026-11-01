@@ -416,7 +416,7 @@ func redisFactory(t *testing.T) (locks.Locker, func()) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	backend := locks.NewRedisBackend(rdb)
 	srv := locks.NewServer(backend, slog.New(slog.NewTextHandler(os.Stderr, nil)), newTestMetrics(t, "remote"))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen tcp: %v", err)
 	}
@@ -508,7 +508,7 @@ func waitDial(t *testing.T, network, addr string) bool {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout(network, addr, 100*time.Millisecond)
+		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), network, addr)
 		if err == nil {
 			_ = conn.Close()
 			return true

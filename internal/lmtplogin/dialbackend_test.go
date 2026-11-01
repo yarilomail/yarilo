@@ -61,7 +61,7 @@ func TestDialBackend_TLSHandshake(t *testing.T) {
 		go func() {
 			c, aerr := ln.Accept()
 			if aerr == nil {
-				_ = c.(*tls.Conn).Handshake()
+				_ = c.(*tls.Conn).HandshakeContext(t.Context())
 				c.Close()
 			}
 		}()
@@ -75,13 +75,13 @@ func TestDialBackend_TLSHandshake(t *testing.T) {
 		if !ok {
 			t.Fatalf("want *tls.Conn, got %T", conn)
 		}
-		if err := tc.Handshake(); err != nil {
+		if err := tc.HandshakeContext(t.Context()); err != nil {
 			t.Fatalf("client handshake: %v", err)
 		}
 	})
 
 	t.Run("nil tlsCfg dials plain TCP", func(t *testing.T) {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,7 +103,7 @@ func TestDialBackend_TLSHandshake(t *testing.T) {
 	})
 
 	t.Run("tls dial against a plain backend fails", func(t *testing.T) {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}

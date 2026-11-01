@@ -112,7 +112,7 @@ func TestBackendPreambleCarriesTheResolvedIdentity(t *testing.T) {
 // row's subject.
 func startPreambleCapturingBackend(t *testing.T, claimed chan<- string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestRerouteLookupUsesTheResolvedIdentity(t *testing.T) {
 // re-route path runs.
 func deadBackendAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -197,7 +197,7 @@ func deadBackendAddr(t *testing.T) string {
 // and reports the username each one asked about.
 func lookupNameCapturingDirector(t *testing.T, backend string, names chan<- string, reports *int32) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

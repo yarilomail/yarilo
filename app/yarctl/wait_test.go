@@ -80,7 +80,7 @@ func TestProbeURLTimeoutCoversASlowResponse(t *testing.T) {
 // dependency's Service exists but nothing is listening behind it yet.
 func TestProbeURLUnreachable(t *testing.T) {
 	// Bind and immediately release, so the port is almost certainly free.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestProbeURLUnreachable(t *testing.T) {
 // TestProbeTCPReachable: a dependency with no HTTP endpoint (a database or Redis)
 // is probed by opening a TCP connection - a live listener passes (#903).
 func TestProbeTCPReachable(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestProbeTCPReachable(t *testing.T) {
 // TestProbeTCPUnreachable: nothing listening behind the address fails the probe,
 // and the error names the tcp:// target.
 func TestProbeTCPUnreachable(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

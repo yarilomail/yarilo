@@ -82,7 +82,7 @@ func TestReconnectDecision(t *testing.T) {
 // second lookup succeeds on a fresh connection rather than inheriting the
 // corpse.
 func TestALookupSurvivesTheConnectionGoingAway(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,7 @@ func startRingNodeAE(t *testing.T, secret string, seeds []string, minMembers int
 		AntiEntropyInterval: antiEntropy,
 		SeedPollInterval:    -1, // one-shot join - periodic seed re-poll would mask direct-path regressions, same as anti-entropy
 	}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -81,7 +81,7 @@ func startKillableRingNode(t *testing.T, secret string, seeds []string, minMembe
 		SeedPollInterval:    -1,
 	}))
 	srv.membership.probeTimeout = 500 * time.Millisecond // fail death-verification probes of killed nodes fast
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -275,7 +275,7 @@ func startPollingRingNode(t *testing.T, secret string, seeds []string, minMember
 		SeedPollIdleInterval: idle,
 	}))
 	srv.membership.probeTimeout = 500 * time.Millisecond // keep probes of dead test addresses fast
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestMembership_NeighborEviction_ClearsPhantomMember(t *testing.T) {
 	// A dead-but-once-valid address: a listener that closed after being
 	// registered, exactly like a terminating pod that answered a JOIN
 	// snapshot and then went away.
-	phantomLn, err := net.Listen("tcp", "127.0.0.1:0")
+	phantomLn, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("phantom listen: %v", err)
 	}
@@ -488,7 +488,7 @@ func TestMembership_TombstoneTTL_ExpiresAndReadmits(t *testing.T) {
 // with the handshake fully consumed.
 func dialAsLeftNeighbor(t *testing.T, addr string, left Member) net.Conn {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("raw dial: %v", err)
 	}
@@ -881,7 +881,7 @@ func TestMembership_Formation_ViaLoadBalancedSeed(t *testing.T) {
 		mu    sync.Mutex
 		addrs []string
 	)
-	seedLn, err := net.Listen("tcp", "127.0.0.1:0")
+	seedLn, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("seed listen: %v", err)
 	}
@@ -903,7 +903,7 @@ func TestMembership_Formation_ViaLoadBalancedSeed(t *testing.T) {
 				if target == "" {
 					return
 				}
-				b, dErr := net.Dial("tcp", target)
+				b, dErr := new(net.Dialer).DialContext(t.Context(), "tcp", target)
 				if dErr != nil {
 					return
 				}
@@ -929,7 +929,7 @@ func TestMembership_Formation_ViaLoadBalancedSeed(t *testing.T) {
 			AntiEntropyInterval: 500 * time.Millisecond,
 			SeedPollInterval:    300 * time.Millisecond,
 		}))
-		ln, lErr := net.Listen("tcp", "127.0.0.1:0")
+		ln, lErr := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if lErr != nil {
 			t.Fatalf("listen: %v", lErr)
 		}
@@ -1019,7 +1019,7 @@ func TestMembership_Formation_ViaHeadlessDNSSeed(t *testing.T) {
 			SeedPollInterval:    300 * time.Millisecond,
 		}))
 		srv.membership.resolveHost = resolve
-		ln, lErr := net.Listen("tcp", "127.0.0.1:0")
+		ln, lErr := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if lErr != nil {
 			t.Fatalf("listen: %v", lErr)
 		}

@@ -97,7 +97,7 @@ func virtualServerWith(t *testing.T, configs map[string]string, seed func(t *tes
 		opts.NamespaceMailboxes = map[string]mailbox.MailboxBackend{"Virtual/": virtualDriver(opts)}
 	}
 	srv := imapserver.New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ var lastVirtualHome string
 
 func loginTo(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

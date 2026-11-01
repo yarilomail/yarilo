@@ -14,7 +14,7 @@ import (
 func readyzBody(t *testing.T, s *Server) (int, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	s.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode %q: %v", rec.Body.String(), err)
@@ -100,7 +100,7 @@ func TestReadyzNamesTheFailingCheck(t *testing.T) {
 // the same host:port the init containers probe, checked continuously instead of
 // only at startup.
 func TestTCPCheckAgainstRealListener(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

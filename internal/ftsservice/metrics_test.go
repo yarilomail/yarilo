@@ -37,7 +37,7 @@ func TestMetricsEndpointExposesFTSMetrics(t *testing.T) {
 	ObserveLockWait(time.Millisecond)
 
 	srv := telemetry.New(":0")
-	req := httptest.NewRequest("GET", "/metrics", nil)
+	req := httptest.NewRequestWithContext(t.Context(), "GET", "/metrics", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != 200 {

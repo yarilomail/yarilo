@@ -53,7 +53,7 @@ func startRegistryServer(t *testing.T) (d dict.Dict, addr string) {
 				Location: "maildir:%h"},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestOwnerRegistry_DivergentRootPersonalGrantStaysLocal(t *testing.T) {
 				Location: "maildir:%h/Shared"},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

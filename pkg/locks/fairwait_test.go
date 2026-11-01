@@ -54,7 +54,7 @@ func (b *countingBackend) Acquire(ctx context.Context, resource, owner, site, ti
 
 func standOver(t *testing.T, backend Backend, m *Metrics) *Client {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

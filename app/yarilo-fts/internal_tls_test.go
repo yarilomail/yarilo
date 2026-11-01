@@ -22,7 +22,7 @@ func TestFTSPortIsInternalMTLS(t *testing.T) {
 	cfg.InternalTLS.Cert, cfg.InternalTLS.Key = ca.Role(t, mtls.RoleFTS)
 	cfg.InternalTLS.CA = ca.CAFile
 
-	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	raw, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

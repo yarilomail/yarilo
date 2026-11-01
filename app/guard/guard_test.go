@@ -25,7 +25,7 @@ func TestASessionBinaryLinksNoPassdbDriver(t *testing.T) {
 	}
 	for _, bin := range []string{"yarilo-imap", "yarilo-pop3", "yarilo-submission", "yarilo-lmtp", "yarilo-managesieve", "yarilo-jmap"} {
 		t.Run(bin, func(t *testing.T) {
-			out, err := exec.Command("go", "list", "-deps", "../../app/"+bin).Output()
+			out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", "../../app/"+bin).Output()
 			if err != nil {
 				t.Fatalf("go list -deps %s: %v", bin, err)
 			}

@@ -19,7 +19,7 @@ func TestATokenOpensOneSessionAndSurvivesABackendThatDied(t *testing.T) {
 	t.Cleanup(store.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	authLn, err := net.Listen("tcp", "127.0.0.1:0")
+	authLn, err := new(net.ListenConfig).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,13 +34,13 @@ func TestATokenOpensOneSessionAndSurvivesABackendThatDied(t *testing.T) {
 	// session opens one backend's session with the token and returns it.
 	session := func(t *testing.T) *PreambleConn {
 		t.Helper()
-		base, err := net.Listen("tcp", "127.0.0.1:0")
+		base, err := new(net.ListenConfig).Listen(ctx, "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		l := &PreambleListener{Listener: base, AuthAddr: authLn.Addr().String(), ExpectedService: "imap"}
 		t.Cleanup(func() { l.Close() })
-		c, err := net.Dial("tcp", base.Addr().String())
+		c, err := new(net.Dialer).DialContext(ctx, "tcp", base.Addr().String())
 		if err != nil {
 			t.Fatal(err)
 		}

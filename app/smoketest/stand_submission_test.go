@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -73,7 +74,7 @@ func (s *lmtpRelaySession) Data(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	conn, err := net.DialTimeout("tcp", s.addr, 5*time.Second)
+	conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", s.addr)
 	if err != nil {
 		return err
 	}

@@ -91,7 +91,7 @@ func TestResolveDirectorTag(t *testing.T) {
 // startTestWarden spins a real yarilo-warden on a random local port.
 func startTestWarden(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("warden listen: %v", err)
 	}
@@ -111,7 +111,7 @@ func startTestAuth(t *testing.T) string {
 	t.Helper()
 	store := authtoken.New(30 * time.Second)
 	srv := protocol.NewMasterServer(everyUser{}, protocol.WithMasterTokenStore(store))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("auth listen: %v", err)
 	}
@@ -146,7 +146,7 @@ func startTestAuthWithUserdb(t *testing.T, userdb protocol.Userdb) string {
 	t.Helper()
 	store := authtoken.New(30 * time.Second)
 	srv := protocol.NewMasterServer(userdb, protocol.WithMasterTokenStore(store))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("auth listen: %v", err)
 	}
@@ -164,7 +164,7 @@ func waitForTCP(t *testing.T, addr string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(t.Context(), "tcp", addr)
 		if err == nil {
 			c.Close()
 			return
@@ -178,7 +178,7 @@ func waitForTCP(t *testing.T, addr string) {
 func startLMTPLogin(t *testing.T, opts Options) string {
 	t.Helper()
 	srv := New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("lmtplogin listen: %v", err)
 	}
@@ -208,7 +208,7 @@ type stubBackend struct {
 
 func newStubBackend(t *testing.T) (*stubBackend, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("stub backend listen: %v", err)
 	}
@@ -335,7 +335,7 @@ type mtaConn struct {
 
 func dialMTA(t *testing.T, addr string) *mtaConn {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial lmtplogin: %v", err)
 	}
@@ -717,7 +717,7 @@ func TestServer_Reset(t *testing.T) {
 // and replies FAIL so the caller returns quickly.
 func startStubDirector(t *testing.T, capturedLine *string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("director listen: %v", err)
 	}

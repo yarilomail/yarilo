@@ -23,7 +23,7 @@ type fakeMaster struct {
 
 func newFakeMaster(t *testing.T) *fakeMaster {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

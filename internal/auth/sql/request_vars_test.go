@@ -41,7 +41,7 @@ func ruleDB(t *testing.T) string {
 		`INSERT INTO users VALUES ('alice', '{PLAIN}pw', '{SCRAM-SHA-256}` + sasl.EncodeScramCredentials(creds) + `', '/m/alice', 0, 0, 1, '', '')`,
 		`INSERT INTO users VALUES ('bob', '{PLAIN}pw', '', '/m/bob', 1, 1, 0, '10.0.0.1', '10.0.0.2')`,
 	} {
-		if _, err := db.Exec(q); err != nil {
+		if _, err := db.ExecContext(t.Context(), q); err != nil {
 			t.Fatal(err)
 		}
 	}

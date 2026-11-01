@@ -31,7 +31,7 @@ func (d disabledPassdb) Authenticate(req *protocol.Request) (protocol.Result, er
 // A passdb nologin, sent as nologin=yes, refuses the login with exactly a wrong
 // password's answer; lost, the login goes on to the tokenless refusal (#2229).
 func TestAPassdbNologinRefusesTheLogin(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

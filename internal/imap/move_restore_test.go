@@ -211,7 +211,7 @@ func switchedServer(t *testing.T, dir string, mb mailbox.MailboxBackend, idx mai
 		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
 		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=100000"}),
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func switchedServer(t *testing.T, dir string, mb mailbox.MailboxBackend, idx mai
 
 func switchedLogin(t *testing.T, addr string) *imapclient.Client {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

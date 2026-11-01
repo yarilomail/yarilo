@@ -26,7 +26,7 @@ func TestNoHandlerIsRegisteredOnceCloseBegan(t *testing.T) {
 // And the accept loop honours that: a connection arriving as Close runs is
 // closed rather than served, and Serve returns.
 func TestServeReturnsWhenCloseRacesAnAccept(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestServeReturnsWhenCloseRacesAnAccept(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- s.Serve(context.Background(), ln) }()
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

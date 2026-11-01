@@ -541,7 +541,7 @@ func (targetUserdbForWire) Lookup(username string) (*UserInfo, error) {
 
 func dialAndHandshake(t *testing.T, addr string) (net.Conn, *bufio.Scanner) {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

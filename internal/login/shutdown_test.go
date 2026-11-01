@@ -12,7 +12,7 @@ import (
 // connections afterwards.
 func TestServer_ShutdownStopsAccepting(t *testing.T) {
 	s := New(testOpts(Options{Protocol: ProtocolIMAP}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestServer_ShutdownStopsAccepting(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Serve did not return after Shutdown")
 	}
-	if c, err := net.DialTimeout("tcp", addr, 500*time.Millisecond); err == nil {
+	if c, err := (&net.Dialer{Timeout: 500 * time.Millisecond}).DialContext(ctx, "tcp", addr); err == nil {
 		c.Close()
 		t.Fatal("listener must be closed after Shutdown - new connections refused")
 	}

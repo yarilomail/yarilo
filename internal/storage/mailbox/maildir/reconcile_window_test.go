@@ -82,7 +82,7 @@ func TestAReconcileSeesRowsAnotherProcessWrote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	child := exec.Command(os.Args[0], "-test.run=^TestAReconcileSeesRowsAnotherProcessWrote$", "-test.count=1")
+	child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAReconcileSeesRowsAnotherProcessWrote$", "-test.count=1")
 	child.Env = append(os.Environ(), reconcileWindowChildHome+"="+home)
 	if out, err := child.CombinedOutput(); err != nil {
 		t.Fatalf("the delivering process failed: %v\n%s", err, out)

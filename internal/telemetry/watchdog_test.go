@@ -13,7 +13,7 @@ import (
 func hit(t *testing.T, s *Server, path string) int {
 	t.Helper()
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+	s.Handler().ServeHTTP(rr, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	return rr.Code
 }
 

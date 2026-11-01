@@ -31,7 +31,7 @@ func (l *countingListener) Accept() (net.Conn, error) {
 // The annotation dict named "file" is opened here, and the dict service is
 // never dialled: the two round trips an annotation used to cost are gone.
 func TestAFileDictIsOpenedWithoutTheDictService(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
