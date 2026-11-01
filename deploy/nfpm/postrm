@@ -3,11 +3,16 @@ set -e
 systemctl daemon-reload >/dev/null 2>&1 || true
 [ "$1" = purge ] || exit 0
 
-rm -rf /run/yarilo /var/lib/yarilo /etc/yarilo
-# Mail is never deleted: with messages left, the store and its owner stay.
-rmdir /var/mail/vhosts 2>/dev/null || true
-if [ -d /var/mail/vhosts ]; then
-	echo "yarilo: /var/mail/vhosts still holds mail; it and the yarilo user are kept" >&2
+rm -rf /run/yarilo /var/lib/yarilo
+rm -f /etc/yarilo/yarilo.yaml /etc/yarilo/yarilo.yaml.dpkg-*
+# Mail and the operator's certificates are never deleted; what is left keeps its owners.
+kept=
+for d in /etc/yarilo/tls /etc/yarilo /var/mail/vhosts; do
+	rmdir "$d" 2>/dev/null || true
+	[ -d "$d" ] && kept="$kept $d"
+done
+if [ -n "$kept" ]; then
+	echo "yarilo: kept$kept, not empty; the yarilo accounts stay with them" >&2
 	exit 0
 fi
 for u in yarilo-login yarilo-auth yarilo; do
