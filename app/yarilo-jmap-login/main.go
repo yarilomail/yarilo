@@ -115,11 +115,10 @@ func main() {
 		},
 		Lifecycle: true,
 	})
-	go func() {
-		if err := tel.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(ctx); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 
 	srv := jmaplogin.New(serverOptions(cfg, svc, addr, extTLS, intTLS, auth, wardenPool))
 	srv.WatchKicks(ctx, kicks(cfg, intTLS))

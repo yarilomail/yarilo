@@ -86,7 +86,7 @@ func main() {
 		serveErr <- srv.Serve(ctx, ln)
 	}()
 
-	go runTelemetry(cfg.Telemetry, reg, backendReady)
+	runTelemetry(cfg.Telemetry, reg, backendReady)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -194,7 +194,8 @@ func runTelemetry(cfg config.TelemetryConfig, reg *prometheus.Registry, backendR
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	if err := tel.ListenAndServe(context.Background()); err != nil {
-		slog.Error("telemetry server failed", "err", err)
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
 	}
 }

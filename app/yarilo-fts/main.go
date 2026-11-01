@@ -164,11 +164,10 @@ func main() {
 			MutexFraction: cfg.Telemetry.PprofMutexProfileFraction,
 		},
 	})
-	go func() {
-		if err := tel.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(ctx); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 
 	slog.Info("yarilo-fts listening", "addr", listen, "telemetry", cfg.Telemetry.Listen,
 		"engine", engine.Name(), "mode", fc.Mode)
