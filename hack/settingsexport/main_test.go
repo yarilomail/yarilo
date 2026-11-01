@@ -27,7 +27,7 @@ func TestExport(t *testing.T) {
 	for _, want := range []setting{
 		{Key: "general.ssl.ssl_min_protocol", Section: "general.ssl", Type: "string", Kind: "string", Default: "TLS1.2"},
 		{Key: "login.login_proxy_timeout", Section: "login", Type: "int", Kind: "integer", Default: 30},
-		{Key: "general.ssl.ssl_prefer_server_ciphers", Section: "general.ssl", Type: "bool", Kind: "boolean", Default: false},
+		{Key: "acl.enabled", Section: "acl", Type: "bool", Kind: "boolean", Default: false},
 		{Key: "general.haproxy.haproxy_trusted_networks", Section: "general.haproxy", Type: "[]string", Kind: "list",
 			Default: []string{"127.0.0.1/32", "10.0.0.0/8"}},
 	} {

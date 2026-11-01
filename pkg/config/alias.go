@@ -273,12 +273,6 @@ func sslAliasesFor(path string, ssl *SSLConfig) []aliasedKey {
 		str("ssl_server_alt_cert_file", "tls_alt_cert", &ssl.SSLServerAltCert, &ssl.TLSAltCertAlias),
 		str("ssl_server_alt_key_file", "tls_alt_key", &ssl.SSLServerAltKey, &ssl.TLSAltKeyAlias),
 		str("ssl_min_protocol", "tls_min_version", &ssl.SSLMinProtocol, &ssl.TLSMinVersionAlias),
-		{
-			canonical: path + ".ssl_prefer_server_ciphers",
-			alias:     path + ".prefer_server_ciphers",
-			adopt:     func() { ssl.SSLPreferCiphers = ssl.PreferServerAlias },
-			equal:     func() bool { return ssl.SSLPreferCiphers == ssl.PreferServerAlias },
-		},
 	}
 }
 
@@ -538,7 +532,7 @@ func refuseRemovedKeys(k *koanf.Koanf, keys []retiredKey) error {
 // removedKeys is that list, on the same terms as the retired one: a key lands
 // here only once the chart has stopped rendering it.
 func removedKeys() []retiredKey {
-	return []retiredKey{
+	keys := []retiredKey{
 		{
 			key:  "director_service.lmtp_listen",
 			note: "the director no longer serves LMTP; point the MTA at the LMTP login service (#1756)",
@@ -557,6 +551,16 @@ func removedKeys() []retiredKey {
 		{key: "services.managesieve_be", note: "the ManageSieve backend's listener is services.managesieve; the login proxy's is services.managesieve_login (#2415)"},
 		{key: "services.jmap_be", note: "the JMAP backend's listener is services.jmap; the login proxy's is services.jmap_login (#2415)"},
 	}
+	const ciphers = "Go's TLS has picked the cipher suite itself since Go 1.17, with no switch for the server's order (#2442)"
+	blocks := []string{"general.ssl"}
+	for _, e := range (&ServicesConfig{}).Entries() {
+		blocks = append(blocks, "services."+e.Name+".ssl")
+	}
+	for _, b := range blocks {
+		keys = append(keys, retiredKey{key: b + ".ssl_prefer_server_ciphers", note: ciphers},
+			retiredKey{key: b + ".prefer_server_ciphers", note: ciphers})
+	}
+	return keys
 }
 
 // retiredKeys is the whole list. It is short by construction: a key only lands
