@@ -220,3 +220,44 @@ func TestEveryUnitListenerIsInTheSample(t *testing.T) {
 		}
 	}
 }
+
+// yarilo.target starts yarilo-dict, which exits without dict_listen; the
+// sessions find it at dict_addr, on a socket in a directory tmpfiles creates
+// and the unit may write and waits for.
+func TestTheDictUnitListensWhereTheSampleSays(t *testing.T) {
+	if !slices.Contains(unitKeys(t, filepath.Join(systemdDir, "yarilo.target"), "Wants"), "yarilo-dict.service") {
+		t.Fatal("yarilo.target does not want yarilo-dict.service")
+	}
+	cfg, err := config.Load(filepath.Join(systemdDir, "yarilo.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds := cfg.DictService
+	path, ok := strings.CutPrefix(ds.DictListen, "unix:")
+	if !ok || path == "" {
+		t.Fatalf("dict_service.dict_listen = %q in deploy/systemd/yarilo.yaml, want unix:/path", ds.DictListen)
+	}
+	if ds.DictAddr != ds.DictListen {
+		t.Errorf("dict_service.dict_addr = %q, want dict_listen %q", ds.DictAddr, ds.DictListen)
+	}
+	unit := filepath.Join(systemdDir, "yarilo-dict.service")
+	if !slices.Contains(unitKeys(t, unit, "ReadWritePaths"), filepath.Dir(path)) {
+		t.Errorf("yarilo-dict.service may not write %s, where its socket goes", filepath.Dir(path))
+	}
+	if post := strings.Join(unitKeys(t, unit, "ExecStartPost"), " "); !strings.Contains(post, "-S "+path+" ") {
+		t.Errorf("yarilo-dict.service does not wait for %s", path)
+	}
+	b, err := os.ReadFile(filepath.Join(systemdDir, "tmpfiles.d", "yarilo.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := false
+	for _, line := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == "d" && f[1] == filepath.Dir(path) {
+			created = true
+		}
+	}
+	if !created {
+		t.Errorf("tmpfiles.d does not create %s", filepath.Dir(path))
+	}
+}
