@@ -552,7 +552,7 @@ func removedKeys() []retiredKey {
 		},
 		{
 			key:  "auth_service.sasl_listen",
-			note: "Postfix authenticates through yarilo-sasl-login (sasl_login.listen, default :12345), which relays to auth",
+			note: "Postfix authenticates through yarilo-sasl-login (sasl_login.listen, default 127.0.0.1:12345), which relays to auth",
 		},
 	}
 }

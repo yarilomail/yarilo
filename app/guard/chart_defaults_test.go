@@ -2,6 +2,7 @@ package guard_test
 
 import (
 	"fmt"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -122,6 +123,64 @@ func TestTheChartCarriesTheBinaryDefaults(t *testing.T) {
 	} {
 		if row.got != row.want {
 			t.Errorf("%s = %q in the chart, %q in config.Defaults()", row.path, row.got, row.want)
+		}
+	}
+}
+
+// listenKeys are the hosts listeners bind. The binary keeps internal services
+// to loopback and leaves a services.<name> address empty for the process's
+// role; the chart binds every interface, since a pod is reached over its own
+// network (#2415, #2416).
+var listenKeys = []struct {
+	path, binary, chart string
+	host                func(*config.Config) string
+}{
+	{"auth_service.listen", "127.0.0.1", "", func(c *config.Config) string { return listenHost(c.AuthService.Listen) }},
+	{"warden_service.listen", "127.0.0.1", "", func(c *config.Config) string { return listenHost(c.WardenService.Listen) }},
+	{"director_service.listen", "127.0.0.1", "", func(c *config.Config) string { return listenHost(c.DirectorService.Listen) }},
+	{"director_service.api.listen", "127.0.0.1", "", func(c *config.Config) string { return listenHost(c.DirectorService.API.Listen) }},
+	{"fts.fts_listen", "127.0.0.1", "", func(c *config.Config) string { return listenHost(c.FTS.Listen) }},
+	{"quota_status.listen", "127.0.0.1", "", func(c *config.Config) string { return listenHost(c.QuotaStatus.Listen) }},
+	{"sasl_login.listen", "127.0.0.1", "", func(c *config.Config) string { return listenHost(c.SASLLogin.Listen) }},
+	{"backend_api.listen", "127.0.0.1", "", func(c *config.Config) string { return listenHost(c.BackendAPI.Listen) }},
+	{"services.imaps.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.IMAPS) }},
+	{"services.imap.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.IMAP) }},
+	{"services.pop3s.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.POP3S) }},
+	{"services.pop3.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.POP3) }},
+	{"services.lmtp.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.LMTP) }},
+	{"services.submission.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.Submission) }},
+	{"services.submissions.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.Submissions) }},
+	{"services.managesieve.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.ManageSieve) }},
+	{"services.managesieve_be.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.ManageSieveBE) }},
+	{"services.jmap.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.JMAP) }},
+	{"services.jmap_be.address", "", "0.0.0.0", func(c *config.Config) string { return address(c.Services.JMAPBE) }},
+}
+
+// listenHost is the host of a listen address, or "?" when it has none.
+func listenHost(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "?"
+	}
+	return host
+}
+
+func address(s *config.ServiceConfig) string {
+	if s == nil {
+		return ""
+	}
+	return s.Address
+}
+
+func TestListenersAreLoopbackInTheBinaryAndOpenInTheChart(t *testing.T) {
+	d := config.Defaults()
+	cfg := loadRendered(t, mustRender(t, allOn))
+	for _, k := range listenKeys {
+		if got := k.host(d); got != k.binary {
+			t.Errorf("%s: host %q in config.Defaults(), want %q", k.path, got, k.binary)
+		}
+		if got := k.host(cfg); got != k.chart {
+			t.Errorf("%s: host %q in the chart, want %q", k.path, got, k.chart)
 		}
 	}
 }

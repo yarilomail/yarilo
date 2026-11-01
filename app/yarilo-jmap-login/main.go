@@ -87,10 +87,11 @@ func main() {
 		defer wardenPool.Close()
 	}
 
-	addr := fmt.Sprintf(":%d", svc.Port)
+	addr, from := svc.ListenAddr(config.PublicHost)
 	slog.Info("yarilo-jmap-login starting",
 		"version", build.Version,
 		"listen", addr,
+		"from", from,
 		"tls", extTLS != nil,
 		"backend_addr", cfg.JMAPLoginService.BackendAddr,
 		"director_addr", cfg.JMAPLoginService.DirectorAddr,

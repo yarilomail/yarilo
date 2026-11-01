@@ -619,25 +619,27 @@ func storeLivenessCheck(storePath string, gate *telemetry.Gate) telemetry.Livene
 	}
 }
 
-// bindTCP binds addr and returns the listener, so callers can hold every port
+// bindTCP binds svc's listener and returns it, so callers can hold every port
 // before reporting readiness; binding after SetReady leaves a window where a
-// client gets connection refused.
-func bindTCP(proto, addr string) (net.Listener, error) {
+// client gets connection refused. roleHost is what an empty address binds.
+func bindTCP(proto string, svc *config.ServiceConfig, roleHost string) (net.Listener, error) {
+	addr, from := svc.ListenAddr(roleHost)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s: bind %s: %w", proto, addr, err)
 	}
-	slog.Info("listener bound", "proto", proto, "addr", addr)
+	slog.Info("listener bound", "proto", proto, "addr", ln.Addr().String(), "from", from)
 	return ln, nil
 }
 
 // bindTLS is bindTCP for a TLS listener.
-func bindTLS(proto, addr string, cfg *tls.Config) (net.Listener, error) {
+func bindTLS(proto string, svc *config.ServiceConfig, roleHost string, cfg *tls.Config) (net.Listener, error) {
+	addr, from := svc.ListenAddr(roleHost)
 	ln, err := tls.Listen("tcp", addr, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("%s: bind %s (tls): %w", proto, addr, err)
 	}
-	slog.Info("listener bound", "proto", proto, "addr", addr, "tls", true)
+	slog.Info("listener bound", "proto", proto, "addr", ln.Addr().String(), "from", from, "tls", true)
 	return ln, nil
 }
 
@@ -662,14 +664,14 @@ func (s *Server) RunIMAP(ctx context.Context) error {
 	// would report ready with a port unbound.
 	var tlsLn, plainLn net.Listener
 	if svcs.IMAPS.Active() {
-		ln, err := bindTLS("imap", listenAddr(svcs.IMAPS), s.imapTLS)
+		ln, err := bindTLS("imap", svcs.IMAPS, config.BackendHost, s.imapTLS)
 		if err != nil {
 			return err
 		}
 		tlsLn = ln
 	}
 	if svcs.IMAP.Active() {
-		ln, err := bindTCP("imap", listenAddr(svcs.IMAP))
+		ln, err := bindTCP("imap", svcs.IMAP, config.BackendHost)
 		if err != nil {
 			return err
 		}
@@ -708,14 +710,14 @@ func (s *Server) RunPOP3(ctx context.Context) error {
 	// bind before reporting ready
 	var tlsLn, plainLn net.Listener
 	if svcs.POP3S.Active() {
-		ln, err := bindTLS("pop3", listenAddr(svcs.POP3S), s.pop3TLS)
+		ln, err := bindTLS("pop3", svcs.POP3S, config.BackendHost, s.pop3TLS)
 		if err != nil {
 			return err
 		}
 		tlsLn = ln
 	}
 	if svcs.POP3.Active() {
-		ln, err := bindTCP("pop3", listenAddr(svcs.POP3))
+		ln, err := bindTCP("pop3", svcs.POP3, config.BackendHost)
 		if err != nil {
 			return err
 		}
@@ -751,7 +753,7 @@ func (s *Server) RunLMTP(ctx context.Context) error {
 	}
 
 	// bind before reporting ready; a TLS error is fatal at startup
-	ln, err := bindTCP("lmtp", listenAddr(svcs.LMTP))
+	ln, err := bindTCP("lmtp", svcs.LMTP, config.BackendHost)
 	if err != nil {
 		return err
 	}
@@ -791,7 +793,7 @@ func (s *Server) RunManageSieve(ctx context.Context) error {
 	}
 
 	// bind before reporting ready
-	ln, err := bindTCP("managesieve", listenAddr(svcs.ManageSieveBE))
+	ln, err := bindTCP("managesieve", svcs.ManageSieveBE, config.BackendHost)
 	if err != nil {
 		return err
 	}
@@ -831,7 +833,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.imap != nil {
 		if svcs.IMAPS.Active() {
-			ln, err := bindTLS("imap", listenAddr(svcs.IMAPS), s.imapTLS)
+			ln, err := bindTLS("imap", svcs.IMAPS, config.PublicHost, s.imapTLS)
 			if err != nil {
 				closeAll()
 				return err
@@ -839,7 +841,7 @@ func (s *Server) Run(ctx context.Context) error {
 			listeners = append(listeners, listener{"imap/tls", ln, s.imap.Serve})
 		}
 		if svcs.IMAP.Active() {
-			ln, err := bindTCP("imap", listenAddr(svcs.IMAP))
+			ln, err := bindTCP("imap", svcs.IMAP, config.PublicHost)
 			if err != nil {
 				closeAll()
 				return err
@@ -850,7 +852,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.pop3 != nil {
 		if svcs.POP3S.Active() {
-			ln, err := bindTLS("pop3", listenAddr(svcs.POP3S), s.pop3TLS)
+			ln, err := bindTLS("pop3", svcs.POP3S, config.PublicHost, s.pop3TLS)
 			if err != nil {
 				closeAll()
 				return err
@@ -858,7 +860,7 @@ func (s *Server) Run(ctx context.Context) error {
 			listeners = append(listeners, listener{"pop3/tls", ln, s.pop3.Serve})
 		}
 		if svcs.POP3.Active() {
-			ln, err := bindTCP("pop3", listenAddr(svcs.POP3))
+			ln, err := bindTCP("pop3", svcs.POP3, config.PublicHost)
 			if err != nil {
 				closeAll()
 				return err
@@ -870,7 +872,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Submission STARTTLS: TLS config is handed to Serve, not wrapped around
 	// the listener, since the upgrade happens mid-session.
 	if s.submission != nil && svcs.Submission.Active() {
-		ln, err := bindTCP("submission", listenAddr(svcs.Submission))
+		ln, err := bindTCP("submission", svcs.Submission, config.PublicHost)
 		if err != nil {
 			closeAll()
 			return err
@@ -891,7 +893,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	if s.lmtp != nil && svcs.LMTP.Active() {
-		ln, err := bindTCP("lmtp", listenAddr(svcs.LMTP))
+		ln, err := bindTCP("lmtp", svcs.LMTP, config.PublicHost)
 		if err != nil {
 			closeAll()
 			return err
@@ -912,7 +914,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Submissions (implicit TLS on 465).
 	if s.submission != nil && svcs.Submissions.Active() {
-		ln, err := bindTCP("submissions", listenAddr(svcs.Submissions))
+		ln, err := bindTCP("submissions", svcs.Submissions, config.PublicHost)
 		if err != nil {
 			closeAll()
 			return err
@@ -957,12 +959,11 @@ func firstActive(svcs ...*config.ServiceConfig) *config.ServiceConfig {
 	return nil
 }
 
-// listenAddr converts a ServiceConfig into a TCP listen address.
+// listenAddr fills the protocol servers' own Addr options, which only their
+// ListenAndServe reads; the backend binds through bindTCP and bindTLS.
 func listenAddr(svc *config.ServiceConfig) string {
-	if svc == nil {
-		return ""
-	}
-	return fmt.Sprintf(":%d", svc.Port)
+	addr, _ := svc.ListenAddr(config.PublicHost)
+	return addr
 }
 
 // buildTLS resolves TLS config for a service (merges general.ssl + per-service override)

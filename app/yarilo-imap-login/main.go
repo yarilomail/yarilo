@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -122,7 +121,7 @@ func main() {
 
 	// Port 993 - implicit TLS (IMAPS).
 	if svcs.IMAPS.Active() {
-		addr := fmt.Sprintf(":%d", svcs.IMAPS.Port)
+		addr, from := svcs.IMAPS.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("imaps-login: listen failed", "addr", addr, "err", err)
@@ -170,12 +169,12 @@ func main() {
 		if dirAddr != "" {
 			go srv.Watch(ctx)
 		}
-		slog.Info("imap-login: listening", "addr", addr, "tls", "implicit")
+		slog.Info("imap-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "implicit")
 	}
 
 	// Port 143 - STARTTLS.
 	if svcs.IMAP.Active() {
-		addr := fmt.Sprintf(":%d", svcs.IMAP.Port)
+		addr, from := svcs.IMAP.ListenAddr(config.PublicHost)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			slog.Error("imap-login: listen failed", "addr", addr, "err", err)
@@ -223,7 +222,7 @@ func main() {
 		if dirAddr != "" {
 			go srv.Watch(ctx)
 		}
-		slog.Info("imap-login: listening", "addr", addr, "tls", "starttls")
+		slog.Info("imap-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "starttls")
 	}
 
 	// Every configured port is bound and serving now, so the pod can accept

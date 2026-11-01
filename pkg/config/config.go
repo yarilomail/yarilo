@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -438,7 +439,10 @@ type LimitsConfig struct {
 // ServiceConfig is per-listener configuration.
 // A nil pointer in ServicesConfig means the listener is not started.
 type ServiceConfig struct {
-	Enabled bool       `koanf:"enabled"`
+	Enabled bool `koanf:"enabled"`
+	// Address is the host the listener binds. Empty leaves it to the role of
+	// the process binding it: BackendHost or PublicHost.
+	Address string     `koanf:"address"`
 	Port    int        `koanf:"port"`
 	SSLMode string     `koanf:"ssl_mode"` // no | ssl | starttls
 	SSL     *SSLConfig `koanf:"ssl"`      // overrides general.ssl
@@ -490,6 +494,27 @@ func (s *ServiceConfig) PlainAuthDisabled() bool { return !s.CleartextAllowed() 
 
 // Active returns true if the service is configured and enabled.
 func (s *ServiceConfig) Active() bool { return s != nil && s.Enabled }
+
+// The host a services.<name> listener binds when its address is empty: a
+// session backend behind a login proxy keeps to loopback, and a listener
+// clients reach directly takes every interface (#2416).
+const (
+	BackendHost = "127.0.0.1"
+	PublicHost  = ""
+)
+
+// ListenAddr is the address the listener binds for a process whose role
+// host is roleHost, and where its host came from: "address" or "role".
+func (s *ServiceConfig) ListenAddr(roleHost string) (addr, from string) {
+	if s == nil {
+		return "", ""
+	}
+	host, from := s.Address, "address"
+	if host == "" {
+		host, from = roleHost, "role"
+	}
+	return net.JoinHostPort(host, strconv.Itoa(s.Port)), from
+}
 
 // ServicesConfig holds per-listener configuration.
 // Nil pointer = listener not started.
@@ -944,7 +969,7 @@ func (q QuotaConfig) quotaWarnings() []quota.Warning {
 type QuotaStatusConfig struct {
 	// Listen is the TCP address the policy service binds to.
 	// Postfix connects here via check_policy_service.
-	// Default: ":12340"
+	// Default: "127.0.0.1:12340"
 	Listen string `koanf:"listen"`
 	// RecipientDelimiter is the address detail separator used to derive the
 	// target folder (alice+Spam@ → Spam). Default "+".
@@ -1007,7 +1032,7 @@ type LoginConfig struct {
 // connects here and each session is proxied to yarilo-auth, keeping the
 // yarilo-auth socket internal.
 type SASLLoginConfig struct {
-	// Listen is the TCP address Postfix's smtpd_sasl_path names; default ":12345",
+	// Listen is the TCP address Postfix's smtpd_sasl_path names; default "127.0.0.1:12345",
 	// the port Postfix SASL setups commonly use.
 	Listen string `koanf:"listen"`
 	// AuthAddr is the yarilo-auth client-protocol address to dial.
@@ -1458,7 +1483,7 @@ type MailServerConfig struct {
 
 // DirectorAPIConfig configures the HTTP admin API on yarilo-director.
 type DirectorAPIConfig struct {
-	Listen      string   `koanf:"listen"`       // default ":9103"
+	Listen      string   `koanf:"listen"`       // default "127.0.0.1:9103"
 	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR}
 	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
 	// AuthDisabled is the only way to run the API without a token.
@@ -1778,7 +1803,7 @@ type LMTPLoginServiceConfig struct {
 // CLI surfaces both through nested subcommands (`yarctl
 // director ...` vs `yarctl backend ...`).
 type BackendAPIConfig struct {
-	Listen      string   `koanf:"listen"`       // ":9105" default
+	Listen      string   `koanf:"listen"`       // "127.0.0.1:9105" default
 	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR} via koanf
 	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
 	// AuthDisabled is the only way to run the API without a token.
@@ -2595,11 +2620,11 @@ func Defaults() *Config {
 			CA:      "/etc/yarilo/tls/ca.crt",
 		},
 		WardenService: WardenServiceConfig{
-			Listen:   ":9101",
+			Listen:   "127.0.0.1:9101",
 			Shutdown: ShutdownConfig{},
 		},
 		AuthService: AuthServiceConfig{
-			Listen:   ":9100",
+			Listen:   "127.0.0.1:9100",
 			Shutdown: ShutdownConfig{},
 		},
 		Auth: AuthConfig{
@@ -2636,12 +2661,12 @@ func Defaults() *Config {
 			},
 		},
 		DirectorService: DirectorServiceConfig{
-			Listen:                ":9102",
+			Listen:                "127.0.0.1:9102",
 			Shutdown:              ShutdownConfig{},
 			UsernameHashLowercase: true,
 			AssignmentPolicy:      "hash",
 			API: DirectorAPIConfig{
-				Listen: ":9103",
+				Listen: "127.0.0.1:9103",
 				// No default IP restriction - service/pod CIDRs differ per
 				// cluster/CNI, so a hardcoded guess here (kubeadm's
 				// 10.96.0.0/12 + 10.244.0.0/16 was tried and silently
@@ -2654,7 +2679,7 @@ func Defaults() *Config {
 				AllowedNets: nil,
 			},
 		},
-		QuotaStatus: QuotaStatusConfig{Listen: ":12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user",
+		QuotaStatus: QuotaStatusConfig{Listen: "127.0.0.1:12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user",
 			Success: "OK", Overquota: "554 5.2.2 %{error}"},
 		Quota: QuotaConfig{
 			Name:            "User quota",
@@ -2667,7 +2692,7 @@ func Defaults() *Config {
 			// %h/fts is where an operator looks for it.
 			IndexRoot:                  "posix:prefix=%h/fts/",
 			Mode:                       "remote",
-			Listen:                     ":9106",
+			Listen:                     "127.0.0.1:9106",
 			PrefetchMaxBytesRaw:        "32M",
 			SearchAddMissing:           "body-search-only",
 			SearchReadFallback:         true,
@@ -2681,7 +2706,10 @@ func Defaults() *Config {
 			DecoderDriver: "none",
 		},
 		SASLLogin: SASLLoginConfig{
-			Listen: ":12345",
+			Listen: "127.0.0.1:12345",
+		},
+		BackendAPI: BackendAPIConfig{
+			Listen: "127.0.0.1:9105",
 		},
 		Telemetry: TelemetryConfig{
 			Listen:       ":8080",

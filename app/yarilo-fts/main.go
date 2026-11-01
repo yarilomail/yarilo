@@ -138,7 +138,8 @@ func main() {
 
 	listen := fc.Listen
 	if listen == "" {
-		listen = ":9106"
+		slog.Error("fts.fts_listen is required")
+		os.Exit(1)
 	}
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
