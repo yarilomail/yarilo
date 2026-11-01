@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/yarilomail/yarilo/v2/pkg/sqlitefile"
 )
 
 // withUmask runs the test under a typical host umask, which on its own
@@ -39,7 +41,7 @@ func TestNewCreatesSQLiteFile0600(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer p.Close()
-			if got := fileMode(t, sqliteFilePath(dsn)); got != 0o600 {
+			if got := fileMode(t, sqlitefile.Path(dsn)); got != 0o600 {
 				t.Fatalf("mode = %o, want 600", got)
 			}
 		})
@@ -62,26 +64,5 @@ func TestNewKeepsExistingSQLiteMode(t *testing.T) {
 	defer p.Close()
 	if got := fileMode(t, path); got != 0o640 {
 		t.Fatalf("mode = %o, want the operator's 640", got)
-	}
-}
-
-func TestSQLiteFilePath(t *testing.T) {
-	for _, tc := range []struct{ dsn, want string }{
-		{"/var/lib/yarilo/users.db", "/var/lib/yarilo/users.db"},
-		{"users.db?_pragma=foreign_keys(1)", "users.db"},
-		{"file:/var/lib/yarilo/users.db", "/var/lib/yarilo/users.db"},
-		{"file:///var/lib/yarilo/users.db?mode=rwc", "/var/lib/yarilo/users.db"},
-		{"file://localhost/var/lib/my%20db.db", "/var/lib/my db.db"},
-		{"file:/var/lib/yarilo/users.db?mode=ro", ""},
-		{"file:/var/lib/yarilo/users.db?mode=rw", ""},
-		{"file:mem?mode=memory", ""},
-		{"file:/x.db?vfs=memdb", ""},
-		{":memory:", ""},
-		{"file::memory:", ""},
-		{"", ""},
-	} {
-		if got := sqliteFilePath(tc.dsn); got != tc.want {
-			t.Errorf("sqliteFilePath(%q) = %q, want %q", tc.dsn, got, tc.want)
-		}
 	}
 }
