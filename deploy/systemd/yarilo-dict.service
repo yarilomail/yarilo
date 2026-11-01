@@ -1,0 +1,41 @@
+[Unit]
+Description=yarilo dict service
+Documentation=https://doc.yarilomail.org/
+PartOf=yarilo.target
+After=network.target yarilo-locks.service yarilo-auth.service yarilo-warden.service
+Wants=yarilo-locks.service yarilo-auth.service yarilo-warden.service
+
+[Service]
+Type=simple
+User=yarilo
+Group=yarilo
+SupplementaryGroups=yarilo-auth
+Environment=TELEMETRY_LISTEN=127.0.0.1:18083
+ExecStart=/usr/libexec/yarilo/yarilo-dict
+Restart=on-failure
+RestartSec=2s
+KillMode=mixed
+TimeoutStopSec=60s
+CapabilityBoundingSet=
+ReadWritePaths=/var/mail/vhosts /var/lib/yarilo/state
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=yarilo.target
