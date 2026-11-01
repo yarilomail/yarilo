@@ -1164,6 +1164,9 @@ type AuthServiceConfig struct {
 	SocketGroup       string `koanf:"socket_group"`
 	MasterSocketMode  string `koanf:"master_socket_mode"`
 	MasterSocketGroup string `koanf:"master_socket_group"`
+	// MasterSessionUsers are the users, by name or uid, whose processes may
+	// issue a session on a unix:/path master listener; empty lets none.
+	MasterSessionUsers []string `koanf:"master_session_users"`
 	// StartupWaitSeconds bounds the wait for auth at startup only (#1369).
 	// Unset 30; 0 does not wait.
 	StartupWaitSeconds int            `koanf:"auth_startup_wait"`
@@ -2705,10 +2708,11 @@ func Defaults() *Config {
 			Shutdown:   ShutdownConfig{},
 		},
 		AuthService: AuthServiceConfig{
-			Listen:           "127.0.0.1:9100",
-			SocketMode:       "0660",
-			MasterSocketMode: "0660",
-			Shutdown:         ShutdownConfig{},
+			Listen:             "127.0.0.1:9100",
+			SocketMode:         "0660",
+			MasterSocketMode:   "0660",
+			MasterSessionUsers: []string{"yarilo-delivery"},
+			Shutdown:           ShutdownConfig{},
 		},
 		Auth: AuthConfig{
 			// MasterUsers is opt-in (Enabled defaults to false).
@@ -3781,7 +3785,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 20
+const minConfigSchema = 21
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3815,6 +3819,7 @@ var schemaAdditions = map[int][]string{
 	19: {"address", "socket_mode", "socket_group", "master_socket_mode", "master_socket_group"},
 	20: {"imap_login", "imaps_login", "pop3_login", "pop3s_login", "submission_login", "submissions_login",
 		"lmtp_login", "managesieve_login", "jmap_login"},
+	21: {"master_session_users"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

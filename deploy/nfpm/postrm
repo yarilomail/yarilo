@@ -15,8 +15,9 @@ if [ -n "$kept" ]; then
 	echo "yarilo: kept$kept, not empty; the yarilo accounts stay with them" >&2
 	exit 0
 fi
-for u in yarilo-login yarilo-auth yarilo; do
+for u in yarilo-delivery yarilo-login yarilo-auth yarilo; do
 	getent passwd "$u" >/dev/null && userdel "$u"
 	getent group "$u" >/dev/null && groupdel "$u"
 done
+getent group yarilo-master >/dev/null && groupdel yarilo-master
 exit 0

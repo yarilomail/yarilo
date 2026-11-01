@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,9 @@ type MasterServer struct {
 	cookie           string
 	defaultMailPath  string
 	defaultInboxPath string
+	// sessionPeers, when set, are the uids whose connections may SESSION; a
+	// connection whose peer is unknown is refused too.
+	sessionPeers map[uint32]bool
 }
 
 // MasterServerOption tunes a NewMasterServer construction.
@@ -58,6 +62,12 @@ func WithMasterCache(c *Cache) MasterServerOption {
 // Nil store makes SESSION respond FAIL.
 func WithMasterTokenStore(ts TokenStore) MasterServerOption {
 	return func(s *MasterServer) { s.tokenStore = ts }
+}
+
+// WithMasterSessionPeers lets SESSION through only from connections whose peer
+// uid is in uids: a Unix socket carries no TLS role to tell the proxies apart.
+func WithMasterSessionPeers(uids map[uint32]bool) MasterServerOption {
+	return func(s *MasterServer) { s.sessionPeers = uids }
 }
 
 // WithMasterDefaultMailPath sets the cluster-wide mail_path default
@@ -159,6 +169,7 @@ func (s *MasterServer) handleConn(conn net.Conn) {
 	noteMasterConn()
 	cuid := s.connUID.Add(1)
 	rd := bufio.NewReaderSize(conn, maxLine)
+	peer := s.sessionPeer(conn)
 
 	fmt.Fprintf(conn, "VERSION\t%s\t%d\t%d\n", masterProtoName, masterMajorVer, masterMinorVer)
 	fmt.Fprintf(conn, "SPID\t%d\n", s.pid)
@@ -195,7 +206,7 @@ func (s *MasterServer) handleConn(conn net.Conn) {
 			s.handleUser(conn, fields)
 		case "SESSION":
 			noteMasterRequest("SESSION")
-			s.handleSession(conn, fields)
+			s.handleSession(conn, fields, peer)
 		case "PASS":
 			// Declared in the wire surface; not yet implemented.
 			noteMasterRequest("PASS")
@@ -313,8 +324,32 @@ func (s *MasterServer) handleCacheFlush(conn net.Conn, fields []string) {
 //	SESSION <id> user=<username> sid=<warden-session-id> ip=<mta-ip>
 //	→ OK <id> token=<tok>
 //	→ FAIL <id> reason=...
-func (s *MasterServer) handleSession(conn net.Conn, fields []string) {
+//
+// sessionGate is what one connection may do with SESSION.
+type sessionGate struct {
+	allowed bool
+	uid     string
+}
+
+func (s *MasterServer) sessionPeer(conn net.Conn) sessionGate {
+	if s.sessionPeers == nil {
+		return sessionGate{allowed: true}
+	}
+	uid, err := sockaddr.PeerUID(conn)
+	if err != nil {
+		slog.Warn("auth/master: peer uid unknown; SESSION refused on this connection", "err", err)
+		return sessionGate{uid: "unknown"}
+	}
+	return sessionGate{allowed: s.sessionPeers[uid], uid: strconv.FormatUint(uint64(uid), 10)}
+}
+
+func (s *MasterServer) handleSession(conn net.Conn, fields []string, peer sessionGate) {
 	id := parseID(fields)
+	if !peer.allowed {
+		slog.Warn("auth/master: SESSION refused, the peer is not in auth_service.master_session_users", "uid", peer.uid)
+		fmt.Fprintf(conn, "FAIL\t%s\treason=peer may not issue sessions\n", id)
+		return
+	}
 	if s.tokenStore == nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=token store not configured\n", id)
 		return

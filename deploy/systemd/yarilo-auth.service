@@ -8,6 +8,7 @@ After=network.target yarilo-locks.service
 Type=simple
 User=yarilo-auth
 Group=yarilo-auth
+SupplementaryGroups=yarilo-master
 Environment=TELEMETRY_LISTEN=127.0.0.1:18081
 ExecStart=/usr/libexec/yarilo/yarilo-auth
 ExecStartPost=/bin/sh -c 'i=0; until [ -S /run/yarilo/auth/auth-client.sock ] && [ -S /run/yarilo/auth/auth-master.sock ]; do i=$$((i+1)); [ $$i -gt 50 ] && exit 1; sleep 0.2; done'
