@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // Conn is a single TCP connection to yarilo-warden for one login session.
@@ -34,11 +35,7 @@ func DialContext(ctx context.Context, addr string, tlsCfg *tls.Config, timeout t
 	d := &net.Dialer{Timeout: timeout}
 	var raw net.Conn
 	var err error
-	if tlsCfg != nil {
-		raw, err = (&tls.Dialer{NetDialer: d, Config: tlsCfg}).DialContext(ctx, "tcp", addr)
-	} else {
-		raw, err = d.DialContext(ctx, "tcp", addr)
-	}
+	raw, err = sockaddr.DialTLS(ctx, d, addr, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("warden/client: dial %s: %w", addr, err)
 	}

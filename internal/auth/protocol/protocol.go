@@ -24,6 +24,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
@@ -1044,15 +1045,9 @@ func NewServer(passdbs []Passdb, opts ...ServerOption) *Server {
 // only once the port is accepting. ListenAndServe binds and serves in one call,
 // which forces the caller to run it in a goroutine and therefore to announce
 // readiness before knowing whether the bind succeeded.
-func (s *Server) Listen(addr string, tlsCfg *tls.Config) (net.Listener, error) {
-	if tlsCfg != nil {
-		ln, err := tls.Listen("tcp", addr, tlsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("auth: listen %s (tls): %w", addr, err)
-		}
-		return ln, nil
-	}
-	ln, err := net.Listen("tcp", addr)
+// A unix:/path addr gets perm and is served without TLS.
+func (s *Server) Listen(addr string, perm sockaddr.Perm, tlsCfg *tls.Config) (net.Listener, error) {
+	ln, err := sockaddr.ListenTLS(addr, perm, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("auth: listen %s: %w", addr, err)
 	}
@@ -1060,9 +1055,9 @@ func (s *Server) Listen(addr string, tlsCfg *tls.Config) (net.Listener, error) {
 }
 
 // ListenAndServe binds addr and serves it. Kept for callers that do not need to
-// separate the two.
+// separate the two; a Unix socket it binds is the owner's only.
 func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error {
-	ln, err := s.Listen(addr, tlsCfg)
+	ln, err := s.Listen(addr, sockaddr.Perm{Mode: 0o600}, tlsCfg)
 	if err != nil {
 		return err
 	}

@@ -24,6 +24,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // ErrNoAuthService names the key a session process cannot start without: it
@@ -601,11 +602,7 @@ func (c *Client) dial() (net.Conn, *bufio.Reader, error) {
 	}
 	var raw net.Conn
 	var err error
-	if c.tlsCfg != nil {
-		raw, err = tls.DialWithDialer(dialer, "tcp", c.addr, c.tlsCfg)
-	} else {
-		raw, err = dialer.Dial("tcp", c.addr)
-	}
+	raw, err = sockaddr.DialTLS(context.Background(), dialer, c.addr, c.tlsCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth/client: dial %s: %w", c.addr, err)
 	}

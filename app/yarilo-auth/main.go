@@ -215,7 +215,7 @@ func main() {
 	errCh := make(chan error, 3)
 	// Bind before readiness: ListenAndServe would bind inside the
 	// goroutine, so the pod would announce ready before the port came up.
-	clientLn, err := srv.Listen(cfg.AuthService.Listen, tlsCfg)
+	clientLn, err := srv.Listen(cfg.AuthService.Listen, cfg.AuthService.Socket(), tlsCfg)
 	if err != nil {
 		slog.Error("auth: listen failed", "addr", cfg.AuthService.Listen, "err", err)
 		os.Exit(1)
@@ -242,7 +242,7 @@ func main() {
 		}
 		master := protocol.NewMasterServer(combinedUserdb, masterOpts...)
 		slog.Info("yarilo-auth master listener", "addr", cfg.AuthService.MasterListen)
-		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, masterTLSCfg)
+		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, cfg.AuthService.MasterSocket(), masterTLSCfg)
 		if merr != nil {
 			slog.Error("auth/master: listen failed", "addr", cfg.AuthService.MasterListen, "err", merr)
 			os.Exit(1)

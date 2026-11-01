@@ -17,6 +17,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
@@ -105,25 +106,20 @@ func NewMasterServer(userdb Userdb, opts ...MasterServerOption) *MasterServer {
 }
 
 // Listen binds addr and returns the listener so a caller can report readiness
-// only once the port accepts. Non-nil tlsCfg makes the listener use mTLS.
-func (s *MasterServer) Listen(addr string, tlsCfg *tls.Config) (net.Listener, error) {
-	if tlsCfg != nil {
-		ln, err := tls.Listen("tcp", addr, tlsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("auth/master: listen %s (tls): %w", addr, err)
-		}
-		return ln, nil
-	}
-	ln, err := net.Listen("tcp", addr)
+// only once the port accepts. Non-nil tlsCfg makes a TCP listener use mTLS; a
+// unix:/path addr gets perm and is served without TLS.
+func (s *MasterServer) Listen(addr string, perm sockaddr.Perm, tlsCfg *tls.Config) (net.Listener, error) {
+	ln, err := sockaddr.ListenTLS(addr, perm, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("auth/master: listen %s: %w", addr, err)
 	}
 	return ln, nil
 }
 
-// ListenAndServe binds addr and serves it.
+// ListenAndServe binds addr and serves it; a Unix socket it binds is the
+// owner's only.
 func (s *MasterServer) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error {
-	ln, err := s.Listen(addr, tlsCfg)
+	ln, err := s.Listen(addr, sockaddr.Perm{Mode: 0o600}, tlsCfg)
 	if err != nil {
 		return err
 	}
