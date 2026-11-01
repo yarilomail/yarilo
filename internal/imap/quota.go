@@ -121,17 +121,18 @@ func (s *session) GetQuota(root string) (*imaplib.QuotaData, error) {
 }
 
 // buildQuotaData constructs the IMAP QuotaData from current usage
-// and resolved limits. STORAGE is in kibibytes per RFC 9208.
+// and resolved limits. STORAGE is in kibibytes per RFC 9208. A resource
+// without a limit is left out, as a limit of 0 would say the account is full.
 func buildQuotaData(u quota.Usage, lim quota.Limits, name string) imaplib.QuotaData {
 	qd := imaplib.QuotaData{Name: name}
-	storageUsageKiB := quota.StorageBytesToKiB(u.StorageBytes)
-	storageLimitKiB := quota.StorageBytesToKiB(lim.StorageBytes)
-	qd.Resources = append(qd.Resources, imaplib.QuotaResource{
-		Type:  imaplib.QuotaResourceStorage,
-		Usage: storageUsageKiB,
-		Limit: storageLimitKiB,
-	})
-	if lim.Messages > 0 || u.Messages > 0 {
+	if lim.StorageBytes > 0 {
+		qd.Resources = append(qd.Resources, imaplib.QuotaResource{
+			Type:  imaplib.QuotaResourceStorage,
+			Usage: quota.StorageBytesToKiB(u.StorageBytes),
+			Limit: quota.StorageBytesToKiB(lim.StorageBytes),
+		})
+	}
+	if lim.Messages > 0 {
 		qd.Resources = append(qd.Resources, imaplib.QuotaResource{
 			Type:  imaplib.QuotaResourceMessage,
 			Usage: uint64(u.Messages),

@@ -25,12 +25,10 @@ func TestQuotaRowJudgement(t *testing.T) {
 		{"the same numbers", imapSide("2048", "10240"), adminSide("2048", "10240"), ""},
 		{"a different usage", imapSide("2048", "10240"), adminSide("4096", "10240"), "storageUsedKiB"},
 		{"a different limit", imapSide("2048", "10240"), adminSide("2048", "20480"), "storageLimitKiB"},
-		// Unlimited is 0 over IMAP and -1 over the admin API; the reader
-		// converts, so by the time the judge sees them they are one number.
-		// A judge that tolerated the pair would also tolerate a real 0 against
-		// a real -1 elsewhere.
-		{"unlimited, once converted", imapSide("2048", "0"), adminSide("2048", "0"), ""},
-		{"unlimited against a limit", imapSide("2048", "0"), adminSide("2048", "10240"), "storageLimitKiB"},
+		// Each reader spells no limit as unlimited; IMAP reports no usage then.
+		{"unlimited on both", newReading(surfIMAP).field("storageLimitKiB", unlimited), adminSide("2048", unlimited), ""},
+		{"unlimited against a limit", newReading(surfIMAP).field("storageLimitKiB", unlimited), adminSide("2048", "10240"), "storageLimitKiB"},
+		{"a limit against unlimited", imapSide("2048", "10240"), adminSide("2048", unlimited), "storageLimitKiB"},
 	}
 
 	for _, tc := range tests {
@@ -92,5 +90,41 @@ func TestParseQuotaStorage(t *testing.T) {
 				t.Errorf("(used, limit) = (%d, %d), want (%d, %d)", used, limit, tc.wantUsed, tc.wantLim)
 			}
 		})
+	}
+}
+
+// Every surface spells a quota without a limit as unlimited: IMAP by a root
+// that lists no STORAGE, the admin API by -1, JMAP by no octets root (#2455).
+func TestQuotaReadingsSpellUnlimitedAlike(t *testing.T) {
+	tests := []struct {
+		name  string
+		got   func() (*reading, error)
+		limit string
+	}{
+		{"imap with a limit", func() (*reading, error) {
+			return imapQuotaReading([]string{`* QUOTA "User quota" (STORAGE 23 100)`})
+		}, "100"},
+		{"imap without one", func() (*reading, error) {
+			return imapQuotaReading([]string{`* QUOTAROOT INBOX "User quota"`, `* QUOTA "User quota" ()`})
+		}, unlimited},
+		{"imap with only a message limit", func() (*reading, error) {
+			return imapQuotaReading([]string{`* QUOTA "User quota" (MESSAGE 55 1000)`})
+		}, unlimited},
+		{"admin API with a limit", func() (*reading, error) { return adminQuotaReading(23, 100), nil }, "100"},
+		{"admin API without one", func() (*reading, error) { return adminQuotaReading(23, -1), nil }, unlimited},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := tc.got()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := r.fields["storageLimitKiB"]; got != tc.limit {
+				t.Errorf("storageLimitKiB = %q, want %q", got, tc.limit)
+			}
+		})
+	}
+	if _, err := imapQuotaReading([]string{`* CAPABILITY IMAP4rev1 QUOTA`}); err == nil {
+		t.Error("a response with no QUOTA line read as a quota")
 	}
 }
