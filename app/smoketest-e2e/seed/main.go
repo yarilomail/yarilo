@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -34,7 +35,7 @@ func main() {
 	}
 	defer db.Close()
 
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS yarilo_users (
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE IF NOT EXISTS yarilo_users (
 		username TEXT PRIMARY KEY,
 		password TEXT NOT NULL,
 		home     TEXT NOT NULL DEFAULT '',
@@ -43,7 +44,7 @@ func main() {
 	)`); err != nil {
 		fatal(err)
 	}
-	if _, err := db.Exec(
+	if _, err := db.ExecContext(context.Background(),
 		`INSERT OR REPLACE INTO yarilo_users (username, password, enabled) VALUES (?, ?, 1)`,
 		user, stored,
 	); err != nil {

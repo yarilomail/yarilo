@@ -37,7 +37,7 @@ func main() {
 
 	if *tcpOnly {
 		ds := measure(*iters, func() error {
-			c, err := net.DialTimeout("tcp", *addr, 5*time.Second)
+			c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", *addr)
 			if err != nil {
 				return err
 			}
@@ -94,9 +94,14 @@ func main() {
 // TLSState accessor on the client, and a production API added for a scratch
 // measurement is a worse trade.
 func dialLookupClose(addr string, cfg *tls.Config, user string, resumed *int) error {
-	c, err := tls.Dial("tcp", addr, cfg)
+	nc, err := (&tls.Dialer{Config: cfg}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return err
+	}
+	c, ok := nc.(*tls.Conn)
+	if !ok {
+		nc.Close()
+		return fmt.Errorf("auth-bench: %T is not a TLS connection", nc)
 	}
 	defer c.Close()
 	rd := bufio.NewReader(c)

@@ -391,7 +391,7 @@ func (s *Server) Serve(ln net.Listener) error {
 }
 
 func (s *Server) ListenAndServe() error {
-	ln, err := net.Listen("tcp", s.opts.AddrPlain)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", s.opts.AddrPlain)
 	if err != nil {
 		return err
 	}
@@ -405,7 +405,7 @@ func (s *Server) wrapProxy(ln net.Listener) net.Listener {
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			ReadHeaderTimeout: timeout,
-			Policy:            proxyPolicy(s.opts.HAProxyTrustedNets),
+			ConnPolicy:        proxyPolicy(s.opts.HAProxyTrustedNets),
 		}
 	}
 	// PreambleListener terminates internal mTLS, so it must wrap the raw
@@ -434,8 +434,9 @@ func (s *Server) wrapProxy(ln net.Listener) net.Listener {
 	return ln
 }
 
-func proxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
-	return func(upstream net.Addr) (proxyproto.Policy, error) {
+func proxyPolicy(nets []*net.IPNet) proxyproto.ConnPolicyFunc {
+	return func(o proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		upstream := o.Upstream
 		if len(nets) == 0 {
 			return proxyproto.IGNORE, nil
 		}

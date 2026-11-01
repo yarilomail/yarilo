@@ -1382,7 +1382,7 @@ func (m *Membership) connectRight(ctx context.Context, addr string) (redirect st
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	var conn net.Conn
 	if m.tlsCfg != nil {
-		conn, err = tls.DialWithDialer(dialer, "tcp", addr, m.tlsCfg)
+		conn, err = (&tls.Dialer{NetDialer: dialer, Config: m.tlsCfg}).DialContext(ctx, "tcp", addr)
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	}

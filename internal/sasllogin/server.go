@@ -55,7 +55,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		timeout := s.opts.HAProxyTimeout
 		ln = &proxyproto.Listener{
 			Listener:          ln,
-			Policy:            haProxyPolicy(s.opts.HAProxyNets),
+			ConnPolicy:        haProxyPolicy(s.opts.HAProxyNets),
 			ReadHeaderTimeout: timeout,
 		}
 	}
@@ -227,8 +227,9 @@ func logServerLine(line, remoteIP string) {
 	}
 }
 
-func haProxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
-	return func(upstream net.Addr) (proxyproto.Policy, error) {
+func haProxyPolicy(nets []*net.IPNet) proxyproto.ConnPolicyFunc {
+	return func(o proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		upstream := o.Upstream
 		if len(nets) == 0 {
 			return proxyproto.IGNORE, nil
 		}

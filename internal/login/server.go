@@ -457,7 +457,7 @@ func (s *Server) Serve(ln net.Listener) error {
 		timeout := s.opts.HAProxyTimeout
 		ln = &proxyproto.Listener{
 			Listener:          ln,
-			Policy:            haProxyPolicy(s.opts.HAProxyNets),
+			ConnPolicy:        haProxyPolicy(s.opts.HAProxyNets),
 			ReadHeaderTimeout: timeout,
 		}
 	}
@@ -567,7 +567,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	if s.opts.ExtTLS != nil {
 		tlsStart := time.Now()
 		tlsConn := tls.Server(conn, s.opts.ExtTLS)
-		if err := tlsConn.Handshake(); err != nil {
+		if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 			log.Debug("login: tls handshake", "err", err)
 			s.incResult("tls_error")
 			return
@@ -1317,7 +1317,9 @@ func (s *Server) runWatch(ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		c.Close()
-		<-readErr
+		if err := <-readErr; err != nil {
+			slog.Debug("login: director watch reader stopped", "err", err)
+		}
 	case err := <-readErr:
 		if err != nil {
 			slog.Warn("login: director watch read error", "err", err)
@@ -1583,7 +1585,7 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 func dialBackend(addr string, tlsCfg *tls.Config, deadline time.Time) (net.Conn, error) {
 	d := &net.Dialer{Deadline: deadline}
 	if tlsCfg != nil {
-		conn, err := tls.DialWithDialer(d, "tcp", addr, tlsCfg)
+		conn, err := (&tls.Dialer{NetDialer: d, Config: tlsCfg}).DialContext(context.Background(), "tcp", addr)
 		if err != nil {
 			return nil, fmt.Errorf("mtls dial %s: %w", addr, err)
 		}
@@ -1840,8 +1842,9 @@ func ipInNets(ip string, nets []*net.IPNet) bool {
 	return false
 }
 
-func haProxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
-	return func(upstream net.Addr) (proxyproto.Policy, error) {
+func haProxyPolicy(nets []*net.IPNet) proxyproto.ConnPolicyFunc {
+	return func(o proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		upstream := o.Upstream
 		if len(nets) == 0 {
 			return proxyproto.IGNORE, nil
 		}

@@ -430,3 +430,14 @@ func TestNoPenaltyIsForTheRealPeer(t *testing.T) {
 		t.Errorf("AUTH %q: a trusted proxy's login is penalised", line)
 	}
 }
+
+// From a peer outside the trusted nets the PROXY header is ignored: the client
+// is the peer itself, not the address the header names.
+func TestAProxyHeaderFromAnUntrustedPeerIsIgnored(t *testing.T) {
+	_, other, _ := net.ParseCIDR("10.0.0.0/8")
+	line := authLineOver(t, Options{HAProxy: true, HAProxyTimeout: 5 * time.Second, HAProxyNets: []*net.IPNet{other}},
+		"PROXY TCP4 192.0.2.10 198.51.100.20 51000 143\r\n")
+	if strings.Contains(line, "192.0.2.10") || !strings.Contains(line, "\trip=127.0.0.1") {
+		t.Errorf("AUTH %q: an untrusted peer's PROXY header was believed", line)
+	}
+}

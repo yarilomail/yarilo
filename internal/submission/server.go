@@ -114,7 +114,7 @@ func (s *Server) Serve(ln net.Listener, tlsCfg *tls.Config) error {
 	if s.opts.HAProxy {
 		ln = &proxyproto.Listener{
 			Listener:          ln,
-			Policy:            proxyPolicy(s.opts.HAProxyNets),
+			ConnPolicy:        proxyPolicy(s.opts.HAProxyNets),
 			ReadHeaderTimeout: s.haproxyTimeout(),
 		}
 	}
@@ -138,8 +138,9 @@ func (s *Server) haproxyTimeout() time.Duration {
 	return 3 * time.Second
 }
 
-func proxyPolicy(nets []*net.IPNet) func(upstream net.Addr) (proxyproto.Policy, error) {
-	return func(upstream net.Addr) (proxyproto.Policy, error) {
+func proxyPolicy(nets []*net.IPNet) proxyproto.ConnPolicyFunc {
+	return func(o proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		upstream := o.Upstream
 		if len(nets) == 0 {
 			return proxyproto.IGNORE, nil
 		}

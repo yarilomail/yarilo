@@ -144,7 +144,7 @@ func (c *Client) dial() (net.Conn, error) {
 	if c.tls == nil {
 		return d.Dial("tcp", c.addr)
 	}
-	return tls.DialWithDialer(d, "tcp", c.addr, c.tls)
+	return (&tls.Dialer{NetDialer: d, Config: c.tls}).DialContext(context.Background(), "tcp", c.addr)
 }
 
 // exchange writes one line on cn and reads one reply.

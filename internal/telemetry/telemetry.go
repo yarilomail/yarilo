@@ -176,7 +176,7 @@ func (s *Server) IsReady() bool { return s.isReady() }
 // served from a goroutine that only logs, the process ran without /healthz,
 // /readyz and /metrics for its whole life (#2419).
 func (s *Server) Start(ctx context.Context) error {
-	ln, err := net.Listen("tcp", s.srv.Addr)
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", s.srv.Addr)
 	if err != nil {
 		return fmt.Errorf("telemetry: listen %s: %w", s.srv.Addr, err)
 	}

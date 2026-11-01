@@ -10,6 +10,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -31,7 +32,7 @@ func main() {
 	listen := flag.String("listen", ":9199", "address to listen on")
 	flag.Parse()
 
-	ln, err := net.Listen("tcp", *listen)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", *listen)
 	if err != nil {
 		log.Fatalf("listen %s: %v", *listen, err)
 	}

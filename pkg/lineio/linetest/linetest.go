@@ -2,6 +2,7 @@
 package linetest
 
 import (
+	"context"
 	"crypto/tls"
 	"io"
 	"net"
@@ -17,9 +18,9 @@ func ExpectCutOff(t *testing.T, addr string, tlsCfg *tls.Config, prefix string) 
 	var conn net.Conn
 	var err error
 	if tlsCfg != nil {
-		conn, err = tls.Dial("tcp", addr, tlsCfg)
+		conn, err = (&tls.Dialer{Config: tlsCfg}).DialContext(context.Background(), "tcp", addr)
 	} else {
-		conn, err = net.Dial("tcp", addr)
+		conn, err = new(net.Dialer).DialContext(context.Background(), "tcp", addr)
 	}
 	if err != nil {
 		t.Fatalf("dial %s: %v", addr, err)

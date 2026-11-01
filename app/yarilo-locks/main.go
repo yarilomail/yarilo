@@ -98,7 +98,10 @@ func main() {
 		grace := time.Duration(lcfg.Shutdown.SessionGracePeriod) * time.Second
 		// Wait for Serve to return or grace to expire.
 		select {
-		case <-serveErr:
+		case err := <-serveErr:
+			if err != nil {
+				slog.Warn("locks: serve ended with an error", "err", err)
+			}
 		case <-time.After(grace):
 			slog.Warn("graceful shutdown timed out", "grace", grace)
 		}
@@ -168,7 +171,7 @@ func buildListener(cfg *config.Config, lcfg config.LocksServiceConfig) (net.List
 		if !cfg.InternalTLS.Enabled {
 			// Plain TCP only when a service mesh handles transport security.
 			mtls.WarnRolesUnchecked(mtls.ListenerLocks)
-			return net.Listen("tcp", lcfg.Listen)
+			return new(net.ListenConfig).Listen(context.Background(), "tcp", lcfg.Listen)
 		}
 		tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerLocks)
 		if err != nil {

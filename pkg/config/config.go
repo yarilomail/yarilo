@@ -3217,9 +3217,8 @@ func BuildTLSConfig(ssl SSLConfig) (*tls.Config, error) {
 		certs = append(certs, alt)
 	}
 	tlsCfg := &tls.Config{
-		Certificates:             certs,
-		PreferServerCipherSuites: ssl.SSLPreferCiphers,
-		MinVersion:               tls.VersionTLS12,
+		Certificates: certs,
+		MinVersion:   tls.VersionTLS12,
 	}
 	if ssl.SSLMinProtocol == "TLS1.3" {
 		tlsCfg.MinVersion = tls.VersionTLS13

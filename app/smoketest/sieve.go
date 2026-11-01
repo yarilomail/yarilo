@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -44,7 +45,7 @@ func msieveDial() (net.Conn, error) {
 		return conn, nil
 	}
 	addr := net.JoinHostPort(manageSieveHost(), *flagManageSievePort)
-	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
+	conn, err := (&net.Dialer{Timeout: *flagTimeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +77,7 @@ func msieveDial() (net.Conn, error) {
 		return nil, fmt.Errorf("STARTTLS rejected: %q", line)
 	}
 	tlsConn := tls.Client(conn, publicTLS(manageSieveHost()))
-	if err := tlsConn.Handshake(); err != nil {
+	if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 		tlsConn.Close()
 		return nil, fmt.Errorf("STARTTLS handshake: %w", err)
 	}
@@ -195,7 +196,7 @@ func lmtpSend(id, from, to, subject, body string) error {
 // refusal and must read its code.
 func lmtpDeliver(id, from, to, subject, body string) (string, error) {
 	addr := net.JoinHostPort(deliveryHost(), *flagDeliveryPort)
-	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
+	conn, err := (&net.Dialer{Timeout: *flagTimeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return "", fmt.Errorf("connect %s: %w", addr, err)
 	}
@@ -1083,7 +1084,7 @@ func lmtpSendRaw(from, to, raw string) error {
 // the final dot.
 func lmtpDeliverRaw(from, to, raw string) (string, error) {
 	addr := net.JoinHostPort(deliveryHost(), *flagDeliveryPort)
-	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
+	conn, err := (&net.Dialer{Timeout: *flagTimeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return "", fmt.Errorf("connect %s: %w", addr, err)
 	}

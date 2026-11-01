@@ -126,7 +126,7 @@ func main() {
 	// Port 993 - implicit TLS (IMAPS).
 	if svcs.IMAPSLogin.Active() {
 		addr, from := svcs.IMAPSLogin.ListenAddr(config.PublicHost)
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			slog.Error("imaps-login: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
@@ -179,7 +179,7 @@ func main() {
 	// Port 143 - STARTTLS.
 	if svcs.IMAPLogin.Active() {
 		addr, from := svcs.IMAPLogin.ListenAddr(config.PublicHost)
-		ln, err := net.Listen("tcp", addr)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			slog.Error("imap-login: listen failed", "addr", addr, "err", err)
 			os.Exit(1)

@@ -3,6 +3,7 @@ package pop3
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"encoding/base64"
@@ -865,7 +866,7 @@ func (s *session) cmdSTLS() {
 	}
 	s.ok("Begin TLS negotiation")
 	tlsConn := tls.Server(s.conn, s.srv.opts.TLSConfig)
-	if err := tlsConn.Handshake(); err != nil {
+	if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 		slog.Info("pop3: TLS handshake failed", "err", err)
 		s.state = stateDone
 		return

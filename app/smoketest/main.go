@@ -852,7 +852,7 @@ func submissionTLS() (net.Conn, map[string]bool, error) {
 		return nil, nil, fmt.Errorf("STARTTLS: %w", err)
 	}
 	tlsConn := tls.Client(conn, publicTLS(smtpHost()))
-	if err := tlsConn.Handshake(); err != nil {
+	if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 		conn.Close() //nolint:errcheck
 		return nil, nil, fmt.Errorf("STARTTLS TLS handshake: %w", err)
 	}

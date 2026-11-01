@@ -23,6 +23,7 @@ package ftsproto
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
@@ -235,9 +236,9 @@ func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Remote, erro
 	var conn net.Conn
 	var err error
 	if tlsCfg != nil {
-		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, tlsCfg)
+		conn, err = (&tls.Dialer{NetDialer: &net.Dialer{Timeout: timeout}, Config: tlsCfg}).DialContext(context.Background(), "tcp", addr)
 	} else {
-		conn, err = net.DialTimeout("tcp", addr, timeout)
+		conn, err = (&net.Dialer{Timeout: timeout}).DialContext(context.Background(), "tcp", addr)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("ftsproto: dial: %w", err)
