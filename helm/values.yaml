@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 21
+config_schema_version: 22
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -1182,6 +1182,10 @@ components:
     enabled: true
     replicas: 1
     listen: ":9107"
+    ## socket_mode / socket_group - octal mode and group name of a unix:/path
+    ## listen address on a host install; pods listen on TCP.
+    socket_mode: "0660"
+    socket_group: ""
     ## Connections a session keeps to one named dict. An iteration holds its
     ## connection to the end, so one connection is a queue (#1902).
     max_conns: 8

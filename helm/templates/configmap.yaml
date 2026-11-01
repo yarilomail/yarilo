@@ -1107,6 +1107,8 @@ data:
     ## component reads dict_addr and names a dict (#1733).
     dict_service:
       dict_max_conns: {{ .Values.components.dict.max_conns | int64 }}
+      socket_mode: {{ .Values.components.dict.socket_mode | quote }}
+      socket_group: {{ .Values.components.dict.socket_group | quote }}
       {{- if .Values.components.dict.enabled }}
       dict_listen: {{ .Values.components.dict.listen | default ":9107" | quote }}
       dict_addr: {{ printf "%s-dict.%s.svc.cluster.local:%s" (include "yarilo.fullname" .) .Release.Namespace (include "yarilo.dictPort" .) | quote }}

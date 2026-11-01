@@ -13,6 +13,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/pkg/dict"
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // Client is a dict.Dict served by yarilo-dict. Connections are pooled: an
@@ -138,13 +139,9 @@ func (c *Client) open(user string) (*conn, error) {
 }
 
 // dial speaks TLS where the service does: a plain dial against an mTLS listener
-// fails at the first command, not at connect (#1733).
+// fails at the first command, not at connect (#1733). A unix:/path is dialled plain.
 func (c *Client) dial() (net.Conn, error) {
-	d := &net.Dialer{Timeout: DialTimeout}
-	if c.tls == nil {
-		return d.Dial("tcp", c.addr)
-	}
-	return (&tls.Dialer{NetDialer: d, Config: c.tls}).DialContext(context.Background(), "tcp", c.addr)
+	return sockaddr.DialTLS(context.Background(), &net.Dialer{Timeout: DialTimeout}, c.addr, c.tls)
 }
 
 // exchange writes one line on cn and reads one reply.
