@@ -3844,7 +3844,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 23
+const minConfigSchema = 24
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3883,6 +3883,7 @@ var schemaAdditions = map[int][]string{
 	23: {"protocol.imap.mail_max_userip_connections", "protocol.pop3.mail_max_userip_connections",
 		"protocol.submission.mail_max_userip_connections", "protocol.lmtp.mail_max_userip_connections",
 		"protocol.managesieve.mail_max_userip_connections", "protocol.jmap.mail_max_userip_connections"},
+	24: {"protocol.jmap.jmap_limit_retry_after"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
