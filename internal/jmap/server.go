@@ -237,5 +237,15 @@ func (s *Server) guard(next handlerFunc) http.HandlerFunc {
 func (s *Server) handleSession(w http.ResponseWriter, _ *http.Request, id identity) {
 	slog.Debug("jmap: session", "user", id.user, "session", id.sessionID, "client_ip", id.clientIP)
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	jmapcore.WriteJSON(w, http.StatusOK, jmapcore.BuildSession(s.opts.Limits, id.user))
+	jmapcore.WriteJSON(w, http.StatusOK, jmapcore.BuildSession(s.limitsFor(id), id.user))
+}
+
+// limitsFor is what this request's session offers: WebSocket tickets only
+// through a login layer that issues them, with the session state to match.
+func (s *Server) limitsFor(id identity) jmapcore.Limits {
+	l := s.opts.Limits
+	if !id.tickets {
+		l.WebSocketTicket = false
+	}
+	return l
 }

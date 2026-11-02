@@ -17,6 +17,7 @@ const (
 	hdrSessionID  = "X-Session-ID"
 	hdrProxyTTL   = "X-Proxy-TTL"
 	hdrUser       = "X-Yarilo-User"
+	hdrTickets    = "X-Yarilo-WebSocket-Tickets"
 	hdrForwardPfx = "X-Yarilo-Forward-"
 )
 
@@ -96,6 +97,8 @@ type identity struct {
 	clientIP  string
 	sessionID string
 	ttl       int
+	// tickets: the login layer issues WebSocket tickets (#2479).
+	tickets bool
 	// forward carries the passdb forward_ fields, one header each.
 	forward map[string]string
 }
@@ -107,6 +110,7 @@ func readIdentity(r *http.Request) (identity, error) {
 		user:      strings.TrimSpace(r.Header.Get(hdrUser)),
 		sessionID: strings.TrimSpace(r.Header.Get(hdrSessionID)),
 		ttl:       -1,
+		tickets:   r.Header.Get(hdrTickets) == "1",
 	}
 	if id.user == "" {
 		return id, fmt.Errorf("jmap: no %s header", hdrUser)
