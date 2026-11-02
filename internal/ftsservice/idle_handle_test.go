@@ -112,7 +112,7 @@ func TestHelperFTSHolder(t *testing.T) {
 func TestIdleHandleReleasesTheWriteLockForAnotherBackend(t *testing.T) {
 	root := t.TempDir()
 
-	holder := exec.Command(os.Args[0], "-test.run=TestHelperFTSHolder", "-test.v")
+	holder := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestHelperFTSHolder", "-test.v")
 	holder.Env = append(os.Environ(), holderEnv+"="+root+"|400ms")
 	out, err := holder.StdoutPipe()
 	if err != nil {
