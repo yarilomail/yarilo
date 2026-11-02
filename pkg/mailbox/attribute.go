@@ -53,10 +53,14 @@ func ServerSubtree(attrName string) bool {
 //	/shared/admin              -> (AttrShared,  "admin")
 //	/private/vendor/yarilo/abc -> (AttrPrivate, "vendor/yarilo/abc")
 //
-// Returns an error if the entry does not start with /private/ or /shared/, or
-// is otherwise malformed. Re-checked here so callers that bypass the wire
-// layer (tests, scripted scaffolding) get the same guarantees.
+// Returns an error if the entry does not start with /private/ or /shared/,
+// names a scope root (see ParseAttrScopeRoot), or is otherwise malformed.
+// Re-checked here so callers that bypass the wire layer (tests, scripted
+// scaffolding) get the same guarantees.
 func ParseAttrEntry(entry string) (AttrScope, string, error) {
+	if _, ok := ParseAttrScopeRoot(entry); ok {
+		return 0, "", fmt.Errorf("attribute entry %q names a scope, not an entry", entry)
+	}
 	switch {
 	case strings.HasPrefix(entry, "/private/"):
 		return AttrPrivate, strings.TrimPrefix(entry, "/private/"), nil
@@ -64,6 +68,19 @@ func ParseAttrEntry(entry string) (AttrScope, string, error) {
 		return AttrShared, strings.TrimPrefix(entry, "/shared/"), nil
 	}
 	return 0, "", fmt.Errorf("attribute entry %q must start with /private/ or /shared/", entry)
+}
+
+// ParseAttrScopeRoot reports whether entry names a whole scope, /private or
+// /shared with or without the trailing slash, which GETMETADATA reads with
+// DEPTH (#2489). A scope root holds no value of its own.
+func ParseAttrScopeRoot(entry string) (AttrScope, bool) {
+	switch strings.TrimSuffix(entry, "/") {
+	case "/private":
+		return AttrPrivate, true
+	case "/shared":
+		return AttrShared, true
+	}
+	return 0, false
 }
 
 // AttrKey returns the dict key for a per-folder attribute on a

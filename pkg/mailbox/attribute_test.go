@@ -15,6 +15,8 @@ func TestParseAttrEntry(t *testing.T) {
 		{"comment", 0, "", true},
 		{"/other/foo", 0, "", true},
 		{"", 0, "", true},
+		{"/private/", 0, "", true},
+		{"/shared", 0, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
