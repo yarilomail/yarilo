@@ -566,6 +566,10 @@ func normTerm(tok string, minSize int) string {
 	return tok
 }
 
+// indexTerm is the one normalisation the index and the query share: a word the
+// index drops must leave the query too, or it can never match (#2454).
+func (o Options) indexTerm(tok string) string { return normTerm(tok, o.MinTermSize) }
+
 // addWithSuffixes adds prefix+term and, in substring mode, every suffix of the
 // term not shorter than minSize.
 func (up *update) addWithSuffixes(prefix, term string, substring bool, minSize int) error {
@@ -592,7 +596,7 @@ func (up *update) BuildMore(data []byte) error {
 		return fmt.Errorf("fts/flatcurve: BuildMore without a build key")
 	}
 	opts := up.ui.eng.opts
-	term := normTerm(string(data), opts.MinTermSize)
+	term := opts.indexTerm(string(data))
 	if term == "" {
 		return nil
 	}
@@ -1440,14 +1444,21 @@ func (u *userIndex) buildQuery(q fts.Query) (*xapian.Query, bool, error) {
 		op = xapian.OpAND
 	}
 	for _, term := range q.Terms {
-		tq, tMaybe, err := u.buildTerm(term)
+		tq, tMaybe, dropped, err := u.buildTerm(term)
 		if err != nil {
 			acc.Free()
 			return nil, false, err
 		}
 		// One over-approximated arg makes the whole conjunction a maybe.
 		maybe = maybe || tMaybe
-		if term.Not {
+		if term.Not && dropped {
+			// The complement of a superset is a subset: everything, verified.
+			tq.Free()
+			if tq, err = xapian.QueryMatchAll(); err != nil {
+				acc.Free()
+				return nil, false, err
+			}
+		} else if term.Not {
 			all, aerr := xapian.QueryMatchAll()
 			if aerr != nil {
 				tq.Free()
@@ -1468,54 +1479,59 @@ func (u *userIndex) buildQuery(q fts.Query) (*xapian.Query, bool, error) {
 	return acc, maybe, nil
 }
 
-func (u *userIndex) buildTerm(t fts.Term) (*xapian.Query, bool, error) {
+// buildTerm turns one criterion into a query. dropped: a word left the query
+// because the index never holds its token, so the answer over-approximates and
+// is a maybe (#2454).
+func (u *userIndex) buildTerm(t fts.Term) (q *xapian.Query, maybe, dropped bool, err error) {
 	name := strings.ToLower(t.HdrName)
 	if len(t.Words) == 0 {
 		if t.Field != fts.FieldHeader {
-			return nil, false, fmt.Errorf("fts/flatcurve: empty term")
+			return nil, false, false, fmt.Errorf("fts/flatcurve: empty term")
 		}
 		// HEADER existence probe → the boolean term.
 		q, err := xapian.QueryTerm(boolPrefix + name)
-		return q, false, err
+		return q, false, false, err
 	}
-	prefix := u.eng.prefix
+	opts := u.eng.opts
 	var acc *xapian.Query
-	maybe := false
 	for _, w := range t.Words {
+		// The last variant is the token as indexed; the others widen it.
+		if len(w.Variants) == 0 || opts.indexTerm(w.Variants[len(w.Variants)-1]) == "" {
+			dropped = true
+			continue
+		}
 		var wq *xapian.Query
 		for _, v := range w.Variants {
-			v = normTerm(v, 1)
-			if v == "" {
+			if v = opts.indexTerm(v); v == "" {
 				continue
 			}
-			vq, vMaybe, err := buildVariant(t.Field, name, v, prefix)
+			vq, vMaybe, err := buildVariant(t.Field, name, v, u.eng.prefix)
 			if err != nil {
 				wq.Free()
 				acc.Free()
-				return nil, false, err
+				return nil, false, false, err
 			}
 			maybe = maybe || vMaybe
 			if wq == nil {
 				wq = vq
 			} else if wq, err = xapian.QueryCombine(xapian.OpOR, wq, vq); err != nil {
 				acc.Free()
-				return nil, false, err
+				return nil, false, false, err
 			}
 		}
-		if wq == nil {
-			continue
-		}
-		var err error
 		if acc == nil {
 			acc = wq
 		} else if acc, err = xapian.QueryCombine(xapian.OpAND, acc, wq); err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
 	}
 	if acc == nil {
-		return nil, false, fmt.Errorf("fts/flatcurve: no usable variants in term")
+		// Every word dropped: nothing narrows it, the scan decides.
+		if acc, err = xapian.QueryMatchAll(); err != nil {
+			return nil, false, false, err
+		}
 	}
-	return acc, maybe, nil
+	return acc, maybe || dropped, dropped, nil
 }
 
 // buildVariant turns one search word into a query.
