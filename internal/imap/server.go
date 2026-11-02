@@ -3824,6 +3824,9 @@ func (s *session) GetMetadata(folder string, entries []string, opts *imaplib.Get
 	out := map[string]*[]byte{}
 	for _, entry := range entries {
 		scope, attrName, err := mailbox.ParseAttrEntry(entry)
+		if root, ok := mailbox.ParseAttrScopeRoot(entry); ok {
+			scope, attrName, err = root, "", nil
+		}
 		if err != nil {
 			return nil, &imaplib.Error{Type: imaplib.StatusResponseTypeBad, Text: err.Error()}
 		}
@@ -3836,7 +3839,9 @@ func (s *session) GetMetadata(folder string, entries []string, opts *imaplib.Get
 
 // collectMetadata pulls either an exact key or a prefix iteration into out.
 // Depth 0 = the entry itself; Depth 1 = entry + immediate children;
-// Depth Infinity = entry + whole subtree.
+// Depth Infinity = entry + whole subtree. An empty attrName is the scope
+// root, which has no value of its own and whose children start at the
+// scope's prefix.
 func (s *session) collectMetadata(
 	h *nsHandle, folder string, guid [16]byte,
 	scope mailbox.AttrScope, attrName, requestedEntry string,
@@ -3849,15 +3854,17 @@ func (s *session) collectMetadata(
 	ctx := context.Background()
 	ops := s.metadataOps()
 
-	exactKey := s.metadataKey(h, folder, guid, scope, attrName)
-	exactVals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, exactKey)
-	if err != nil {
-		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Metadata lookup failed: " + err.Error()}
-	}
-	if found && len(exactVals) > 0 {
-		v := exactVals[0]
-		if maxSize == nil || uint32(len(v)) <= *maxSize {
-			out[requestedEntry] = &v
+	if attrName != "" {
+		exactKey := s.metadataKey(h, folder, guid, scope, attrName)
+		exactVals, found, err := s.srv.opts.MetadataDict.Lookup(ctx, ops, exactKey)
+		if err != nil {
+			return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Metadata lookup failed: " + err.Error()}
+		}
+		if found && len(exactVals) > 0 {
+			v := exactVals[0]
+			if maxSize == nil || uint32(len(v)) <= *maxSize {
+				out[requestedEntry] = &v
+			}
 		}
 	}
 
@@ -3869,7 +3876,10 @@ func (s *session) collectMetadata(
 	if depth == imaplib.GetMetadataDepthInfinity {
 		flags |= dict.IterRecurse
 	}
-	prefix := s.metadataPrefix(h, folder, guid, scope) + attrName + "/"
+	prefix := s.metadataPrefix(h, folder, guid, scope)
+	if attrName != "" {
+		prefix += attrName + "/"
+	}
 	it, err := s.srv.opts.MetadataDict.Iterate(ctx, ops, prefix, flags)
 	if err != nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Metadata iterate failed: " + err.Error()}
