@@ -16,6 +16,10 @@ import (
 	gosieve "github.com/foxcpp/go-sieve/interp"
 )
 
+// programWaitDelay bounds the wait for a killed program's output: a child it
+// started can hold the pipe open long after the timeout fired.
+const programWaitDelay = 500 * time.Millisecond
+
 type pipeExecutor struct {
 	binDir    string
 	socketDir string
@@ -85,6 +89,7 @@ func (e *pipeExecutor) pipeBin(ctx context.Context, path string, args []string, 
 	}
 
 	cmd := exec.CommandContext(tctx, path, args...)
+	cmd.WaitDelay = programWaitDelay
 	cmd.Stdin = input
 	cmd.Env = []string{
 		"USER=" + e.username,

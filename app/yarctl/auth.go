@@ -167,7 +167,7 @@ func buildAuthTLS() (*tls.Config, error) {
 }
 
 func printAuthUsage() {
-	fmt.Fprintln(os.Stderr, `yarctl auth <command>
+	fmt.Println(`yarctl auth <command>
 
 Commands:
   cache flush [<user-mask> ...]  evict auth-cache entries matching the mask(s); no mask = full flush
@@ -184,7 +184,7 @@ When --auth-cert/--auth-key/--auth-ca are unset, the connection is plain TCP (de
 }
 
 func printAuthCacheUsage() {
-	fmt.Fprintln(os.Stderr, `yarctl auth cache <command>
+	fmt.Println(`yarctl auth cache <command>
 
 Commands:
   flush [<user-mask> ...]  evict cache entries matching the mask(s); no mask = full flush

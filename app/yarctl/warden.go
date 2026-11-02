@@ -16,7 +16,8 @@ import (
 //	yarctl warden dump [--output table|json]
 func dispatchWarden(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: yarctl warden dump [--output table|json]")
+		printWardenUsage()
+		return nil
 	}
 	switch args[0] {
 	case "dump":
@@ -24,6 +25,13 @@ func dispatchWarden(args []string) error {
 	default:
 		return fmt.Errorf("unknown warden command %q - available: dump", args[0])
 	}
+}
+
+func printWardenUsage() {
+	fmt.Println(`yarctl warden <command>
+
+  dump [--output table|json]          Connection counters per user@IP with their live
+                                      sessions, and the per-IP penalty entries`)
 }
 
 // wardenDump prints the warden state snapshot: per-user@IP connection counters
