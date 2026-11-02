@@ -43,6 +43,21 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 app.kubernetes.io/part-of: yarilo
 {{- end }}
 
+{{/* Address families and client-address handling of a component's client
+Service. Call with the component's service values. externalTrafficPolicy is
+valid only off ClusterIP; Local keeps the client address for SPF, RBL and
+per-IP limits. */}}
+{{- define "yarilo.serviceTraffic" -}}
+ipFamilyPolicy: {{ .ipFamilyPolicy }}
+{{- with .ipFamilies }}
+ipFamilies:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- if ne .type "ClusterIP" }}
+externalTrafficPolicy: {{ .externalTrafficPolicy }}
+{{- end }}
+{{- end }}
+
 {{- define "yarilo.image" -}}
 {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
 {{- end }}

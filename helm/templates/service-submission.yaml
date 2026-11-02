@@ -9,6 +9,7 @@ metadata:
     {{- include "yarilo.componentLabels" (dict "root" . "component" "submission") | nindent 4 }}
 spec:
   type: {{ .Values.components.submission.service.type }}
+  {{- include "yarilo.serviceTraffic" .Values.components.submission.service | nindent 2 }}
   ports:
     {{- if .Values.components.submission.listeners.submission.enabled }}
     - name: submission

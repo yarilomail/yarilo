@@ -13,6 +13,7 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.components.imapLogin.service.type }}
+  {{- include "yarilo.serviceTraffic" .Values.components.imapLogin.service | nindent 2 }}
   ports:
     {{- if .Values.components.imapLogin.listeners.imaps.enabled }}
     - name: imaps

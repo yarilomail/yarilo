@@ -12,6 +12,7 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.components.saslLogin.service.type | default "ClusterIP" }}
+  {{- include "yarilo.serviceTraffic" .Values.components.saslLogin.service | nindent 2 }}
   ports:
     - name: sasl
       port: {{ .Values.components.saslLogin.servicePort }}

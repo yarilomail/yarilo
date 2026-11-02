@@ -12,6 +12,7 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.components.quotaStatus.service.type | default "ClusterIP" }}
+  {{- include "yarilo.serviceTraffic" .Values.components.quotaStatus.service | nindent 2 }}
   ports:
     - name: policy
       port: {{ .Values.components.quotaStatus.servicePort }}

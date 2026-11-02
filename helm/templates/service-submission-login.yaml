@@ -13,6 +13,7 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.components.submissionLogin.service.type }}
+  {{- include "yarilo.serviceTraffic" .Values.components.submissionLogin.service | nindent 2 }}
   ports:
     {{- if .Values.components.submissionLogin.listeners.submission.enabled }}
     - name: submission
