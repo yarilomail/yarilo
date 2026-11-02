@@ -132,7 +132,7 @@ func arrivedWithoutBcc(user, pass, marker, also string) error {
 	if err := c.login(user, pass); err != nil {
 		return fmt.Errorf("login: %w", err)
 	}
-	delivered := "HEADER SUBJECT " + marker + " HEADER RECEIVED relay" + also
+	delivered := deliveredCriteria(marker, also)
 	for start := time.Now(); ; {
 		if _, err := c.selectFolder("INBOX"); err != nil {
 			return fmt.Errorf("select INBOX: %w", err)
@@ -157,6 +157,12 @@ func arrivedWithoutBcc(user, pass, marker, also string) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+// deliveredCriteria finds the copy delivery wrote, not the draft: any MTA on
+// the way adds a Received header, whatever it is called (#2456).
+func deliveredCriteria(marker, also string) string {
+	return "HEADER SUBJECT " + marker + ` HEADER RECEIVED ""` + also
 }
 
 func jmapIdentityOf(account gojmap.ID, user string) (string, error) {
