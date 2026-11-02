@@ -128,3 +128,24 @@ func TestQuotaReadingsSpellUnlimitedAlike(t *testing.T) {
 		t.Error("a response with no QUOTA line read as a quota")
 	}
 }
+
+// GETQUOTAROOT answers an account without a limit with an empty list, which
+// the QUOTA row accepts beside STORAGE (#2455).
+func TestQuotaRowAcceptsStorageOrNoLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  bool
+	}{
+		{"storage", []string{`* QUOTAROOT INBOX "User quota"`, `* QUOTA "User quota" (STORAGE 23 100)`}, true},
+		{"no limit", []string{`* QUOTAROOT INBOX "User quota"`, `* QUOTA "User quota" ()`}, true},
+		{"message limit only", []string{`* QUOTA "User quota" (MESSAGE 5 10)`}, false},
+		{"no QUOTA line", []string{`* QUOTAROOT INBOX "User quota"`}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quotaListed(tc.lines); got != tc.want {
+				t.Errorf("quotaListed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
