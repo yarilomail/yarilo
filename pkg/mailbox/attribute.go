@@ -38,6 +38,13 @@ const (
 // so they cannot collide with same-named INBOX attributes.
 const serverScopeVendorPrefix = "vendor/yarilo/pvt/server/"
 
+// ServerSubtree reports whether attrName lies under the prefix server-scope
+// attributes are kept under in INBOX's space: no folder lists or writes it as
+// its own (#2488).
+func ServerSubtree(attrName string) bool {
+	return attrName == strings.TrimSuffix(serverScopeVendorPrefix, "/") || strings.HasPrefix(attrName, serverScopeVendorPrefix)
+}
+
 // ParseAttrEntry splits a wire-format METADATA entry name like
 // "/private/comment" into (scope, attrName), where attrName is everything
 // after the scope prefix with the leading slash dropped:

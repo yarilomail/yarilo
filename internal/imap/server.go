@@ -3843,6 +3843,9 @@ func (s *session) collectMetadata(
 	depth imaplib.GetMetadataDepth, maxSize *uint32,
 	out map[string]*[]byte,
 ) error {
+	if folder != "" && mailbox.ServerSubtree(attrName) {
+		return nil
+	}
 	ctx := context.Background()
 	ops := s.metadataOps()
 
@@ -3884,7 +3887,7 @@ func (s *session) collectMetadata(
 			continue
 		}
 		entryName := mailbox.TrimAttrPrefix(k, stripPrefix)
-		if entryName == "" {
+		if entryName == "" || folder != "" && mailbox.ServerSubtree(entryName) {
 			continue
 		}
 		out[mailbox.FormatAttrEntry(scope, entryName)] = &v
@@ -3914,6 +3917,10 @@ func (s *session) SetMetadata(folder string, entries map[string]*[]byte) error {
 		if err != nil {
 			_ = tx.Rollback()
 			return &imaplib.Error{Type: imaplib.StatusResponseTypeBad, Text: err.Error()}
+		}
+		if folder != "" && mailbox.ServerSubtree(attrName) {
+			_ = tx.Rollback()
+			return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Entry " + entry + " is reserved"}
 		}
 		key := s.metadataKey(h, folder, guid, scope, attrName)
 		if value == nil {

@@ -54,21 +54,32 @@ func TestMetadataVerbsAgainstTheBackend(t *testing.T) {
 		}
 	}
 
-	// Listed on a folder of its own: INBOX also carries the server's entries
-	// under a vendor prefix, which is #2488.
-	mustYarctl(t, "backend", "folder", "create", liveUser, "Work")
-	mustYarctl(t, "backend", "metadata", "set", liveUser, "Work", "--entry", "/private/comment", "--value", "p")
-	mustYarctl(t, "backend", "metadata", "set", liveUser, "Work", "--entry", "/shared/comment", "--value", "s")
+	// INBOX lists its own entries and never the server's, which live in its
+	// space under a vendor prefix (#2488); the server scope lists them.
 	for _, tc := range []struct {
-		scope, want string
-	}{{"private", "/private/comment"}, {"shared", "/shared/comment"}} {
+		folder, scope, want string
+	}{
+		{"INBOX", "private", "/private/comment"},
+		{"INBOX", "shared", "/shared/comment"},
+		{"", "private", "/private/comment"},
+	} {
 		var list struct {
 			Entries map[string]string `json:"entries"`
 		}
-		decode(t, mustYarctl(t, "backend", "metadata", "list", liveUser, "Work", "--scope", tc.scope), &list)
-		if _, ok := list.Entries[tc.want]; !ok || len(list.Entries) != 1 {
-			t.Errorf("%s list on Work: %v, want %s alone", tc.scope, list.Entries, tc.want)
+		args := []string{"backend", "metadata", "list", liveUser}
+		if tc.folder != "" {
+			args = append(args, tc.folder)
 		}
+		decode(t, mustYarctl(t, append(args, "--scope", tc.scope)...), &list)
+		if _, ok := list.Entries[tc.want]; !ok || len(list.Entries) != 1 {
+			t.Errorf("%s list on %q: %v, want %s alone", tc.scope, tc.folder, list.Entries, tc.want)
+		}
+	}
+	if _, err := yarctl(t, "backend", "metadata", "set", liveUser, "INBOX", "--entry", "/private/vendor/yarilo/pvt/server/comment", "--value", "x"); err == nil {
+		t.Error("the server's subtree was written through INBOX")
+	}
+	if _, err := yarctl(t, "backend", "metadata", "get", liveUser, "INBOX", "--entry", "/private/vendor/yarilo/pvt/server/comment"); err == nil {
+		t.Error("INBOX reads the server's annotation by its stored name")
 	}
 
 	mustYarctl(t, "backend", "metadata", "del", liveUser, "INBOX", "--entry", "/private/comment")
