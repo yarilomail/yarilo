@@ -138,7 +138,7 @@ func walk(root, pkgPrefix string, minLines int) ([]PackageCensus, []Block, error
 		}
 		pkg := filepath.ToSlash(filepath.Dir(path))
 		pkg = strings.TrimPrefix(pkg, "./")
-		if pkgPrefix != "" && !strings.HasPrefix(pkg, strings.TrimSuffix(pkgPrefix, "...")) {
+		if !inPackages(pkg, pkgPrefix) {
 			return nil
 		}
 		fileBlocks, goLines, commentLines, ferr := readFile(path, minLines)
@@ -187,6 +187,15 @@ func walk(root, pkgPrefix string, minLines int) ([]PackageCensus, []Block, error
 		return blocks[i].Line < blocks[j].Line
 	})
 	return out, blocks, nil
+}
+
+// inPackages matches a package against -pkg: a plain prefix, or a Go pattern
+// whose "x/..." takes x itself and everything under it.
+func inPackages(pkg, pattern string) bool {
+	if base, ok := strings.CutSuffix(pattern, "/..."); ok {
+		return pkg == base || strings.HasPrefix(pkg, base+"/")
+	}
+	return strings.HasPrefix(pkg, pattern)
 }
 
 func readFile(path string, minLines int) ([]Block, int, int, error) {
