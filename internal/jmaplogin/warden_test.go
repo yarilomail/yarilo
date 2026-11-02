@@ -27,8 +27,8 @@ type wardenCall struct {
 type fakeWarden struct {
 	mu    sync.Mutex
 	calls []wardenCall
-	// refuse makes Connect fail, standing in for a reached limit.
-	refuse bool
+	// refuse answers a reached limit; down stands in for an unreachable warden.
+	refuse, down bool
 	// limits are the user's own limits each connect carried.
 	limits []warden.UserLimits
 }
@@ -38,8 +38,11 @@ func (f *fakeWarden) ConnectLimits(id, user, ip, _ string, limit warden.UserLimi
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, wardenCall{"connect", id, user, ip})
 	f.limits = append(f.limits, limit)
-	if f.refuse {
-		return errors.New("limit reached")
+	switch {
+	case f.refuse:
+		return warden.ErrTooManyConns
+	case f.down:
+		return errors.New("warden/client: read CONNECT response: EOF")
 	}
 	return nil
 }
@@ -272,27 +275,36 @@ func TestWardenReleasesOnConnectionClose(t *testing.T) {
 	t.Errorf("close produced no Disconnect: %v", wd.snapshot())
 }
 
-// A refused Connect fails the request closed by default: the limit means
-// something only if it is enforced.
-func TestWardenRefusalIsFailClosed(t *testing.T) {
-	wd := &fakeWarden{refuse: true}
-	base := startProxy(t, Options{Warden: wd})
-	resp := get(t, keepAliveClient(), base, basic("u1", "pw"))
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
+// A reached limit is the client's doing: 429 with Retry-After whatever
+// fail-open says. Only an unreachable warden is 503, and fail-open lets that
+// one through (#2472).
+func TestWardenRefusalStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		wd         *fakeWarden
+		failOpen   bool
+		want       int
+		retry      int
+		retryAfter string
+	}{
+		{"limit reached", &fakeWarden{refuse: true}, false, http.StatusTooManyRequests, 7, "7"},
+		{"limit reached under fail-open", &fakeWarden{refuse: true}, true, http.StatusTooManyRequests, 7, "7"},
+		{"limit reached, Retry-After off", &fakeWarden{refuse: true}, false, http.StatusTooManyRequests, 0, ""},
+		{"warden unreachable", &fakeWarden{down: true}, false, http.StatusServiceUnavailable, 7, ""},
+		{"warden unreachable under fail-open", &fakeWarden{down: true}, true, http.StatusOK, 7, ""},
 	}
-}
-
-// With fail-open the same refusal lets the request through: a warden blip must
-// not lock every user out.
-func TestWardenRefusalCanFailOpen(t *testing.T) {
-	wd := &fakeWarden{refuse: true}
-	base := startProxy(t, Options{Warden: wd, WardenFailOpen: true})
-	resp := get(t, keepAliveClient(), base, basic("u1", "pw"))
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base := startProxy(t, Options{Warden: tc.wd, WardenFailOpen: tc.failOpen, LimitRetryAfter: tc.retry})
+			resp := get(t, keepAliveClient(), base, basic("u1", "pw"))
+			defer resp.Body.Close() //nolint:errcheck
+			if resp.StatusCode != tc.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			if got := resp.Header.Get("Retry-After"); got != tc.retryAfter {
+				t.Errorf("Retry-After = %q, want %q", got, tc.retryAfter)
+			}
+		})
 	}
 }
 

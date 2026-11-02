@@ -296,6 +296,7 @@ data:
         jmap_push_poll: {{ $jmapP.jmap_push_poll }}
         jmap_websocket_timeout: {{ $jmapP.jmap_websocket_timeout }}
         jmap_websocket_ticket_ttl: {{ $jmapP.jmap_websocket_ticket_ttl }}
+        jmap_limit_retry_after: {{ $jmapP.jmap_limit_retry_after }}
         jmap_cors_allow_origins:
         {{- range ($jmapP.jmap_cors_allow_origins | default list) }}
           - {{ . | quote }}

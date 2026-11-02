@@ -693,6 +693,9 @@ type JMAPProtocolConfig struct {
 	// WebSocketTicketTTL is how long a WebSocket ticket from
 	// jmap_login_service is valid, in seconds; 0 issues none. Default 60.
 	WebSocketTicketTTL int `koanf:"jmap_websocket_ticket_ttl"`
+	// LimitRetryAfter is the Retry-After jmap-login sends with a 429 for
+	// a reached connection limit, in seconds; 0 sends none. Default 10.
+	LimitRetryAfter int `koanf:"jmap_limit_retry_after"`
 }
 
 // LMTPProtocolConfig is protocol.lmtp.
@@ -3009,6 +3012,7 @@ func Defaults() *Config {
 	c.Protocol.JMAP.PushPoll = 60
 	c.Protocol.JMAP.WebSocketTimeout = 1800
 	c.Protocol.JMAP.WebSocketTicketTTL = 60
+	c.Protocol.JMAP.LimitRetryAfter = 10
 	for _, sh := range []*ShutdownConfig{&c.AuthService.Shutdown, &c.WardenService.Shutdown,
 		&c.DirectorService.Shutdown, &c.LocksService.Shutdown} {
 		sh.KillTimeout = 5

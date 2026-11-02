@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -72,6 +73,9 @@ type Options struct {
 	// empty key or a zero TTL issues none.
 	WebSocketTicketKey string
 	WebSocketTicketTTL time.Duration
+	// LimitRetryAfter is the Retry-After, in seconds, on a 429 for a reached
+	// connection limit; 0 sends none.
+	LimitRetryAfter int
 }
 
 // ConnAccountant is warden's per-user@IP connection accounting, narrowed to
@@ -290,7 +294,16 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.account(st, login, clientIP); err != nil {
-		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Connection limit reached")
+		// The limit is the client's doing (RFC 6585 §4); 503 would tell
+		// monitoring the server is down, which only an unreachable warden is.
+		if errors.Is(err, warden.ErrTooManyConns) {
+			if s.opts.LimitRetryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(s.opts.LimitRetryAfter))
+			}
+			jmapcore.WriteProblem(w, http.StatusTooManyRequests, "Connection limit reached")
+			return
+		}
+		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Connection accounting temporarily unavailable")
 		return
 	}
 
@@ -382,11 +395,16 @@ func (s *Server) account(st *connState, login Login, ip string) error {
 		}
 		st.user = ""
 	}
-	if err := s.opts.Warden.ConnectLimits(st.id, username, ip, service, login.Limits); err != nil {
-		if !s.opts.WardenFailOpen {
-			slog.Warn("jmap-login: warden connect refused", "user", username, "ip", ip, "err", err)
-			return err
-		}
+	err := s.opts.Warden.ConnectLimits(st.id, username, ip, service, login.Limits)
+	switch {
+	case errors.Is(err, warden.ErrTooManyConns):
+		// Fail-open covers an unreachable warden, never a reached limit.
+		slog.Warn("jmap-login: warden connect refused", "user", username, "ip", ip, "reason", "too_many_connections")
+		return err
+	case err != nil && !s.opts.WardenFailOpen:
+		slog.Error("jmap-login: warden connect failed", "user", username, "ip", ip, "err", err)
+		return err
+	case err != nil:
 		// A warden blip must not lock everyone out; the count is approximate
 		// until it recovers.
 		slog.Warn("jmap-login: warden unreachable, allowing", "user", username, "err", err)

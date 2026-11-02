@@ -87,6 +87,8 @@ var (
 		"protocol.jmap.jmap_push_poll of the deployment; the push row waits two of them")
 	flagJMAPMaxRequest = flag.Int("jmap-max-size-request", 10485760,
 		"protocol.jmap.jmap_max_size_request of the deployment; the body-cap check sends one byte more")
+	flagJMAPConnLimit = flag.Int("jmap-conn-limit", 0,
+		"the JMAP connection limit per user and address of the deployment, for -jmap-user; enables the 429 row")
 
 	flagPasswdFileUser = flag.String("passwd-file-user", "", "IMAP username backed by the passwd-file passdb (enables the check)")
 	flagPasswdFilePass = flag.String("passwd-file-pass", "", "password for -passwd-file-user")
@@ -361,6 +363,8 @@ func register() []check {
 	want("jmap", jmap, "jmap session resource (/.well-known/jmap)", "needs -jmap", checkJMAPSession)
 	want("jmap", jmap, "jmap batch + back-reference (Core/echo x2)", "needs -jmap", checkJMAPBatch)
 	want("jmap", jmap, "jmap body cap refused at the login edge", "needs -jmap", checkJMAPBodyCap)
+	want("jmap", jmap && *flagJMAPUser != "" && *flagJMAPConnLimit > 0, "jmap connection limit refused with 429 and Retry-After",
+		"needs -jmap, -jmap-user and -jmap-conn-limit", checkJMAPConnLimit)
 	want("jmap", jmap, "jmap Mailbox/get (roles, ids, parent tree)", "needs -jmap", checkJMAPMailboxes)
 	want("jmap", jmap, "jmap Mailbox/query + back-referenced get", "needs -jmap", checkJMAPMailboxQuery)
 	want("jmap", jmap, "jmap Email/query -> Email/get -> download", "needs -jmap", checkJMAPEmailDiscovery)
