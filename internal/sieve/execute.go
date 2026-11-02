@@ -80,6 +80,7 @@ func (e *executeExecutor) executeBin(ctx context.Context, path string, args []st
 	}
 
 	cmd := exec.CommandContext(tctx, path, args...)
+	cmd.WaitDelay = programWaitDelay
 	cmd.Stdin = stdin
 	cmd.Env = []string{
 		"USER=" + e.username,

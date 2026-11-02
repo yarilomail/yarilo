@@ -427,7 +427,7 @@ func isPrintable(v []byte) bool {
 }
 
 func printDictUsage() {
-	fmt.Fprintln(os.Stderr, `yarctl backend dict <command>
+	fmt.Println(`yarctl backend dict <command>
 
 Talks to yarilo-backend-api (default http://localhost:9105 or
 $YARILO_BACKEND_API_URL). Override per-invocation:

@@ -76,6 +76,7 @@ func (e *filterExecutor) filterBin(ctx context.Context, path string, args []stri
 	}
 
 	cmd := exec.CommandContext(tctx, path, args...)
+	cmd.WaitDelay = programWaitDelay
 	cmd.Stdin = input
 	cmd.Env = []string{
 		"USER=" + e.username,

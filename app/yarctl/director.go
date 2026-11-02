@@ -270,7 +270,8 @@ func dispatchDirector(args []string) error {
 
 func dispatchBackends(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: director backends <list|add|remove|update|up|down|flush>")
+		printBackendsUsage()
+		return nil
 	}
 	switch args[0] {
 	case "list":
@@ -336,12 +337,19 @@ func dispatchBackends(args []string) error {
 		data, err := apiPost("/api/director/backends/"+fs.Arg(0)+"/flush"+q, nil)
 		return printOutput(data, err, humanStatus)
 	default:
-		return fmt.Errorf("unknown backends command %q", args[0])
+		return fmt.Errorf("unknown backends command %q - available: list, add, remove, update, up, down, flush", args[0])
 	}
 }
 
 func dispatchDomains(args []string) error {
-	if len(args) < 3 || args[0] != "move" {
+	if len(args) == 0 {
+		printDomainsUsage()
+		return nil
+	}
+	if args[0] != "move" {
+		return fmt.Errorf("unknown domains command %q - available: move", args[0])
+	}
+	if len(args) < 3 {
 		return fmt.Errorf("usage: director domains move <domain> <backend-ip>")
 	}
 	data, err := apiPost("/api/director/domains/"+url.PathEscape(args[1])+"/move", map[string]any{"backend": args[2]})
@@ -350,7 +358,8 @@ func dispatchDomains(args []string) error {
 
 func dispatchUsers(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: director users <move|kick>")
+		printUsersUsage()
+		return nil
 	}
 	switch args[0] {
 	case "move":
@@ -372,13 +381,14 @@ func dispatchUsers(args []string) error {
 		data, err := apiPost("/api/director/users/"+url.PathEscape(args[1])+"/kick", nil)
 		return printOutput(data, err, humanStatus)
 	default:
-		return fmt.Errorf("unknown users command %q", args[0])
+		return fmt.Errorf("unknown users command %q - available: move, kick", args[0])
 	}
 }
 
 func dispatchRing(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: director ring <status|add|remove>")
+		printRingUsage()
+		return nil
 	}
 	switch args[0] {
 	case "status":
@@ -404,12 +414,12 @@ func dispatchRing(args []string) error {
 		data, err := apiDelete("/api/director/ring?addr=" + url.QueryEscape(args[1]))
 		return printOutput(data, err, humanStatus)
 	default:
-		return fmt.Errorf("unknown ring command %q", args[0])
+		return fmt.Errorf("unknown ring command %q - available: status, add, remove", args[0])
 	}
 }
 
 func printDirectorUsage() {
-	fmt.Fprintln(os.Stderr, `yarctl director <command>
+	fmt.Println(`yarctl director <command>
 
 Commands:
   status                              Backend routing status (use 'ring status' for directors)
@@ -433,6 +443,41 @@ Commands:
   ring status                         Ring topology of the queried replica: neighbors, link state, seq
   ring add ADDR                       Add peer (addr = ip:port)
   ring remove ADDR                    Remove peer`)
+}
+
+func printBackendsUsage() {
+	fmt.Println(`yarctl director backends <command>
+
+  list                                List backends
+  add IP --port PORT                  Add backend [--tag TAG] [--vhosts N]
+  remove IP                           Remove backend from ring
+  update IP --vhosts N                Update virtual node count
+  up IP                               Mark backend up
+  down IP                             Mark backend down (flush)
+  flush IP|all [--force] [--max-parallel N]
+                                      Evacuate backend: graceful throttled drain
+                                      (default) or immediate mass kick (--force)`)
+}
+
+func printUsersUsage() {
+	fmt.Println(`yarctl director users <command>
+
+  move USER --backend IP:PORT         Force-move user to backend
+  kick USER                           Kick user (disconnect all sessions)`)
+}
+
+func printDomainsUsage() {
+	fmt.Println(`yarctl director domains <command>
+
+  move DOMAIN BACKEND-IP              Move a domain to a backend of its tag (assignment_policy: domain)`)
+}
+
+func printRingUsage() {
+	fmt.Println(`yarctl director ring <command>
+
+  status [--all]                      Ring topology of the queried replica; --all aggregates every replica
+  add ADDR                            Add peer (addr = ip:port)
+  remove ADDR                         Remove peer`)
 }
 
 // flagGiven reports whether the command line set the flag, as against its default.
