@@ -11,6 +11,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emersion/go-sasl"
 	"golang.org/x/crypto/pbkdf2"
@@ -40,6 +41,37 @@ func (a *scramUsers) LookupSCRAMSha1(u string) (*sasl.ScramCredentials, error) {
 		return a.s1, nil
 	}
 	return nil, nil
+}
+
+// tcpPOP3Session is newPOP3Session over a buffered loopback connection: an
+// extra reply the server writes then lands in the stream, where the next
+// command's assertion sees it, instead of blocking an unbuffered pipe.
+func tcpPOP3Session(t *testing.T, opts Options) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	srv := New(opts)
+	go func() {
+		s, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		srv.newSession(s).serve()
+	}()
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	t.Cleanup(func() { _ = c.Close() })
+	r := bufio.NewReader(c)
+	if g := readline(t, r); !strings.HasPrefix(g, "+OK") {
+		t.Fatalf("greeting %q", g)
+	}
+	return c, r
 }
 
 // scramLogin runs AUTH <mech> as a client would, and returns the server's
@@ -112,22 +144,25 @@ func TestSessionSCRAM(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
 			opts.AuthRelay = authtest.RelayTo(t, tc.users)
-			c, r := newPOP3Session(t, opts)
+			c, r := tcpPOP3Session(t, opts)
 			final := scramLogin(t, c, r, tc.mech, tc.newHash, tc.size, "alice", tc.pass)
 			if got := strings.HasPrefix(final, "+OK"); got != tc.ok {
 				t.Fatalf("AUTH %s: %q, want ok=%v", tc.mech, final, tc.ok)
 			}
+			// STAT's own answer, not a second reply to AUTH left in the stream.
 			send(t, c, "STAT")
 			stat := readline(t, r)
-			if tc.ok != strings.HasPrefix(stat, "+OK") {
-				t.Errorf("STAT after AUTH %s: %q", tc.mech, stat)
+			if want := "+OK 0 0"; tc.ok && stat != want {
+				t.Errorf("STAT after AUTH %s: %q, want %q", tc.mech, stat, want)
+			} else if !tc.ok && !strings.HasPrefix(stat, "-ERR") {
+				t.Errorf("STAT after a refused AUTH %s: %q, want -ERR", tc.mech, stat)
 			}
 		})
 	}
 
 	opts := newTestOpts(t, nil, &mockMailbox{}, &mockIndex{})
 	opts.AuthRelay = authtest.RelayTo(t, &scramUsers{user: "alice", s256: s256})
-	c, r := newPOP3Session(t, opts)
+	c, r := tcpPOP3Session(t, opts)
 	send(t, c, "AUTH SCRAM-SHA-256")
 	if line := readline(t, r); line != "+ " {
 		t.Fatalf("AUTH without an initial response: %q, want an empty challenge", line)
@@ -136,6 +171,12 @@ func TestSessionSCRAM(t *testing.T) {
 	if line := readline(t, r); !strings.HasPrefix(line, "-ERR") {
 		t.Errorf("a cancelled exchange: %q, want -ERR", line)
 	}
+	// The next command gets its own answer: one -ERR for the cancel, not two.
+	send(t, c, "CAPA")
+	if line := readline(t, r); !strings.HasPrefix(line, "+OK") {
+		t.Errorf("CAPA after a cancelled exchange: %q, want its +OK", line)
+	}
+	readUntilDot(t, r)
 	send(t, c, "AUTH SCRAM-SHA-256-PLUS")
 	if line := readline(t, r); !strings.HasPrefix(line, "-ERR") {
 		t.Errorf("-PLUS without TLS: %q, want -ERR", line)
