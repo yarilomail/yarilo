@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 
 	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
@@ -71,6 +73,36 @@ func TestTheTicketKeyIsCheckedAtStart(t *testing.T) {
 			warn, err := checkTicketKey(tc.key, tc.ttl)
 			if (warn != "") != tc.warn || (err != nil) != tc.err {
 				t.Errorf("checkTicketKey = %q, %v; want warn %v, err %v", warn, err, tc.warn, tc.err)
+			}
+		})
+	}
+}
+
+// jmap_limit_retry_after reaches the proxy from the file, its default when
+// left out and an explicit 0 kept (#2472).
+func TestTheRetryAfterComesFromTheConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want int
+	}{
+		{"left out", "", 10},
+		{"set", "protocol:\n  jmap:\n    jmap_limit_retry_after: 3\n", 3},
+		{"off", "protocol:\n  jmap:\n    jmap_limit_retry_after: 0\n", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "yarilo.yaml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts := serverOptions(cfg, &config.ServiceConfig{Enabled: true}, ":0", nil, nil, nil, nil)
+			if opts.LimitRetryAfter != tc.want {
+				t.Errorf("LimitRetryAfter = %d, want %d", opts.LimitRetryAfter, tc.want)
 			}
 		})
 	}

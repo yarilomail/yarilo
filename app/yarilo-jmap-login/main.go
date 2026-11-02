@@ -227,6 +227,7 @@ func serverOptions(cfg *config.Config, svc *config.ServiceConfig, addr string, e
 		MaxSizeUpload:      cfg.Protocol.JMAP.MaxSizeUpload,
 		WebSocketTicketKey: cfg.JMAPLoginService.WebSocketTicketKey,
 		WebSocketTicketTTL: time.Duration(cfg.Protocol.JMAP.WebSocketTicketTTL) * time.Second,
+		LimitRetryAfter:    cfg.Protocol.JMAP.LimitRetryAfter,
 	}
 }
 

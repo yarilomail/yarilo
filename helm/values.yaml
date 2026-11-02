@@ -2236,6 +2236,9 @@ protocol:
     ## jmap-login for a ticket and opens the WebSocket with it; 0 issues none
     ## and leaves the ticket capability out of the session.
     jmap_websocket_ticket_ttl: 60
+    ## Seconds jmap-login names in Retry-After when it answers 429 to a client
+    ## over its connection limit; 0 sends no Retry-After.
+    jmap_limit_retry_after: 10
     ## Browser origins allowed to call the JMAP endpoint. Empty denies every
     ## cross-origin request, which is the default: an endpoint any page can
     ## call with the user's credentials is an account-takeover surface. Exact
