@@ -38,7 +38,7 @@ func (c *imapClient) append(folder, body string) error {
 
 // checkQuota verifies the IMAP QUOTA extension end-to-end (read-only): the
 // capability is advertised and GETQUOTAROOT / GETQUOTA return a quota root with
-// a STORAGE resource summed from the count backend.
+// a STORAGE resource, or with none for an account without a limit (#2455).
 func checkQuota(user, pass string) error {
 	c, err := imapDial()
 	if err != nil {
@@ -65,18 +65,29 @@ func checkQuota(user, pass string) error {
 	if root == "" {
 		return fmt.Errorf("no quota root in GETQUOTAROOT reply: %v", roots)
 	}
-	if !anyLineHas(roots, "* QUOTA ", "STORAGE") {
-		return fmt.Errorf("no STORAGE resource in GETQUOTAROOT reply: %v", roots)
+	if !quotaListed(roots) {
+		return fmt.Errorf("no STORAGE resource or empty list in GETQUOTAROOT reply: %v", roots)
 	}
 
 	q, err := c.cmd(fmt.Sprintf("GETQUOTA %q", root))
 	if err != nil {
 		return fmt.Errorf("getquota %q: %w", root, err)
 	}
-	if !anyLineHas(q, "* QUOTA ", "STORAGE") {
-		return fmt.Errorf("GETQUOTA %q missing STORAGE: %v", root, q)
+	if !quotaListed(q) {
+		return fmt.Errorf("GETQUOTA %q has neither STORAGE nor an empty list: %v", root, q)
 	}
 	return nil
+}
+
+// quotaListed reports a QUOTA response with a STORAGE resource, or with an
+// empty resource list: a resource without a limit is left out (RFC 9208).
+func quotaListed(lines []string) bool {
+	for _, l := range lines {
+		if strings.HasPrefix(l, "* QUOTA ") && (strings.Contains(l, "STORAGE") || strings.HasSuffix(strings.TrimSpace(l), "()")) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkQuotaOver verifies enforcement: an APPEND by an over-quota user is
