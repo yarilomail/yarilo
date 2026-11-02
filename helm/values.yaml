@@ -711,10 +711,6 @@ components:
       ## CIDRs as opt-in defense-in-depth once you know them.
       allowed_nets: []
 
-    service:
-      type: LoadBalancer
-      annotations: {}
-
     resources:
       requests:
         cpu: 100m
