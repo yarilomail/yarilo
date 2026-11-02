@@ -342,8 +342,9 @@ func register() []check {
 	for _, acct := range ftsCopyAccounts() {
 		user, pass := acct.user, acct.pass
 		withJMAP := *flagJMAP && user == *flagJMAPUser
-		want("imap", user != "", "imap FTS document is the message ("+user+")",
-			"needs -fts-user or -fts-copy-users", func() error {
+		// The row reads the index through the admin API (#2456).
+		want("imap", user != "" && *flagBackendAPI != "", "imap FTS document is the message ("+user+")",
+			"needs -fts-user or -fts-copy-users, and -backend-api", func() error {
 				return checkFTSDocumentIsMessage(user, pass, withJMAP)
 			})
 	}
