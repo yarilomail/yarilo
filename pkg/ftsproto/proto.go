@@ -241,7 +241,7 @@ func Dial(addr string, tlsCfg *tls.Config, timeout time.Duration) (*Remote, erro
 		conn, err = (&net.Dialer{Timeout: timeout}).DialContext(context.Background(), "tcp", addr)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("ftsproto: dial: %w", err)
+		return nil, fmt.Errorf("ftsproto: dial: %w: %w", err, ErrUnavailable)
 	}
 	r := &Remote{conn: conn, br: bufio.NewReader(conn)}
 	line, err := r.roundTrip(CmdVersion + "\t" + ProtocolVersion)
@@ -263,11 +263,11 @@ func (r *Remote) roundTrip(req string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, err := r.conn.Write([]byte(req + "\n")); err != nil {
-		return "", fmt.Errorf("ftsproto: write: %w", err)
+		return "", fmt.Errorf("ftsproto: write: %w: %w", err, ErrUnavailable)
 	}
 	line, err := lineio.ReadLine(r.br, lineio.MaxInternal)
 	if err != nil {
-		return "", fmt.Errorf("ftsproto: read: %w", err)
+		return "", fmt.Errorf("ftsproto: read: %w: %w", err, ErrUnavailable)
 	}
 	return strings.TrimRight(line, "\n"), nil
 }
@@ -289,8 +289,8 @@ func (r *Remote) call(fields ...string) (string, error) {
 	}
 }
 
-// ErrUnavailable marks an FTS failure that was a dependency of the service
-// being unreachable, not the service refusing. Recovered from the wire so the
+// ErrUnavailable marks an FTS failure that was the service, or a dependency of
+// it, being unreachable, not the service refusing (#2480). Recovered from the wire so the
 // classification survives the process boundary: a sentinel wrapped inside
 // yarilo-fts does not, which is why an outage used to reach clients as a bare
 // NO (#1409).

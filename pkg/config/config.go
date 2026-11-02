@@ -1391,10 +1391,8 @@ type FTSConfig struct {
 
 	SearchAddMissing string `koanf:"fts_search_add_missing"`
 	// SearchReadFallback falls back to the exact scan when a lookup fails or
-	// the index lags. JMAP has no scan: Email/query never reads bodies, so on
-	// that surface the flag cannot choose a fallback and a failed lookup is
-	// refused instead (serverFail; a lagging index is serverUnavailable, which
-	// says "retry"). Deliberate divergence, not an oversight.
+	// the index lags. Email/query falls back only for a filter of header
+	// conditions, which it answers from headers; text and body are refused.
 	SearchReadFallback bool `koanf:"fts_search_read_fallback"`
 	SearchTimeoutSecs  int  `koanf:"fts_search_timeout"`
 	// SearchFirstIndexGraceSecs bounds the wait for a mailbox that has NOTHING
