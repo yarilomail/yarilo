@@ -974,6 +974,7 @@ data:
       socket_mode: {{ $wardenSvc.socket_mode | quote }}
       socket_group: {{ $wardenSvc.socket_group | quote }}
       conns: {{ $wardenSvc.conns }}
+      fail_open: {{ $wardenSvc.fail_open }}
       ## SELECT events a backend queues for the warden. They are accounting --
       ## the warden records the folder for `who` and can refuse nothing -- so a
       ## full queue drops the oldest rather than holding the command.
