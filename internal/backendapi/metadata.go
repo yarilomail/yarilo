@@ -75,7 +75,7 @@ func (s *Server) handleMetadataList(w http.ResponseWriter, r *http.Request) {
 	entries := make(map[string]string)
 	for iter.Next() {
 		entry := mailbox.TrimAttrPrefix(iter.Key(), prefix)
-		if entry == "" {
+		if entry == "" || mc.folder != "" && mailbox.ServerSubtree(entry) {
 			continue
 		}
 		values := iter.Values()
@@ -119,6 +119,10 @@ func (s *Server) handleMetadataGet(w http.ResponseWriter, r *http.Request) {
 	}
 	mc.scope = scope
 	mc.rawScope = scopeWire(scope)
+	if mc.folder != "" && mailbox.ServerSubtree(attrName) {
+		apiError(w, "entry "+req.Entry+" is reserved for server metadata", http.StatusBadRequest)
+		return
+	}
 	key := mc.key(attrName)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -157,6 +161,10 @@ func (s *Server) handleMetadataSet(w http.ResponseWriter, r *http.Request) {
 	}
 	mc.scope = scope
 	mc.rawScope = scopeWire(scope)
+	if mc.folder != "" && mailbox.ServerSubtree(attrName) {
+		apiError(w, "entry "+req.Entry+" is reserved for server metadata", http.StatusBadRequest)
+		return
+	}
 	key := mc.key(attrName)
 
 	raw, err := base64.StdEncoding.DecodeString(req.Value)
@@ -201,6 +209,10 @@ func (s *Server) handleMetadataDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	mc.scope = scope
 	mc.rawScope = scopeWire(scope)
+	if mc.folder != "" && mailbox.ServerSubtree(attrName) {
+		apiError(w, "entry "+req.Entry+" is reserved for server metadata", http.StatusBadRequest)
+		return
+	}
 	key := mc.key(attrName)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
