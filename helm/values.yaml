@@ -1410,6 +1410,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:
@@ -1506,6 +1509,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:
@@ -1552,6 +1558,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:
@@ -1647,6 +1656,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:
@@ -1725,6 +1737,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:
@@ -1805,6 +1820,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:
@@ -1881,6 +1899,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:
@@ -1983,6 +2004,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:
@@ -2112,6 +2136,9 @@ components:
       ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
       ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
       ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
       externalTrafficPolicy: Local
 
     resources:

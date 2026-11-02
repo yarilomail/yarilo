@@ -517,6 +517,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
   ## JMAP login - HTTPS terminator on :8443, per-request proxy to the
   ## yarilo-jmap backend container (:10443). Until the backend PR lands,
@@ -540,6 +544,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
   ## POP3 login - TLS terminator on :995 (POP3S) / :110 (STLS).
   ## Reuses yarilo-tls Secret from imapLogin.
@@ -573,6 +581,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
   auth:
     ## Master users (#1301 window): impersonation via SASL authzid or the
@@ -770,6 +782,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
   ## JMAP backend - one more container in the co-located pod, reached only by
   ## jmapLogin. internalTLS is on cluster-wide here, so the peer certificate is
@@ -806,6 +822,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
 ## NOTE (#878): there is deliberately NO top-level `resources:` block here.
 ## The chart has no `.Values.resources` - sizing is per-component only
