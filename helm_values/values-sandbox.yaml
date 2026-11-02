@@ -178,6 +178,9 @@ service:
 protocol:
   jmap:
     jmap_base_url: "https://mail-sb.seconddns.com"
+    ## A JMAP limit the smoketest's 429 row can reach; the general one stays
+    ## off for imaptest's load.
+    mail_max_userip_connections: 20
   imap:
     imap_idle_notify_interval: 120
     imap_max_line_length: 65536

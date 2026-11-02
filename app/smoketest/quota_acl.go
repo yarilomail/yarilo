@@ -126,12 +126,8 @@ func checkACL(user, pass string) error {
 		return fmt.Errorf("login %q: %w", user, err)
 	}
 
-	caps, err := c.cmd("CAPABILITY")
-	if err != nil {
-		return fmt.Errorf("capability: %w", err)
-	}
-	if !linesContain(caps, "ACL") {
-		return fmt.Errorf("ACL not advertised in CAPABILITY")
+	if err := requireACL(c); err != nil {
+		return err
 	}
 
 	mr, err := c.cmd("MYRIGHTS INBOX")
@@ -173,6 +169,19 @@ func checkACL(user, pass string) error {
 }
 
 // ---- small response parsers ------------------------------------------------
+
+// requireACL skips the row when the server does not offer ACL (#2473): a
+// refusal the server announced is not a defect.
+func requireACL(c *imapClient) error {
+	caps, err := c.cmd("CAPABILITY")
+	if err != nil {
+		return fmt.Errorf("capability: %w", err)
+	}
+	if !linesContain(caps, "ACL") {
+		return unmeasurable("the server does not offer ACL (no ACL in CAPABILITY)")
+	}
+	return nil
+}
 
 func linesContain(lines []string, token string) bool {
 	for _, l := range lines {

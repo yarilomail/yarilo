@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -50,6 +53,9 @@ func assertFTSQueryFindsOnly(marker, absent, subject string) error {
 		// never about indexing (#1204 separated the types precisely so this
 		// distinction could be made).
 		case lastErr != nil && kind != jmapServerUnavailable:
+			if errors.As(lastErr, new(unmeasurableError)) {
+				return lastErr
+			}
 			return fmt.Errorf("Email/query failed: %w", lastErr)
 		case lastErr != nil:
 			// serverUnavailable: the index is catching up, so wait.
@@ -114,6 +120,16 @@ const jmapServerUnavailable = "serverUnavailable"
 // jmapQueryText runs Email/query with one text condition. It returns the
 // method error's type alongside the error, because the wait above must tell a
 // lagging index from a broken one -- the distinction #1204 exists to carry.
+// textNotOffered is the server refusing the text condition itself, which
+// without a search index it does by design (#2473).
+func textNotOffered(errType, description string) bool {
+	if errType != "unsupportedFilter" {
+		return false
+	}
+	_, conds, ok := strings.Cut(description, ": ")
+	return ok && slices.Contains(strings.Split(conds, ", "), "text")
+}
+
 func jmapQueryText(text string) (ids []string, errType string, err error) {
 	filter, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
@@ -130,6 +146,9 @@ func jmapQueryText(text string) (ids []string, errType string, err error) {
 			Description string `json:"description"`
 		}
 		_ = json.Unmarshal(args, &merr)
+		if textNotOffered(merr.Type, merr.Description) {
+			return nil, merr.Type, unmeasurable("the server does not offer full-text search (%s: %s)", merr.Type, merr.Description)
+		}
 		return nil, merr.Type, fmt.Errorf("%s: %s", merr.Type, merr.Description)
 	}
 	var out struct {

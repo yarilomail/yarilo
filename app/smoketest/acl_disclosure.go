@@ -30,6 +30,9 @@ func checkACLDisclosure(ownerUser, ownerPass, peerUser, peerPass, prefix string)
 	if err := owner.login(ownerUser, ownerPass); err != nil {
 		return fmt.Errorf("login %q: %w", ownerUser, err)
 	}
+	if err := requireACL(owner); err != nil {
+		return err
+	}
 
 	// Pre-clean, then create. A CREATE that fails here means the namespace is
 	// not there -- which is the failure that wasted a day, so it is named.
