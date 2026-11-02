@@ -90,7 +90,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, id identity) 
 
 // runRequest parses and runs one API request, over HTTP or a WebSocket.
 func (s *Server) runRequest(ctx context.Context, path string, body []byte, id identity) (*jmapcore.Response, *jmapcore.RequestError) {
-	req, rerr := jmapcore.ParseRequest(body, declaredCapabilities(s.opts.Limits), s.opts.Limits)
+	lim := s.limitsFor(id)
+	req, rerr := jmapcore.ParseRequest(body, declaredCapabilities(lim), lim)
 	if rerr != nil {
 		slog.Debug("jmap: request rejected", "user", id.user, "session", id.sessionID, "path", path,
 			"type", rerr.Type, "detail", rerr.Detail, "request", requestOutline(body))
@@ -104,7 +105,7 @@ func (s *Server) runRequest(ctx context.Context, path string, body []byte, id id
 	lazy := &lazyStore{storage: s.opts.Storage, user: id.user, sessionID: id.sessionID, clientIP: id.clientIP}
 	defer lazy.close()
 
-	resp := jmapcore.Execute(ctx, req, s.registry(lazy, jmapcore.AccountID(id.user)), s.opts.Limits)
+	resp := jmapcore.Execute(ctx, req, s.registry(lazy, jmapcore.AccountID(id.user)), lim)
 	return resp, nil
 }
 

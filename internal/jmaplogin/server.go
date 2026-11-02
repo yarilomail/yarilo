@@ -150,6 +150,7 @@ func New(opts Options) *Server {
 	s := &Server{opts: opts, mux: http.NewServeMux(), cors: newCORS(opts.CORSAllowOrigins),
 		tickets: newTickets(opts.WebSocketTicketKey, opts.WebSocketTicketTTL)}
 	s.proxy = newBackendProxy(opts)
+	s.proxy.tickets = s.tickets != nil
 	s.mux.HandleFunc("/", s.handle)
 	return s
 }

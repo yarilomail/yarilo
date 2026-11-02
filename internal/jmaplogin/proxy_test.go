@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The backend trusts these headers, so the proxy must set them itself and
@@ -139,5 +140,42 @@ func TestProxyIgnoresAClientSuppliedHopBudget(t *testing.T) {
 		if got != firstHopTTL {
 			t.Errorf("client sent %q, backend saw %q, want %s", sent, got, firstHopTTL)
 		}
+	}
+}
+
+// The backend offers WebSocket tickets only when this proxy says it issues
+// them; a caller cannot say it for the proxy (#2479).
+func TestProxyAnnouncesTicketsOnlyWhenIssued(t *testing.T) {
+	tests := []struct {
+		name  string
+		opts  Options
+		forge bool
+		want  string
+	}{
+		{"key and ttl", Options{WebSocketTicketKey: "k", WebSocketTicketTTL: time.Minute}, false, "1"},
+		{"no key", Options{WebSocketTicketTTL: time.Minute}, false, ""},
+		{"no ttl", Options{WebSocketTicketKey: "k"}, false, ""},
+		{"no key, the client claims it", Options{WebSocketTicketTTL: time.Minute}, true, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base := startProxy(t, tc.opts)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/.well-known/jmap", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", basic("u1", "pw"))
+			if tc.forge {
+				req.Header.Set(hdrTickets, "1")
+			}
+			resp, err := keepAliveClient().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close() //nolint:errcheck
+			if got := resp.Header.Get("Echo-Extra-" + hdrTickets); got != tc.want {
+				t.Errorf("%s at the backend = %q, want %q", hdrTickets, got, tc.want)
+			}
+		})
 	}
 }

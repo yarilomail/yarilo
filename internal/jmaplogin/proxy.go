@@ -25,6 +25,9 @@ const (
 	hdrSessionID = "X-Session-ID"
 	hdrProxyTTL  = "X-Proxy-TTL"
 	hdrUser      = "X-Yarilo-User"
+	// hdrTickets says this proxy issues WebSocket tickets, so the backend
+	// offers them only where a ticket can be had (#2479).
+	hdrTickets = "X-Yarilo-WebSocket-Tickets"
 )
 
 // yariloPrefix covers every header the backend treats as coming from this
@@ -56,6 +59,7 @@ func stripClientIdentity(h http.Header) {
 type backendProxy struct {
 	scheme    string
 	localIP   string
+	tickets   bool
 	transport http.RoundTripper
 }
 
@@ -86,6 +90,9 @@ func (p *backendProxy) serve(w http.ResponseWriter, r *http.Request, backend, us
 			pr.Out.Header.Set(hdrSessionID, sessionID)
 			pr.Out.Header.Set(hdrProxyTTL, firstHopTTL)
 			pr.Out.Header.Set(hdrUser, username)
+			if p.tickets {
+				pr.Out.Header.Set(hdrTickets, "1")
+			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			slog.Warn("jmap-login: backend unreachable", "backend", backend, "user", username, "err", err)
