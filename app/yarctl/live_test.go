@@ -26,13 +26,19 @@ type liveBackend struct {
 
 func startLiveBackend(t *testing.T) *liveBackend {
 	t.Helper()
+	return startLiveBackendWith(t, nil)
+}
+
+// startLiveBackendWith lets a test add to the backend's options before it starts.
+func startLiveBackendWith(t *testing.T, more func(*backendapi.Options)) *liveBackend {
+	t.Helper()
 	root := t.TempDir()
 	shared, err := memory.New(dict.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = shared.Close() })
-	s := backendapi.New(backendapi.Options{
+	opts := backendapi.Options{
 		Token:        "live-token",
 		Dicts:        map[string]dict.Dict{"shared": shared},
 		Mailbox:      mailbox.Validating(maildir.New(), mailbox.DefaultNameRules()),
@@ -41,7 +47,11 @@ func startLiveBackend(t *testing.T) *liveBackend {
 		Namespaces:   []config.NamespaceConfig{{Type: "personal", Prefix: "", Separator: "/", List: "yes", Inbox: true}},
 		MetadataDict: shared,
 		SharedDict:   shared,
-	})
+	}
+	if more != nil {
+		more(&opts)
+	}
+	s := backendapi.New(opts)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	oldURL, oldToken, oldRoute, oldFormat := backendAPIURL, backendAPIToken, routeByUser, outputFormat
