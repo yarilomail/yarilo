@@ -73,6 +73,11 @@ func (s *Server) rebalanceDomains() {
 		if hi.load == 0 || (hi.load-lo.load)*100/hi.load < pct {
 			continue
 		}
+		// Every moved session is a client cut off; on a backend this quiet the
+		// spread is noise, and two sessions against none is still 100 % (#2494).
+		if hi.sessions < s.opts.DomainRebalanceMinSessions {
+			continue
+		}
 		s.moveOneDomain(tag, hi, lo)
 	}
 }

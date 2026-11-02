@@ -1761,9 +1761,12 @@ type DirectorServiceConfig struct {
 	// above the quietest, in percent, before one domain is moved down; 0 never
 	// moves one. DomainRebalanceInterval is how often that is judged and
 	// DomainRebalanceCooldown how long a moved domain is left alone.
-	DomainRebalancePercent  int `koanf:"director_domain_rebalance_percent"`
-	DomainRebalanceInterval int `koanf:"director_domain_rebalance_interval"`
-	DomainRebalanceCooldown int `koanf:"director_domain_rebalance_cooldown"`
+	// DomainRebalanceMinSessions is how many sessions the busiest backend must
+	// carry before a spread moves anything; 0 judges any load (#2494).
+	DomainRebalancePercent     int `koanf:"director_domain_rebalance_percent"`
+	DomainRebalanceMinSessions int `koanf:"director_domain_rebalance_min_sessions"`
+	DomainRebalanceInterval    int `koanf:"director_domain_rebalance_interval"`
+	DomainRebalanceCooldown    int `koanf:"director_domain_rebalance_cooldown"`
 	// UserKickDelay: seconds an admin-initiated kick waits before USER-KICKED (#740).
 	// Unset 2; 0 kicks immediately.
 	UserKickDelay int `koanf:"user_kick_delay"`
@@ -2917,6 +2920,7 @@ func Defaults() *Config {
 	c.DirectorService.SeedPollInterval = 2
 	c.DirectorService.UserKillConfirmGrace = 1
 	c.DirectorService.DomainRebalanceCooldown = 600
+	c.DirectorService.DomainRebalanceMinSessions = 50
 	c.General.Limits.MaxUserIPConnections = 10
 	c.Protocol.IMAP.IdleNotifyInterval = 120
 	c.Protocol.IMAP.MaxLineLength = 65536
@@ -3842,7 +3846,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 25
+const minConfigSchema = 26
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3883,6 +3887,7 @@ var schemaAdditions = map[int][]string{
 		"protocol.managesieve.mail_max_userip_connections", "protocol.jmap.mail_max_userip_connections"},
 	24: {"protocol.jmap.jmap_limit_retry_after"},
 	25: {"warden_service.fail_open"},
+	26: {"director_service.director_domain_rebalance_min_sessions"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
