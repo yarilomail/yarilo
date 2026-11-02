@@ -73,8 +73,9 @@ func TestEmailQueryLimitCeilingIsReported(t *testing.T) {
 	}
 }
 
-// Text conditions are refused by name, so a client can drop exactly those and
-// retry rather than guessing which part was unsupported.
+// Without the full-text index, text and body are refused by name, so a client
+// can drop exactly those and retry; the header conditions beside them are
+// answered (#2452).
 func TestEmailQueryNamesTheConditionsItCannotAnswer(t *testing.T) {
 	s, _ := emailServer(t, 0)
 	w := postAPIRaw(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
@@ -102,9 +103,46 @@ func TestEmailQueryNamesTheConditionsItCannotAnswer(t *testing.T) {
 	if merr.Type != "unsupportedFilter" {
 		t.Errorf("type = %s", merr.Type)
 	}
-	for _, want := range []string{"body", "subject"} {
-		if !contains2(merr.Description, want) {
-			t.Errorf("description %q does not name %q", merr.Description, want)
+	if !contains2(merr.Description, "body") {
+		t.Errorf("description %q does not name body", merr.Description)
+	}
+	if contains2(merr.Description, "subject") {
+		t.Errorf("description %q names subject, which the header answers", merr.Description)
+	}
+}
+
+// Without the full-text index the header conditions are answered from the
+// message header, as IMAP SEARCH answers them without it (#2452).
+func TestEmailQueryAnswersHeaderConditionsWithoutFTS(t *testing.T) {
+	s, _ := emailServer(t, 0)
+	tests := []struct {
+		name, filter string
+		want         int
+	}{
+		{"subject, decoded and any case", `{"subject":"привіт"}`, 1},
+		{"subject not there", `{"subject":"zzz"}`, 0},
+		{"from", `{"from":"alice@example"}`, 1},
+		{"to, the second address", `{"to":"carol"}`, 1},
+		{"cc the message lacks", `{"cc":"bob"}`, 0},
+		{"header present", `{"header":["Message-Id"]}`, 1},
+		{"header absent", `{"header":["X-None"]}`, 0},
+		{"header with a value", `{"header":["In-Reply-To","m0@"]}`, 1},
+		{"header with another value", `{"header":["In-Reply-To","m9@"]}`, 0},
+		{"subject and a keyword together", `{"subject":"привіт","notKeyword":"$seen"}`, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := emailQuery(t, s, `{"accountId":"`+testAccount+`","filter":`+tt.filter+`}`)
+			if n := len(idsOf(t, got)); n != tt.want {
+				t.Errorf("matched %d, want %d: %v", n, tt.want, got)
+			}
+		})
+	}
+	for _, f := range []string{`{"text":"x"}`, `{"body":"x"}`} {
+		w := postAPIRaw(t, s, `{"using":["urn:ietf:params:jmap:mail"],"methodCalls":[
+			["Email/query",{"accountId":"`+testAccount+`","filter":`+f+`},"c0"]]}`)
+		if !contains2(w.Body.String(), "unsupportedFilter") {
+			t.Errorf("%s answered without the full-text index: %s", f, w.Body.String())
 		}
 	}
 }
