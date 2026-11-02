@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 25
+config_schema_version: 26
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -506,6 +506,11 @@ components:
     director_domain_rebalance_percent: 20
     director_domain_rebalance_interval: 60
     director_domain_rebalance_cooldown: 600
+    ## Sessions the busiest backend of a tag must carry before a spread moves
+    ## a domain. Every moved session is a client cut off, and on a quiet
+    ## backend two sessions against none is already a 100 % spread. 0 judges
+    ## any load.
+    director_domain_rebalance_min_sessions: 50
 
     ## Grace window (seconds) before an admin-initiated kick pushes USER-KICKED
     ## (#740), letting a user's in-flight command on the old backend finish

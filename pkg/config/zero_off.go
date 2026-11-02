@@ -56,6 +56,7 @@ func offKeys(cfg *Config) []intKey {
 		{"director_service.user_kill_confirm_grace", &d.UserKillConfirmGrace},
 		{"director_service.director_domain_rebalance_percent", &d.DomainRebalancePercent},
 		{"director_service.director_domain_rebalance_cooldown", &d.DomainRebalanceCooldown},
+		{"director_service.director_domain_rebalance_min_sessions", &d.DomainRebalanceMinSessions},
 		{"general.limits.mail_max_userip_connections", &cfg.General.Limits.MaxUserIPConnections},
 		{"protocol.imap.imap_idle_notify_interval", &cfg.Protocol.IMAP.IdleNotifyInterval},
 		{"protocol.imap.imap_max_line_length", &cfg.Protocol.IMAP.MaxLineLength},

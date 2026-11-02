@@ -165,6 +165,9 @@ type Options struct {
 	// DomainRebalancePercent is how far the busiest backend of a tag may rise
 	// above the quietest before one domain moves down; 0 never moves one.
 	DomainRebalancePercent int
+	// DomainRebalanceMinSessions is how many sessions the busiest backend of a
+	// tag must carry before a spread is worth a move; 0 judges any load (#2494).
+	DomainRebalanceMinSessions int
 
 	// DomainRebalanceInterval is how often that is judged, and
 	// DomainRebalanceCooldown how long a moved domain is left alone -- the

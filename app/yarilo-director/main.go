@@ -157,6 +157,8 @@ func main() {
 		BackendExpire:           time.Duration(cfg.DirectorService.BackendExpire) * time.Second,
 		UnreachableReporters:    cfg.DirectorService.BackendUnreachableReporters,
 		UnreachableWindow:       time.Duration(cfg.DirectorService.BackendUnreachableWindow) * time.Second,
+
+		DomainRebalanceMinSessions: cfg.DirectorService.DomainRebalanceMinSessions,
 	})
 
 	// telemetry starts after the server exists so the liveness watchdog
