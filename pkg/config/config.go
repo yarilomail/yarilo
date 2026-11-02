@@ -3047,7 +3047,7 @@ func Load(path string) (*Config, error) {
 	}
 	warnRetiredKeys(k, retiredKeys())
 	warnChartSkew(cfg.ChartVersion)
-	warnConfigSchemaSkew(cfg.ConfigSchemaVersion)
+	warnConfigSchemaSkew(k, cfg.ConfigSchemaVersion, cfg.ChartVersion)
 	warnXClientUntrusted(cfg)
 	if err := refuseInvertedPairs(cfg); err != nil {
 		return nil, err
@@ -3904,17 +3904,48 @@ func warnXClientUntrusted(cfg *Config) {
 	}
 }
 
-func warnConfigSchemaSkew(fromConfig int) {
+func warnConfigSchemaSkew(k *koanf.Koanf, fromConfig int, fromChart string) {
 	if build.ChartVersion == "dev" {
 		// A local build is not deployed from a chart.
 		return
 	}
-	if fromConfig >= minConfigSchema {
+	// No chart_version: no chart wrote the file, and what it leaves out takes
+	// the defaults by design (#2453).
+	if fromChart == "" || fromConfig >= minConfigSchema {
 		return
 	}
-	missing := defaultedByOlderSchema(fromConfig, minConfigSchema, schemaAdditions)
+	missing := notSetIn(k, defaultedByOlderSchema(fromConfig, minConfigSchema, schemaAdditions))
+	if len(missing) == 0 {
+		return
+	}
 	slog.Warn("config: the ConfigMap was rendered by a chart older than this binary needs; the settings named below are absent and silently defaulted",
 		"configmap_schema", fromConfig, "binary_needs", minConfigSchema, "defaulted", strings.Join(missing, ","))
+}
+
+// notSetIn keeps the keys the loaded file does not set: absent, never equal to
+// the default. A dotted key is a path; a bare one is a name under any section.
+func notSetIn(k *koanf.Koanf, keys []string) []string {
+	segments := map[string]bool{}
+	paths := k.Keys()
+	for _, p := range paths {
+		for _, seg := range strings.Split(p, ".") {
+			segments[seg] = true
+		}
+	}
+	var out []string
+	for _, key := range keys {
+		set := segments[key]
+		if strings.Contains(key, ".") {
+			set = k.Exists(key)
+			for _, p := range paths {
+				set = set || strings.HasPrefix(p, key+".")
+			}
+		}
+		if !set {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 // defaultedByOlderSchema names the settings a chart at have does not render
@@ -3934,9 +3965,7 @@ func warnChartSkew(fromConfig string) {
 	case build.ChartVersion == "dev":
 		// A local build, which is not deployed from a chart.
 	case fromConfig == "":
-		slog.Warn("config: the ConfigMap carries no chart_version, so it was rendered by a chart older than this binary; "+
-			"settings this version reads may be absent and silently defaulted",
-			"binary_built_from_chart", build.ChartVersion)
+		// No chart wrote the file; the schema check names what it lacks (#2453).
 	case fromConfig != build.ChartVersion:
 		slog.Warn("config: the ConfigMap was rendered by one chart version and this binary was built beside another",
 			"configmap_chart", fromConfig, "binary_built_from_chart", build.ChartVersion)

@@ -37,9 +37,10 @@ func TestChartSkewIsReported(t *testing.T) {
 			builtFrom: "2.3.266", fromConfig: "2.3.266",
 		},
 		{
-			name:      "the chart is older than the binary and renders no version at all",
+			// No chart_version: no chart wrote the file; the schema check names
+			// what a chart left out, by the keys themselves (#2453).
+			name:      "a file no chart wrote",
 			builtFrom: "2.3.266", fromConfig: "",
-			wantWarn: "no chart_version",
 		},
 		{
 			name:      "two chart versions",
