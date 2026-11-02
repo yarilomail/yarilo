@@ -16,9 +16,9 @@ import (
 )
 
 // filterEvaluator returns the evaluator this deployment can answer filters
-// with: the full-text one when yarilo-fts is wired, the index-only one
-// otherwise -- which refuses text conditions by name rather than answering
-// them from what it can see.
+// with: the full-text one when yarilo-fts is wired, otherwise one that reads
+// headers for the header conditions and refuses text and body by name rather
+// than answering them from what it can see.
 func (s *Server) filterEvaluator(h *userHandle) filterEvaluator {
 	if s.opts.FTS != nil && s.opts.FTS.Client != nil && s.opts.FTS.Chain != nil {
 		slog.Debug("jmap: filter evaluator selected", "evaluator", "full-text")
@@ -30,7 +30,7 @@ func (s *Server) filterEvaluator(h *userHandle) filterEvaluator {
 		"fts_options", s.opts.FTS != nil,
 		"fts_client", s.opts.FTS != nil && s.opts.FTS.Client != nil,
 		"language_chain", s.opts.FTS != nil && s.opts.FTS.Chain != nil)
-	return indexEvaluator{}
+	return headerEvaluator{mbox: h.mbox}
 }
 
 // emailQuery implements Email/query (RFC 8621 §4.4).
