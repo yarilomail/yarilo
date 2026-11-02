@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
 	"github.com/yarilomail/yarilo/v2/internal/jmap"
 	"github.com/yarilomail/yarilo/v2/internal/readyfile"
 	"github.com/yarilomail/yarilo/v2/internal/sieve"
@@ -27,6 +28,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
 	"github.com/yarilomail/yarilo/v2/pkg/logging"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -155,14 +157,7 @@ func main() {
 	}
 	var ftsOpts *jmap.FTS
 	if ftsClient != nil && cfg.FTS.Search {
-		ftsOpts = &jmap.FTS{
-			Client:     ftsClient,
-			Chain:      ftsChain,
-			MaxConns:   cfg.FTS.MaxConns,
-			MaxFolders: cfg.Protocol.JMAP.MaxQueryFolders,
-			AddMissing: cfg.FTS.SearchAddMissing,
-			Timeout:    time.Duration(cfg.FTS.SearchTimeoutSecs) * time.Second,
-		}
+		ftsOpts = ftsSearch(cfg, ftsClient, ftsChain)
 	}
 
 	// Whether this process can answer a text filter at all is a deployment
@@ -360,4 +355,17 @@ func internalClientTLS(cfg *config.Config) (*tls.Config, error) {
 	}
 	return mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA,
 		cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
+}
+
+// ftsSearch is Email/query's share of the fts section.
+func ftsSearch(cfg *config.Config, client ftsproto.Client, chain *language.MultiChain) *jmap.FTS {
+	return &jmap.FTS{
+		Client:       client,
+		Chain:        chain,
+		MaxConns:     cfg.FTS.MaxConns,
+		MaxFolders:   cfg.Protocol.JMAP.MaxQueryFolders,
+		AddMissing:   cfg.FTS.SearchAddMissing,
+		Timeout:      time.Duration(cfg.FTS.SearchTimeoutSecs) * time.Second,
+		ReadFallback: cfg.FTS.SearchReadFallback,
+	}
 }
