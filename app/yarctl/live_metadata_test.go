@@ -55,7 +55,7 @@ func TestMetadataVerbsAgainstTheBackend(t *testing.T) {
 	}
 
 	// Listed on a folder of its own: INBOX also carries the server's entries
-	// under a vendor prefix, which is #2485.
+	// under a vendor prefix, which is #2488.
 	mustYarctl(t, "backend", "folder", "create", liveUser, "Work")
 	mustYarctl(t, "backend", "metadata", "set", liveUser, "Work", "--entry", "/private/comment", "--value", "p")
 	mustYarctl(t, "backend", "metadata", "set", liveUser, "Work", "--entry", "/shared/comment", "--value", "s")
