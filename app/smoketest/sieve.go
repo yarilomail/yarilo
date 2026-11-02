@@ -1019,40 +1019,58 @@ func checkSieve() error {
 
 	defer msieveDeactivateAndDelete(sieveScriptNameConst)
 
-	type sieveTest struct {
-		name string
-		fn   func(user, pass, to string) error
+	offered, err := msieveExtensions(user, pass)
+	if err != nil {
+		return err
 	}
-	tests := []sieveTest{
-		{"fileinto", testSieveFileinto},
-		{"fileinto+mailbox:create", testSieveMailbox},
-		{"imap4flags", testSieveImap4flags},
-		{"body", testSieveBody},
-		{"envelope", testSieveEnvelope},
-		{"variables", testSieveVariables},
-		{"reject", testSieveReject},
-		{"ereject", testSieveEreject},
-		{"duplicate", testSieveDuplicate},
-		{"relational", testSieveRelational},
-		{"date", testSieveDate},
-		{"vnd.yarilo.debug", testSieveDebugLog},
-		{"vnd.yarilo.environment", testSieveEnvironment},
-		{"vnd.yarilo.pipe", testSievePipe},
-		{"vnd.yarilo.filter", testSieveFilter},
-		{"vnd.yarilo.execute", testSieveExecute},
-		{"enotify", testSieveEnotify},
-		{"foreverypart+mime", testSieveForeverypart},
-		{"max_actions", testSieveMaxActions},
-		{"spamtest", testSieveSpamtest},
-		{"mailboxid", testSieveMailboxID},
-		{"metadata", testSieveMetadata},
-		{"report", testSieveReport},
-		{"imap objectid", testIMAPObjectID},
-	}
+	return runSieveTests(sieveTests, offered, user, pass, to)
+}
 
+// sieveTest is one Sieve sub-check and the extensions its scripts require.
+type sieveTest struct {
+	name  string
+	needs []string
+	fn    func(user, pass, to string) error
+}
+
+var sieveTests = []sieveTest{
+	{"fileinto", []string{"fileinto"}, testSieveFileinto},
+	{"fileinto+mailbox:create", []string{"fileinto", "mailbox"}, testSieveMailbox},
+	{"imap4flags", []string{"imap4flags"}, testSieveImap4flags},
+	{"body", []string{"fileinto", "body"}, testSieveBody},
+	{"envelope", []string{"fileinto", "envelope"}, testSieveEnvelope},
+	{"variables", []string{"fileinto", "variables"}, testSieveVariables},
+	{"reject", []string{"reject"}, testSieveReject},
+	{"ereject", []string{"ereject"}, testSieveEreject},
+	{"duplicate", []string{"fileinto", "duplicate"}, testSieveDuplicate},
+	{"relational", []string{"fileinto", "relational"}, testSieveRelational},
+	{"date", []string{"fileinto", "date"}, testSieveDate},
+	{"vnd.yarilo.debug", []string{"variables", "envelope", "vnd.yarilo.debug"}, testSieveDebugLog},
+	{"vnd.yarilo.environment", []string{"environment", "variables", "fileinto", "mailbox", "vnd.yarilo.environment"}, testSieveEnvironment},
+	{"vnd.yarilo.pipe", []string{"vnd.yarilo.pipe"}, testSievePipe},
+	{"vnd.yarilo.filter", []string{"vnd.yarilo.filter"}, testSieveFilter},
+	{"vnd.yarilo.execute", []string{"vnd.yarilo.execute", "variables"}, testSieveExecute},
+	{"enotify", []string{"enotify"}, testSieveEnotify},
+	{"foreverypart+mime", []string{"foreverypart", "mime", "fileinto"}, testSieveForeverypart},
+	{"max_actions", []string{"fileinto", "mailbox"}, testSieveMaxActions},
+	{"spamtest", []string{"spamtest", "relational", "fileinto"}, testSieveSpamtest},
+	{"mailboxid", []string{"fileinto", "mailboxid"}, testSieveMailboxID},
+	{"metadata", []string{"mboxmetadata", "servermetadata", "fileinto"}, testSieveMetadata},
+	{"report", []string{"vnd.yarilo.report"}, testSieveReport},
+	{"imap objectid", nil, testIMAPObjectID},
+}
+
+// runSieveTests runs the sub-checks whose extensions the server offers; one it
+// does not offer is skipped, not failed (#2473). Nothing offered skips the row.
+func runSieveTests(tests []sieveTest, offered map[string]bool, user, pass, to string) error {
 	slog.Info("sieve: start", "total", len(tests))
-	var errs []string
+	var errs, skipped []string
 	for i, t := range tests {
+		if missing := missingExtensions(t.needs, offered); len(missing) > 0 {
+			slog.Info("sieve: SKIP", "n", i+1, "total", len(tests), "test", t.name, "not_offered", strings.Join(missing, ","))
+			skipped = append(skipped, t.name)
+			continue
+		}
 		slog.Info("sieve: run", "n", i+1, "total", len(tests), "test", t.name)
 		if err := t.fn(user, pass, to); err != nil {
 			slog.Error("sieve: FAIL", "n", i+1, "total", len(tests), "test", t.name, "err", err)
@@ -1064,7 +1082,51 @@ func checkSieve() error {
 	if len(errs) > 0 {
 		return fmt.Errorf("plugin failures:\n%s", strings.Join(errs, "\n"))
 	}
+	if len(skipped) == len(tests) {
+		return unmeasurable("the server offers none of the Sieve extensions the sub-checks need")
+	}
 	return nil
+}
+
+func missingExtensions(needs []string, offered map[string]bool) []string {
+	var missing []string
+	for _, e := range needs {
+		if !offered[e] {
+			missing = append(missing, e)
+		}
+	}
+	return missing
+}
+
+// msieveExtensions is the SIEVE capability the server answers the user with
+// once authenticated: the extensions a script of theirs may require.
+func msieveExtensions(user, pass string) (map[string]bool, error) {
+	conn, err := msieveDial()
+	if err != nil {
+		return nil, fmt.Errorf("managesieve dial: %w", err)
+	}
+	defer conn.Close() //nolint:errcheck
+	if err := msieveAuth(conn, user, pass); err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(conn, "CAPABILITY\r\n") //nolint:errcheck
+	offered := map[string]bool{}
+	for {
+		line, err := readLine(conn)
+		if err != nil {
+			return nil, fmt.Errorf("CAPABILITY: %w", err)
+		}
+		switch {
+		case strings.HasPrefix(line, "OK"):
+			return offered, nil
+		case strings.HasPrefix(line, "NO"), strings.HasPrefix(line, "BYE"):
+			return nil, fmt.Errorf("CAPABILITY: %q", line)
+		case strings.HasPrefix(line, `"SIEVE" `):
+			for _, e := range strings.Fields(strings.Trim(strings.TrimPrefix(line, `"SIEVE" `), `"`)) {
+				offered[e] = true
+			}
+		}
+	}
 }
 
 // lmtpSendRaw injects a complete raw message (headers + body) via LMTP, for

@@ -53,7 +53,7 @@ func (s *Server) emailQuery(ctx context.Context, h *userHandle, accountID string
 	eval := s.filterEvaluator(h)
 	if unsupported := eval.unsupported(req.Filter); len(unsupported) > 0 {
 		return nil, &jmapcore.MethodError{Type: jmapcore.ErrUnsupportedFilter,
-			Description: "conditions not supported yet: " + strings.Join(unsupported, ", ")}
+			Description: "conditions not supported: " + strings.Join(unsupported, ", ")}
 	}
 	if merr := checkEmailSort(req.Sort); merr != nil {
 		return nil, merr

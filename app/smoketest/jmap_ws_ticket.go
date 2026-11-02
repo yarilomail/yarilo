@@ -116,11 +116,14 @@ func ticketEndpoint(base string) (string, error) {
 	}
 	_ = json.Unmarshal(session.Capabilities[capWebSocketTicket], &cap)
 	acc := session.Accounts[jmapAccountID()].AccountCapabilities
-	if _, ok := acc[capWebSocketTicket]; !ok || cap.GenerationEndpoint == "" {
-		return "", fmt.Errorf("the session does not advertise %s at the session and the account", capWebSocketTicket)
+	if _, ok := acc[capWebSocketTicket]; !ok {
+		return "", unmeasurable("the account does not offer %s", capWebSocketTicket)
+	}
+	if cap.GenerationEndpoint == "" {
+		return "", fmt.Errorf("the account offers %s and the session names no generationEndpoint", capWebSocketTicket)
 	}
 	if _, ok := acc["urn:ietf:params:jmap:websocket"]; !ok {
-		return "", fmt.Errorf("the account does not carry urn:ietf:params:jmap:websocket")
+		return "", unmeasurable("the account does not offer urn:ietf:params:jmap:websocket")
 	}
 	u, err := url.Parse(cap.GenerationEndpoint)
 	if err != nil {

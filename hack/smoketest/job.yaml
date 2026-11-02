@@ -146,3 +146,4 @@ spec:
         - -jmap-port=443
         - -jmap-user=u1@d00001.test
         - -jmap-pass=$(SANDBOX_PASSWORD)
+        - -jmap-conn-limit=20
