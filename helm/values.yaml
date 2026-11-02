@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 24
+config_schema_version: 25
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -1082,6 +1082,10 @@ components:
       ## protocol has no request id, so one connection serves one command at a
       ## time - each is a sub-ms round trip, so a handful covers any login rate.
       conns: 4
+      ## fail_open - when a login pod cannot reach yarilo-warden: true lets the
+      ## connection in uncounted, false refuses it (IMAP NO [UNAVAILABLE], JMAP
+      ## 503). A reached connection limit is refused either way.
+      fail_open: false
 
       ## event_queue_size - SELECT events a backend queues for the warden
       ## writer. The events are accounting: the warden records the folder so
