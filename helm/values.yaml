@@ -1402,6 +1402,15 @@ components:
     service:
       type: ClusterIP
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1489,6 +1498,15 @@ components:
     service:
       type: ClusterIP
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1526,6 +1544,15 @@ components:
 
     service:
       type: ClusterIP
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1612,6 +1639,15 @@ components:
     service:
       type: LoadBalancer
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1681,6 +1717,15 @@ components:
     service:
       type: LoadBalancer
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1752,6 +1797,15 @@ components:
     service:
       type: LoadBalancer
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1819,6 +1873,15 @@ components:
     service:
       type: ClusterIP
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1912,6 +1975,15 @@ components:
     service:
       type: ClusterIP
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -2032,6 +2104,15 @@ components:
     service:
       type: LoadBalancer
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
