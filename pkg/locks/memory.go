@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,6 +31,12 @@ type MemoryBackend struct {
 	now      func() time.Time
 	stopOnce sync.Once
 	stop     chan struct{}
+
+	// next is when the sweeper will look next, zero while it waits with no
+	// timer; guarded by mu, so a lock added as the sweeper goes idle is seen.
+	next      time.Time
+	sweepWake chan struct{}
+	sweepRuns atomic.Int64
 }
 
 type memLock struct {
@@ -45,9 +52,8 @@ type memLock struct {
 // MemoryBackendOption tunes the backend at construction time.
 type MemoryBackendOption func(*MemoryBackend)
 
-// WithSweepInterval overrides the default TTL sweep cadence (100 ms).
-// Tests typically override this to a short value (1 ms) so expirations land
-// inside test deadlines.
+// WithSweepInterval caps how long the sweeper sleeps while a lock is held, for
+// a test whose WithNow clock moves without real time passing.
 func WithSweepInterval(d time.Duration) MemoryBackendOption {
 	return func(b *MemoryBackend) { b.sweepInt = d }
 }
@@ -70,9 +76,9 @@ func NewMemoryBackend(opts ...MemoryBackendOption) *MemoryBackend {
 		sharedRes: make(map[string]map[string]struct{}),
 		subs:      make(map[string]map[chan Event]struct{}),
 		counters:  make(map[string]int64),
-		sweepInt:  100 * time.Millisecond,
 		now:       time.Now,
 		stop:      make(chan struct{}),
+		sweepWake: make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		opt(b)
@@ -117,6 +123,7 @@ func (b *MemoryBackend) Acquire(_ context.Context, resource, owner, site, ticket
 		ExpiresAt: b.now().Add(ttl),
 	}
 	b.byRes[resource] = id
+	b.sweepByLocked(b.locks[id].ExpiresAt)
 	return id, Holder{}, nil
 }
 
@@ -144,6 +151,7 @@ func (b *MemoryBackend) AcquireShared(_ context.Context, resource, owner, site, 
 		ExpiresAt: b.now().Add(ttl),
 		Shared:    true,
 	}
+	b.sweepByLocked(b.locks[id].ExpiresAt)
 	if b.sharedRes[resource] == nil {
 		b.sharedRes[resource] = make(map[string]struct{})
 	}
@@ -191,6 +199,7 @@ func (b *MemoryBackend) Renew(_ context.Context, lockID string, ttl time.Duratio
 		return ErrExpired
 	}
 	l.ExpiresAt = b.now().Add(ttl)
+	b.sweepByLocked(l.ExpiresAt)
 	return nil
 }
 
@@ -267,18 +276,71 @@ func (b *MemoryBackend) Close() error {
 	return nil
 }
 
+// sweepLoop sleeps until the nearest expiry, and with no lock held it has no
+// timer at all: an idle backend never wakes (#2515).
 func (b *MemoryBackend) sweepLoop() {
-	t := time.NewTicker(b.sweepInt)
-	defer t.Stop()
+	var timer *time.Timer
+	var fire <-chan time.Time
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
 		select {
-		case <-t.C:
-			b.mu.Lock()
-			b.expireLocked()
-			b.mu.Unlock()
+		case <-fire:
+		case <-b.sweepWake:
 		case <-b.stop:
 			return
 		}
+		b.sweepRuns.Add(1)
+		b.mu.Lock()
+		b.expireLocked()
+		d, armed := b.armLocked()
+		b.mu.Unlock()
+		if timer != nil {
+			timer.Stop()
+		}
+		timer, fire = nil, nil
+		if armed {
+			timer = time.NewTimer(d)
+			fire = timer.C
+		}
+	}
+}
+
+// armLocked sets next to the nearest expiry, capped by sweepInt, and returns
+// how long to sleep; false means no lock is held. Caller holds b.mu.
+func (b *MemoryBackend) armLocked() (time.Duration, bool) {
+	var nearest time.Time
+	for _, l := range b.locks {
+		if nearest.IsZero() || l.ExpiresAt.Before(nearest) {
+			nearest = l.ExpiresAt
+		}
+	}
+	if nearest.IsZero() {
+		b.next = time.Time{}
+		return 0, false
+	}
+	now := b.now()
+	d := max(nearest.Sub(now), 0)
+	if b.sweepInt > 0 && d > b.sweepInt {
+		d = b.sweepInt
+	}
+	b.next = now.Add(d)
+	return d, true
+}
+
+// sweepByLocked wakes the sweeper when a lock expiring at t is due before it
+// would look next. Caller holds b.mu.
+func (b *MemoryBackend) sweepByLocked(t time.Time) {
+	if !b.next.IsZero() && !t.Before(b.next) {
+		return
+	}
+	b.next = t
+	select {
+	case b.sweepWake <- struct{}{}:
+	default:
 	}
 }
 
