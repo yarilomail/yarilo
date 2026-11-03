@@ -40,13 +40,13 @@ type tokenPayload struct {
 // RedisStore is a Redis-backed one-time token store.
 // GETDEL provides atomic consume; Redis TTL replaces the background sweeper.
 type RedisStore struct {
-	client    *redis.Client
+	client    redis.UniversalClient
 	ttl       time.Duration
 	keyPrefix string
 }
 
 // NewRedis returns a RedisStore. The caller owns the client lifecycle; Close is a no-op.
-func NewRedis(client *redis.Client, ttl time.Duration, opts ...RedisOption) *RedisStore {
+func NewRedis(client redis.UniversalClient, ttl time.Duration, opts ...RedisOption) *RedisStore {
 	s := &RedisStore{client: client, ttl: ttl, keyPrefix: defaultKeyPrefix}
 	for _, opt := range opts {
 		opt(s)

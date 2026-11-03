@@ -478,7 +478,7 @@ func unixToTime(s string) time.Time {
 
 // redisBackend is the Redis-backed StateBackend.
 type redisBackend struct {
-	rdb           *redis.Client
+	rdb           redis.UniversalClient
 	keyPrefix     string
 	channelPrefix string
 	penaltyTTL    time.Duration
@@ -490,7 +490,7 @@ type redisBackend struct {
 // every key and channelPrefix every Pub/Sub channel. penaltyTTL and sessionTTL
 // are enforced by Redis key expiry (sessionTTL renewed by heartbeat); limits
 // are the per-user@IP connection caps of each protocol.
-func NewRedisBackend(rdb *redis.Client, keyPrefix, channelPrefix string, penaltyTTL, sessionTTL time.Duration, limits ConnLimits) StateBackend {
+func NewRedisBackend(rdb redis.UniversalClient, keyPrefix, channelPrefix string, penaltyTTL, sessionTTL time.Duration, limits ConnLimits) StateBackend {
 	return &redisBackend{rdb: rdb, keyPrefix: keyPrefix, channelPrefix: channelPrefix, penaltyTTL: penaltyTTL, sessionTTL: sessionTTL, limits: limits}
 }
 
