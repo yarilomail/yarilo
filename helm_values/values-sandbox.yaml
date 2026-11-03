@@ -440,7 +440,6 @@ components:
         ## would keep 500m.
         cpu: null
         memory: 256Mi
-    ring_secret: "sandbox-ring-secret-32charslong00"
     min_members: 3
     seed_poll_idle_interval: 5
     ## Domain affinity by load (#1943): the stand exercises ACL between users

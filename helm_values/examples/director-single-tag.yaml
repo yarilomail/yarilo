@@ -78,7 +78,7 @@ components:
   director:
     enabled: true
     replicas: 3                     # odd number; 3 is the standard HA ring
-    ring_secret: "<32-char-shared-ring-secret>"   # SAME on all director pods
+    ## ring_secret: left to the chart, ${DIRECTOR_RING_SECRET} from the Secret it generates, the same on every director pod
     min_members: 3
     assignment_policy: least_sessions   # load-aware initial placement (or "hash")
     # username_hash: "%Lu"          # director_username_hash equivalent; default %Lu

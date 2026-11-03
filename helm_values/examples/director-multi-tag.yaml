@@ -65,7 +65,7 @@ components:
   director:
     enabled: true
     replicas: 3
-    ring_secret: "<32-char-shared-ring-secret>"
+    ## ring_secret: left to the chart, ${DIRECTOR_RING_SECRET} from the Secret it generates, the same on every director pod
     min_members: 3
     assignment_policy: least_sessions
     # Co-locate a whole domain onto its tag's pods (optional routing lever):
