@@ -391,6 +391,7 @@ data:
       {{- /* hasKey, not | default: an explicit 0, false or "" is a setting (#2162). */}}
       auth_failure_delay: {{ $auth.failure_delay }}
       auth_max_attempts: {{ .Values.components.auth.auth_max_attempts }}
+      auth_username_format: {{ .Values.components.auth.auth_username_format | quote }}
       internal_failure_delay_ms: {{ $auth.internal_failure_delay_ms }}
       cache:
         # Raw values: an explicit 0 turns caching off. int64 keeps a large TTL

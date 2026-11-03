@@ -45,10 +45,18 @@ type MasterServer struct {
 	// sessionPeers, when set, are the uids whose connections may SESSION; a
 	// connection whose peer is unknown is refused too.
 	sessionPeers map[uint32]bool
+	// usernameFormat is auth_username_format, applied as on the client listener.
+	usernameFormat string
 }
 
 // MasterServerOption tunes a NewMasterServer construction.
 type MasterServerOption func(*MasterServer)
+
+// WithMasterUsernameFormat sets auth_username_format for USER, SESSION and
+// CACHE-FLUSH, so a delivery and a login reach the same canonical user.
+func WithMasterUsernameFormat(template string) MasterServerOption {
+	return func(s *MasterServer) { s.usernameFormat = template }
+}
 
 // WithMasterCache attaches the auth cache that CACHE-FLUSH operates on. Pass the
 // same *Cache the client-protocol Server got via WithCache so flushing here empties
@@ -241,7 +249,7 @@ func (s *MasterServer) handleUser(conn net.Conn, fields []string) {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=USER requires id + username\n", id)
 		return
 	}
-	id, username := fields[1], fields[2]
+	id, username := fields[1], canonicalUser(s.usernameFormat, fields[2])
 	if s.userdb == nil {
 		fmt.Fprintf(conn, "NOTFOUND\t%s\n", id)
 		return
@@ -313,7 +321,11 @@ func (s *MasterServer) handleCacheFlush(conn net.Conn, fields []string) {
 	if len(fields) <= 2 {
 		n = s.cache.Clear()
 	} else {
-		n = s.cache.ClearByUserMask(fields[2:])
+		masks := make([]string, 0, len(fields)-2)
+		for _, m := range fields[2:] {
+			masks = append(masks, canonicalUser(s.usernameFormat, m))
+		}
+		n = s.cache.ClearByUserMask(masks)
 	}
 	fmt.Fprintf(conn, "OK\t%s\t%d\n", id, n)
 }
@@ -358,7 +370,7 @@ func (s *MasterServer) handleSession(conn net.Conn, fields []string, peer sessio
 	for _, f := range fields[2:] {
 		switch {
 		case strings.HasPrefix(f, "user="):
-			username = strings.TrimPrefix(f, "user=")
+			username = canonicalUser(s.usernameFormat, strings.TrimPrefix(f, "user="))
 		case strings.HasPrefix(f, "sid="):
 			sid = strings.TrimPrefix(f, "sid=")
 		case strings.HasPrefix(f, "ip="):

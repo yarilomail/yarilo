@@ -121,6 +121,7 @@ func main() {
 	defer tokenClose()
 
 	srvOpts := []protocol.ServerOption{
+		protocol.WithUsernameFormat(cfg.Auth.UsernameFormat),
 		protocol.WithTokenStore(tokenStore),
 		protocol.WithUserdb(combinedUserdb),
 		protocol.WithFailureDelay(time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second),
@@ -234,6 +235,7 @@ func main() {
 	// of an extra bind nothing consumes.
 	if cfg.AuthService.MasterListen != "" {
 		masterOpts := []protocol.MasterServerOption{
+			protocol.WithMasterUsernameFormat(cfg.Auth.UsernameFormat),
 			protocol.WithMasterCache(authCache),
 			protocol.WithMasterTokenStore(tokenStore),
 		}
