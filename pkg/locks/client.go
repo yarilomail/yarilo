@@ -488,7 +488,7 @@ func (c *Client) Lock(ctx context.Context, resource, owner string, ttl time.Dura
 		}
 		return Lock{Resource: resource, Owner: current, Site: site}, ErrBusy
 	case respError:
-		return Lock{}, fmt.Errorf("locks/client: server error: %s", strings.Join(resp[1:], " "))
+		return Lock{}, serverError("locks/client: server error", resp)
 	}
 	return Lock{}, fmt.Errorf("locks/client: unexpected response %v: %w", resp, ErrProtocol)
 }
@@ -525,7 +525,7 @@ func (c *Client) LockShared(ctx context.Context, resource, owner string, ttl tim
 		}
 		return Lock{Resource: resource, Owner: current, Site: site}, ErrBusy
 	case respError:
-		return Lock{}, fmt.Errorf("locks/client: server error: %s", strings.Join(resp[1:], " "))
+		return Lock{}, serverError("locks/client: server error", resp)
 	}
 	return Lock{}, fmt.Errorf("locks/client: unexpected response %v: %w", resp, ErrProtocol)
 }
@@ -546,7 +546,7 @@ func (c *Client) Unlock(ctx context.Context, lockID string) error {
 	case respNotFound:
 		return ErrNotFound
 	case respError:
-		return fmt.Errorf("locks/client: server error: %s", strings.Join(resp[1:], " "))
+		return serverError("locks/client: server error", resp)
 	}
 	return fmt.Errorf("locks/client: unexpected response %v: %w", resp, ErrProtocol)
 }
@@ -641,7 +641,7 @@ func (c *Client) Renew(ctx context.Context, lockID string, ttl time.Duration) er
 	case respExpired:
 		return ErrExpired
 	case respError:
-		return fmt.Errorf("locks/client: server error: %s", strings.Join(resp[1:], " "))
+		return serverError("locks/client: server error", resp)
 	}
 	return fmt.Errorf("locks/client: unexpected response %v: %w", resp, ErrProtocol)
 }
@@ -658,6 +658,18 @@ func (c *Client) Emit(ctx context.Context, resource string, t EventType, payload
 	return nil
 }
 
+// serverError is the error for an ERROR reply. The server answers "internal"
+// only when its store failed, which leaves the lock service unable to hold any
+// state: unavailable, as a dropped connection is, and not a fault of this
+// request (#2503).
+func serverError(prefix string, resp []string) error {
+	reason := strings.Join(resp[1:], " ")
+	if len(resp) > 1 && resp[1] == "internal" {
+		return fmt.Errorf("%s: %s: %w", prefix, reason, ErrUnavailable)
+	}
+	return fmt.Errorf("%s: %s", prefix, reason)
+}
+
 // IncrementCounter implements Locker. Atomically adds delta to the counter at
 // key and returns the post-increment value.
 func (c *Client) IncrementCounter(ctx context.Context, key string, delta int64) (int64, error) {
@@ -667,7 +679,7 @@ func (c *Client) IncrementCounter(ctx context.Context, key string, delta int64) 
 	}
 	if len(resp) < 2 || resp[0] != respOK {
 		if len(resp) > 0 && resp[0] == respError {
-			return 0, fmt.Errorf("locks/client: counter inc: %s", strings.Join(resp[1:], " "))
+			return 0, serverError("locks/client: counter inc", resp)
 		}
 		return 0, fmt.Errorf("locks/client: unexpected counter response %v: %w", resp, ErrProtocol)
 	}

@@ -3,7 +3,6 @@ package locks
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -60,7 +59,7 @@ func (c *Client) LockWaiting(ctx context.Context, resource, owner string, ttl, l
 			// server that cannot queue is a rollout that did not finish (#1823).
 			return Lock{}, fmt.Errorf("locks/client: server %s does not queue waiters: %w", addr, ErrProtocol)
 		}
-		return Lock{}, fmt.Errorf("locks/client: server error: %s", strings.Join(resp[1:], " "))
+		return Lock{}, serverError("locks/client: server error", resp)
 	}
 	return Lock{}, fmt.Errorf("locks/client: unexpected response %v: %w", resp, ErrProtocol)
 }
@@ -70,6 +69,17 @@ func holdKind(shared bool) HoldMode {
 		return HoldShared
 	}
 	return HoldExclusive
+}
+
+// waitTransportError classifies a waiting exchange that broke off. The
+// connection dropping or the deadline passing is the lock service being
+// unavailable, as on the control pool; the caller's own context ending is not,
+// and keeps its meaning as waitFailure gives it (#2503).
+func waitTransportError(ctx context.Context, op string, err error) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return fmt.Errorf("locks/client: %s: %w", op, waitFailure(cerr))
+	}
+	return fmt.Errorf("locks/client: %s: %w: %w", op, ErrUnavailable, err)
 }
 
 // soloExchange runs one waiting command on a connection from the waiting pool,
@@ -104,11 +114,11 @@ func (c *Client) soloExchange(ctx context.Context, limit time.Duration, cmd ...s
 	defer stop()
 
 	if err := writeFields(conn, cmd...); err != nil {
-		return nil, addr, "", fmt.Errorf("locks/client: send: %w", err)
+		return nil, addr, "", waitTransportError(ctx, "send", err)
 	}
 	resp, err := slot.reader.readFields()
 	if err != nil {
-		return nil, addr, "", fmt.Errorf("locks/client: read: %w", err)
+		return nil, addr, "", waitTransportError(ctx, "read", err)
 	}
 	_ = conn.SetDeadline(time.Time{})
 	ok = true
