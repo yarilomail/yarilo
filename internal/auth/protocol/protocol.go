@@ -26,6 +26,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/userfmt"
 )
 
 const (
@@ -733,6 +734,7 @@ func authResultFromChain(r Result) AuthResult {
 // impersonation (Phase AUTH-3).
 type Server struct {
 	passdbs             []Passdb
+	usernameFormat      string
 	userdb              Userdb
 	masterdb            []Passdb
 	masterUserSeparator string
@@ -810,6 +812,25 @@ func WithMasterdb(passdbs []Passdb) ServerOption {
 // honoured.
 func WithMasterUserSeparator(sep string) ServerOption {
 	return func(s *Server) { s.masterUserSeparator = sep }
+}
+
+// WithUsernameFormat sets auth_username_format, applied to every name before a
+// passdb or userdb lookup; empty keeps names as given.
+func WithUsernameFormat(template string) ServerOption {
+	return func(s *Server) { s.usernameFormat = template }
+}
+
+// canonicalUser applies auth_username_format to name. The loader refused a bad
+// template, so an error here keeps the name as given.
+func canonicalUser(template, name string) string {
+	if name == "" {
+		return name
+	}
+	out, err := userfmt.Format(template, name)
+	if err != nil {
+		return name
+	}
+	return out
 }
 
 // WithMasterUsers is the top-level opt-in for master-user
@@ -1348,6 +1369,10 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 		reject(conn, id)
 		return "fail"
 	}
+	// Every lookup and the cache key use the canonical name; the one the
+	// client gave stays in original_user.
+	givenUser, givenTarget := master, target
+	master, target = canonicalUser(s.usernameFormat, master), canonicalUser(s.usernameFormat, target)
 
 	// Auth-penalty pre-check: look up the client IP's current
 	// fail-counter, sleep the mapped seconds, then run the chain.
@@ -1375,7 +1400,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 	// sleep then continue to the chain. Errors honour the
 	// policy client's RejectOnFail setting internally; here we
 	// only see the resulting Decision.
-	vars := policyVars{user: master, original: master, password: password, service: service,
+	vars := policyVars{user: master, original: givenUser, password: password, service: service,
 		rip: remoteIP, lip: localIP, session: sessionID, mechanism: cc.mechanism, cpid: cc.cpid, cc: cc}
 	policyReq := PolicyRequest{
 		Username: master, Password: password, RemoteIP: remoteIP, LocalIP: localIP,
@@ -1511,7 +1536,7 @@ func (s *Server) authenticatePassword(conn net.Conn, id, service, remoteIP, loca
 		}
 	}
 
-	reply := buildAuthOK(id, res)
+	reply := withOriginalUser(buildAuthOK(id, res), res, givenUser, givenTarget)
 	if s.tokenStore != nil && sessionID != "" {
 		if tok, terr := s.tokenStore.Issue(res.Username, sessionID, service); terr == nil {
 			reply += "\ttoken=" + tok
@@ -2004,6 +2029,34 @@ func (s *Server) authenticate(target, master, password, service, remoteIP, local
 	resp.MailboxFormat = extractMailboxFormat(req.Fields)
 	s.applyMailPathDefaults(resp)
 	return resp, err
+}
+
+// withOriginalUser puts the name the client gave into the OK line as
+// original_user: the master's target on impersonation, otherwise the login
+// name when it differs from the canonical one and the passdb set none. The
+// reply is edited, not res.Fields, which a cache entry may share.
+func withOriginalUser(reply string, res *AuthResponse, givenUser, givenTarget string) string {
+	value := givenTarget
+	if value == "" {
+		if givenUser == "" || givenUser == res.Username {
+			return reply
+		}
+		if res.Fields != nil {
+			if _, set := res.Fields.Get("original_user"); set {
+				return reply
+			}
+		}
+		value = givenUser
+	}
+	tok := "original_user=" + escapeFieldValue(value)
+	parts := strings.Split(reply, "\t")
+	for i, p := range parts {
+		if strings.HasPrefix(p, "original_user=") {
+			parts[i] = tok
+			return strings.Join(parts, "\t")
+		}
+	}
+	return reply + "\t" + tok
 }
 
 // parsePlain splits a decoded SASL PLAIN response, authzid\0authid\0passwd

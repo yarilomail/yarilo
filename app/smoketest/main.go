@@ -303,6 +303,9 @@ func register() []check {
 	want("imap", *flagIMAPUser != "", "imap login", "needs -imap-user", func() error {
 		return checkIMAPLogin(*flagIMAPUser, *flagIMAPPass)
 	})
+	want("imap", *flagIMAPUser != "", "imap login with the name in capitals reaches the same mailbox", "needs -imap-user", func() error {
+		return checkIMAPLoginCase(*flagIMAPUser, *flagIMAPPass)
+	})
 	oauth := *flagOAuth2TokenURL != "" && *flagIMAPUser != ""
 	const oauthNeeds = "needs -oauth2-token-url and -imap-user"
 	want("oauth2", oauth, oauth2IMAPCheck, oauthNeeds, checkOAuth2IMAP)
@@ -538,6 +541,46 @@ func checkIMAPLogin(user, pass string) error {
 	}
 	if _, err := c.selectFolder("INBOX"); err != nil {
 		return fmt.Errorf("select INBOX: %w", err)
+	}
+	return nil
+}
+
+// checkIMAPLoginCase logs in as user and as user in capitals: with
+// auth_username_format lowercasing, both select the same INBOX, the same
+// UIDVALIDITY and the same count, not a second home made for the capitals.
+func checkIMAPLoginCase(user, pass string) error {
+	upper := strings.ToUpper(user)
+	if upper == user {
+		return fmt.Errorf("%q has no letter to put in capitals", user)
+	}
+	var seen [2]string
+	for i, name := range []string{user, upper} {
+		c, err := imapDial()
+		if err != nil {
+			return fmt.Errorf("dial: %w", err)
+		}
+		if err := c.login(name, pass); err != nil {
+			c.close()
+			return fmt.Errorf("login %q: %w", name, err)
+		}
+		lines, err := c.cmd("SELECT INBOX")
+		c.close()
+		if err != nil {
+			return fmt.Errorf("%s: select INBOX: %w", name, err)
+		}
+		var uidvalidity, exists string
+		for _, l := range lines {
+			if _, v, ok := strings.Cut(l, "[UIDVALIDITY "); ok {
+				uidvalidity, _, _ = strings.Cut(v, "]")
+			}
+			if n, ok := strings.CutSuffix(strings.TrimPrefix(l, "* "), " EXISTS"); ok {
+				exists = n
+			}
+		}
+		seen[i] = "UIDVALIDITY " + uidvalidity + ", " + exists + " messages"
+	}
+	if seen[0] != seen[1] {
+		return fmt.Errorf("%s selected INBOX with %s, %s with %s: two mailboxes for one user", user, seen[0], upper, seen[1])
 	}
 	return nil
 }

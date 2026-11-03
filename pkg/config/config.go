@@ -23,6 +23,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
 	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/userfmt"
 )
 
 // Config is the top-level yarilo configuration.
@@ -2001,6 +2002,12 @@ type AuthConfig struct {
 	// against it still parses.
 	MaxAttemptsAlias int `koanf:"max_attempts"`
 
+	// UsernameFormat is applied to every username yarilo-auth is asked about
+	// before any passdb or userdb lookup; the result is the canonical user,
+	// the name as given stays in original_user. Templates as pkg/userfmt;
+	// "%u" keeps the name as given. Default "%Lu".
+	UsernameFormat string `koanf:"auth_username_format"`
+
 	// FailureDelaySeconds is the timing-leak mitigation: every
 	// failed auth reply (wrong password, unknown user, malformed
 	// SASL response) is held back this many seconds before
@@ -2994,6 +3001,7 @@ func Defaults() *Config {
 	c.Sieve.FilterExecTimeout = 10
 	c.Sieve.ExecuteExecTimeout = 10
 	c.Auth.MaxAttempts = 3
+	c.Auth.UsernameFormat = "%Lu"
 	c.Auth.Policy.TimeoutMs = 5000
 	c.Auth.Token.TTLSeconds = 60
 	c.Login.LoginProxyTimeout = 30
@@ -3188,6 +3196,9 @@ func (cfg *Config) validate() error {
 	}
 	if err := validateRedisSentinels(cfg); err != nil {
 		return err
+	}
+	if _, err := userfmt.Format(cfg.Auth.UsernameFormat, "user@example.com"); err != nil {
+		return fmt.Errorf("config: auth.auth_username_format: %w", err)
 	}
 	for key, mode := range map[string]string{
 		"auth_service.socket_mode":        cfg.AuthService.SocketMode,
@@ -3913,7 +3924,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 27
+const minConfigSchema = 28
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3958,6 +3969,7 @@ var schemaAdditions = map[int][]string{
 	27: {"locks_service.sentinel_addrs", "locks_service.sentinel_master", "locks_service.sentinel_user", "locks_service.sentinel_password",
 		"auth.token.sentinel_addrs", "auth.token.sentinel_master", "auth.token.sentinel_user", "auth.token.sentinel_password",
 		"warden_service.sentinel_addrs", "warden_service.sentinel_master", "warden_service.sentinel_user", "warden_service.sentinel_password"},
+	28: {"auth.auth_username_format"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

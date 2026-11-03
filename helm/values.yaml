@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 27
+config_schema_version: 28
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -875,6 +875,12 @@ components:
     ## auth_max_attempts - failed authentications allowed on one connection,
     ## a refused SASL exchange included, before it is closed. Default 3.
     auth_max_attempts: 3
+    ## auth_username_format - applied to every username before any passdb or
+    ## userdb lookup: logins, delivery, master-user targets. The result is the
+    ## canonical user; the name as given stays in original_user. %Lu lowercases
+    ## the whole name, %u keeps it as given; %n, %d and the %L prefix as in
+    ## oauth2_username_validation_format.
+    auth_username_format: "%Lu"
     failure_delay: 2
     ## internal_failure_delay_ms - separate delay for INTERNAL
     ## failures (passdb backend down, SQL refused). Typically shorter

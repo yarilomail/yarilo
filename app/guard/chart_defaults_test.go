@@ -120,6 +120,7 @@ func TestTheChartCarriesTheBinaryDefaults(t *testing.T) {
 		{"storage.mail_index_log_rotate_min_size", cfg.Storage.MailIndexLogRotateMinSizeRaw, d.Storage.MailIndexLogRotateMinSizeRaw},
 		{"storage.mail_index_log_rotate_max_size", cfg.Storage.MailIndexLogRotateMaxSizeRaw, d.Storage.MailIndexLogRotateMaxSizeRaw},
 		{"fts.fts_detection_sample_bytes", cfg.FTS.DetectionSampleBytesRaw, d.FTS.DetectionSampleBytesRaw},
+		{"auth.auth_username_format", cfg.Auth.UsernameFormat, d.Auth.UsernameFormat},
 	} {
 		if row.got != row.want {
 			t.Errorf("%s = %q in the chart, %q in config.Defaults()", row.path, row.got, row.want)
