@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 28
+config_schema_version: 29
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -2130,6 +2130,11 @@ components:
     backend_port: 0
     ## director_tag - see imapLogin's comment for the tag/pool-topology rule.
     director_tag: ""
+    ## client_ip_header - the header a proxy puts the client address in, read
+    ## only from a peer in general.haproxy.trusted_nets: CF-Connecting-IP behind
+    ## Cloudflare, X-Forwarded-For (its last address) behind a plain proxy.
+    ## Empty reads none.
+    client_ip_header: ""
 
     service:
       type: LoadBalancer

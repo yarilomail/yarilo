@@ -381,6 +381,7 @@ func register() []check {
 	want("jmap", jmap, "jmap download refuses another account's blob", "needs -jmap", checkJMAPDownloadIsolation)
 	want("jmap", jmap && *flagJMAPPushPoll > 0, "jmap WebSocket opened with a ticket alone pushes a StateChange",
 		"needs -jmap and -jmap-push-poll", checkJMAPWebSocketTicket)
+	want("jmap", jmap, "jmap forged client address header from an untrusted peer is ignored", "needs -jmap", checkJMAPForgedClientAddress)
 	want("jmap", jmap && *flagJMAPUser != "" && *flagFTSUser != "",
 		"jmap Email/query over full-text search",
 		"needs -jmap, -jmap-user and -fts-user (the latter states that FTS is configured)", func() error {

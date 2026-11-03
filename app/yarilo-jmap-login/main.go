@@ -221,6 +221,7 @@ func serverOptions(cfg *config.Config, svc *config.ServiceConfig, addr string, e
 		ProxyProtocol:      svc.HAProxy,
 		HAProxyTrustedNets: parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
 		HAProxyTimeout:     time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
+		ClientIPHeader:     cfg.JMAPLoginService.ClientIPHeader,
 		LocalIP:            os.Getenv("POD_IP"),
 		CORSAllowOrigins:   cfg.Protocol.JMAP.CORSAllowOrigins,
 		MaxSizeRequest:     cfg.Protocol.JMAP.MaxSizeRequest,

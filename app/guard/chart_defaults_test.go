@@ -115,12 +115,14 @@ func TestTheChartCarriesTheBinaryDefaults(t *testing.T) {
 		}
 	}
 	cfg, d := loadRendered(t, mustRender(t, "")), config.Defaults()
+	jmap := loadRendered(t, mustRender(t, "components:\n  jmapLogin:\n    enabled: true\n    backend_addr: \"jmap:10443\"\n"))
 	for _, row := range []struct{ path, got, want string }{
 		{"storage.mdbox_rotate_size", cfg.Storage.MdboxRotateSize, d.Storage.MdboxRotateSize},
 		{"storage.mail_index_log_rotate_min_size", cfg.Storage.MailIndexLogRotateMinSizeRaw, d.Storage.MailIndexLogRotateMinSizeRaw},
 		{"storage.mail_index_log_rotate_max_size", cfg.Storage.MailIndexLogRotateMaxSizeRaw, d.Storage.MailIndexLogRotateMaxSizeRaw},
 		{"fts.fts_detection_sample_bytes", cfg.FTS.DetectionSampleBytesRaw, d.FTS.DetectionSampleBytesRaw},
 		{"auth.auth_username_format", cfg.Auth.UsernameFormat, d.Auth.UsernameFormat},
+		{"jmap_login_service.client_ip_header", jmap.JMAPLoginService.ClientIPHeader, d.JMAPLoginService.ClientIPHeader},
 	} {
 		if row.got != row.want {
 			t.Errorf("%s = %q in the chart, %q in config.Defaults()", row.path, row.got, row.want)

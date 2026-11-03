@@ -118,7 +118,7 @@ func dropTicket(r *http.Request) {
 }
 
 // handleTicket issues a ticket to a request that authenticates as usual.
-func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request, st *connState, clientIP string) {
+func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request, st *connState, clientIP, peer string) {
 	if s.tickets == nil {
 		jmapcore.WriteProblem(w, http.StatusNotFound, "Not found")
 		return
@@ -128,7 +128,7 @@ func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request, st *connSt
 		jmapcore.WriteProblem(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	login, err := s.authenticate(r, clientIP, sessionOf(st))
+	login, err := s.authenticate(r, clientIP, peer, sessionOf(st))
 	username := login.User
 	if err != nil {
 		if errors.Is(err, errTemporary) {
@@ -140,7 +140,7 @@ func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request, st *connSt
 		return
 	}
 	value, until := s.tickets.issue(login, clientIP)
-	slog.Debug("jmap-login: websocket ticket issued", "user", username, "ip", clientIP, "session", sessionOf(st))
+	slog.Debug("jmap-login: websocket ticket issued", "user", username, "ip", clientIP, "peer", peer, "session", sessionOf(st))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]string{
