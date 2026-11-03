@@ -4,7 +4,8 @@
 ##   1. cert-manager + ClusterIssuer "letsencrypt-prod" in the cluster.
 ##   2. DNS A/AAAA for mail-sb.seconddns.com pointing at the LB IP.
 ##   3. MySQL (apply mysql-sandbox.yaml first - namespace: db).
-##   4. Redis (apply redis-sandbox.yaml first - namespace: redis).
+##   4. Valkey (seconddns/k8s_valkey, release valkey - namespace: redis), on
+##      trial; redis-sandbox.yaml stays until the decision.
 ##
 ## Install:
 ##   helm upgrade --install yarilo ./helm \
@@ -288,7 +289,7 @@ dicts:
   acl_shared:
     driver: redis
     settings:
-      addr: redis.redis.svc.cluster.local:6379
+      addr: valkey-haproxy.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:acl-shared:"
@@ -304,7 +305,7 @@ dicts:
   quota_clone_redis:
     driver: redis
     settings:
-      addr: redis.redis.svc.cluster.local:6379
+      addr: valkey-haproxy.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:quota:"
@@ -322,7 +323,7 @@ dicts:
   sieve_duplicate:
     driver: redis
     settings:
-      addr: redis.redis.svc.cluster.local:6379
+      addr: valkey-haproxy.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       prefix: "yarilo-sb:sieve:duplicate:"
@@ -341,12 +342,14 @@ mysql:
 database:
   initAddr: "mysql.db.svc:3306"
 
-## External Redis - managed by redis-sandbox.yaml (namespace: redis); the chart's
-## in-namespace Redis StatefulSet is disabled. Consumers (locks state, dicts)
-## point at redis.redis.svc.cluster.local:6379.
+## External Redis protocol - Valkey with Sentinel from seconddns/k8s_valkey
+## (namespace: redis), on trial in place of redis-sandbox.yaml; the chart's
+## in-namespace Redis StatefulSet is disabled. Consumers (locks state, dicts,
+## auth tokens) go through HAProxy, which follows the Sentinels to the master:
+## valkey-haproxy.redis.svc.cluster.local:6379.
 redis:
   bundled: false
-  externalUrl: "redis://redis.redis.svc.cluster.local:6379/0"
+  externalUrl: "redis://valkey-haproxy.redis.svc.cluster.local:6379/0"
   ## The password: Secret yarilo-redis-password, made outside git with the
   ## value of redis-password in the redis namespace.
   passwordSecret:
@@ -656,7 +659,7 @@ components:
 
     token:
       backend: redis
-      redis_addr: "redis://redis.redis.svc.cluster.local:6379/0"
+      redis_addr: "redis://valkey-haproxy.redis.svc.cluster.local:6379/0"
       # Sandbox shares one Redis; every component lives under the yarilo-sb: namespace.
       key_prefix: "yarilo-sb:authtoken:"
 
