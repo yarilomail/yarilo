@@ -1048,6 +1048,7 @@ data:
       backend_port: {{ .Values.components.jmapLogin.backend_port | default 0 }}
       director_tag: {{ .Values.components.jmapLogin.director_tag | quote }}
       websocket_ticket_key: "${JMAP_WEBSOCKET_TICKET_KEY}"
+      client_ip_header: {{ .Values.components.jmapLogin.client_ip_header | quote }}
     {{- end }}
 
     {{- if .Values.components.submissionLogin.enabled }}

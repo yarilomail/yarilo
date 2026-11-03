@@ -131,3 +131,42 @@ func ticketEndpoint(base string) (string, error) {
 	}
 	return u.Path, nil
 }
+
+// checkJMAPForgedClientAddress sends the client address headers a proxy would,
+// from a peer that is not one: the address the ticket names must not move.
+func checkJMAPForgedClientAddress() error {
+	base := "https://" + net.JoinHostPort(jmapHost(), *flagJMAPPort)
+	endpoint, err := ticketEndpoint(base)
+	if err != nil {
+		return err
+	}
+	const forged = "192.0.2.1"
+	var got [2]string
+	for i, headers := range []map[string]string{nil, {"CF-Connecting-IP": forged, "X-Forwarded-For": forged, "X-Real-IP": forged}} {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+endpoint, nil)
+		if err != nil {
+			return err
+		}
+		req.SetBasicAuth(*flagJMAPUser, *flagJMAPPass)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := jmapClient().Do(req)
+		if err != nil {
+			return fmt.Errorf("ticket: %w", err)
+		}
+		var ticket struct {
+			ClientAddress string `json:"clientAddress"`
+		}
+		err = json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&ticket)
+		resp.Body.Close() //nolint:errcheck
+		if err != nil || resp.StatusCode != http.StatusOK || ticket.ClientAddress == "" {
+			return fmt.Errorf("ticket: HTTP %d, %v", resp.StatusCode, err)
+		}
+		got[i] = ticket.ClientAddress
+	}
+	if got[1] != got[0] || got[1] == forged {
+		return fmt.Errorf("a forged header moved the client address from %s to %s", got[0], got[1])
+	}
+	return nil
+}

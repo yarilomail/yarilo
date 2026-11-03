@@ -25,7 +25,7 @@ var errBadToken = fmt.Errorf("%w: bearer token refused", errUnauthorized)
 // tried first and a rejected token is never retried as Basic, which would
 // report a token failure as a password one. No penalty accounting here:
 // yarilo-auth applies it for every caller, and a second one double-counts.
-func (s *Server) authenticate(r *http.Request, clientIP, sessionID string) (Login, error) {
+func (s *Server) authenticate(r *http.Request, clientIP, peer, sessionID string) (Login, error) {
 	scheme, cred, ok := parseAuthorization(r.Header.Get("Authorization"))
 	if !ok {
 		return Login{}, errUnauthorized
@@ -38,7 +38,7 @@ func (s *Server) authenticate(r *http.Request, clientIP, sessionID string) (Logi
 		}
 		login, err := s.opts.Tokens.AuthenticateToken(cred, service, clientIP, localIPOf(r), sessionID)
 		if err != nil {
-			slog.Info("jmap-login: bearer rejected", "ip", clientIP, "err", err)
+			slog.Info("jmap-login: bearer rejected", "ip", clientIP, "peer", peer, "err", err)
 			if errors.Is(err, errTemporary) {
 				return Login{}, err
 			}
@@ -46,12 +46,12 @@ func (s *Server) authenticate(r *http.Request, clientIP, sessionID string) (Logi
 		}
 		return login, nil
 	case "basic":
-		return s.authenticateBasic(r, cred, clientIP, sessionID)
+		return s.authenticateBasic(r, cred, clientIP, peer, sessionID)
 	}
 	return Login{}, errUnauthorized
 }
 
-func (s *Server) authenticateBasic(r *http.Request, cred, clientIP, sessionID string) (Login, error) {
+func (s *Server) authenticateBasic(r *http.Request, cred, clientIP, peer, sessionID string) (Login, error) {
 	if s.opts.Auth == nil {
 		return Login{}, errUnauthorized
 	}
@@ -70,7 +70,7 @@ func (s *Server) authenticateBasic(r *http.Request, cred, clientIP, sessionID st
 	}
 	login, err := s.opts.Auth.Authenticate(username, password, service, clientIP, localIPOf(r), sessionID)
 	if err != nil {
-		slog.Info("jmap-login: basic rejected", "user", username, "ip", clientIP, "err", err)
+		slog.Info("jmap-login: basic rejected", "user", username, "ip", clientIP, "peer", peer, "err", err)
 		if errors.Is(err, errTemporary) {
 			return Login{}, err
 		}

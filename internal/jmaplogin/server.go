@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +57,9 @@ type Options struct {
 	ProxyProtocol      bool
 	HAProxyTrustedNets []*net.IPNet
 	HAProxyTimeout     time.Duration
+	// ClientIPHeader names the header a peer in HAProxyTrustedNets puts the
+	// client address in; empty reads none.
+	ClientIPHeader string
 
 	// LocalIP is this pod's address, reported to the backend in Forwarded.
 	LocalIP string
@@ -121,7 +125,13 @@ type connState struct {
 	mu sync.Mutex
 	// id is this connection's warden session id, allocated once.
 	id string
-	ip string
+	// ip is the address the connection is accounted under; peer is the
+	// address it came from, after the PROXY header and before any header.
+	ip   string
+	peer string
+	// badHeader is set once ClientIPHeader carried a non-address here, so it
+	// is logged once per connection.
+	badHeader atomic.Bool
 	// user is who the connection is currently accounted as. Empty means it has
 	// never authenticated, and such a connection is never accounted: brute
 	// force on it is yarilo-auth's penalty to handle, not a connection count.
@@ -180,7 +190,8 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 		},
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			st := &connState{ip: hostOnly(c.RemoteAddr().String()), conn: c}
+			peer := hostOnly(c.RemoteAddr().String())
+			st := &connState{ip: peer, peer: peer, conn: c}
 			s.conns.Store(c, st)
 			// Released on close, which a hijacked connection (a WebSocket
 			// upgrade) reports only through its trackedConn.
@@ -252,7 +263,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, _ := r.Context().Value(ctxKey{}).(*connState)
-	clientIP := clientAddr(r, st)
+	clientIP, peer := s.clientAddr(r, st)
 	if origin := r.Header.Get("Origin"); origin != "" {
 		if !s.cors.allows(origin) {
 			w.Header().Add("Vary", "Origin")
@@ -269,7 +280,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == jmapcore.WebSocketTicketPath {
-		s.handleTicket(w, r, st, clientIP)
+		s.handleTicket(w, r, st, clientIP, peer)
 		return
 	}
 
@@ -279,7 +290,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		login, err = s.tickets.check(ticket, clientIP)
 		dropTicket(r)
 	} else {
-		login, err = s.authenticate(r, clientIP, sessionOf(st))
+		login, err = s.authenticate(r, clientIP, peer, sessionOf(st))
 	}
 	username := login.User
 	if err != nil {
@@ -376,7 +387,8 @@ func writeLimitProblem(w http.ResponseWriter, limit string) {
 
 // account keeps warden's per-user@IP view in step with this connection. A
 // connection that authenticates as a different user, which HTTP permits on a
-// keep-alive, is re-accounted rather than refused or counted twice.
+// keep-alive, is re-accounted rather than refused or counted twice; so is one
+// whose client address changed, as a proxy's pooled connection does.
 func (s *Server) account(st *connState, login Login, ip string) error {
 	username := login.User
 	if s.opts.Warden == nil || st == nil {
@@ -384,7 +396,7 @@ func (s *Server) account(st *connState, login Login, ip string) error {
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if st.user == username {
+	if st.user == username && st.ip == ip {
 		return nil
 	}
 	if st.id == "" {
@@ -510,14 +522,59 @@ func newSessionID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// clientAddr is the peer address the passdb and warden see. The PROXY header
-// has already rewritten it at the listener; request headers are never consulted,
-// since a client choosing its own source address defeats allow_nets.
-func clientAddr(r *http.Request, st *connState) string {
-	if st != nil && st.ip != "" {
-		return st.ip
+// clientAddr is the address the passdb, warden and limits see, and the peer
+// the request came from. The PROXY header has already rewritten the peer at the
+// listener; ClientIPHeader is read only from a peer in HAProxyTrustedNets,
+// since a client choosing its own source address defeats allow_nets (#2512).
+func (s *Server) clientAddr(r *http.Request, st *connState) (client, peer string) {
+	peer = hostOnly(r.RemoteAddr)
+	if st != nil && st.peer != "" {
+		peer = st.peer
 	}
-	return hostOnly(r.RemoteAddr)
+	ip, bad := s.headerAddr(r, peer)
+	if bad != "" && (st == nil || !st.badHeader.Swap(true)) {
+		if len(bad) > 64 {
+			bad = bad[:64]
+		}
+		slog.Warn("jmap-login: client address header is not an address", "header", s.opts.ClientIPHeader, "value", bad, "peer", peer)
+	}
+	if ip != "" {
+		return ip, peer
+	}
+	return peer, peer
+}
+
+// headerAddr is the address ClientIPHeader carries from a trusted peer: the
+// last of a list, the one the trusted hop appended. Anything but a bare IPv4
+// or IPv6 address is returned as bad and never used.
+func (s *Server) headerAddr(r *http.Request, peer string) (ip, bad string) {
+	if s.opts.ClientIPHeader == "" || !inNets(peer, s.opts.HAProxyTrustedNets) {
+		return "", ""
+	}
+	values := r.Header.Values(s.opts.ClientIPHeader)
+	if len(values) == 0 {
+		return "", ""
+	}
+	last := values[len(values)-1]
+	if i := strings.LastIndexByte(last, ','); i >= 0 {
+		last = last[i+1:]
+	}
+	last = strings.TrimSpace(last)
+	addr, err := netip.ParseAddr(last)
+	if err != nil || addr.Zone() != "" {
+		return "", last
+	}
+	return addr.Unmap().String(), ""
+}
+
+func inNets(addr string, nets []*net.IPNet) bool {
+	ip := net.ParseIP(addr)
+	for _, n := range nets {
+		if ip != nil && n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func hostOnly(addr string) string {

@@ -1861,6 +1861,9 @@ type JMAPLoginServiceConfig struct {
 	// WebSocketTicketKey signs WebSocket tickets; every jmap-login replica
 	// needs the same one.
 	WebSocketTicketKey string `koanf:"websocket_ticket_key"`
+	// ClientIPHeader names the header a proxy in general.haproxy's trusted
+	// networks puts the client address in; empty reads none.
+	ClientIPHeader string `koanf:"client_ip_header"`
 }
 
 // POP3LoginServiceConfig mirrors IMAPLoginServiceConfig for the POP3 proxy.
@@ -3924,7 +3927,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 28
+const minConfigSchema = 29
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3970,6 +3973,7 @@ var schemaAdditions = map[int][]string{
 		"auth.token.sentinel_addrs", "auth.token.sentinel_master", "auth.token.sentinel_user", "auth.token.sentinel_password",
 		"warden_service.sentinel_addrs", "warden_service.sentinel_master", "warden_service.sentinel_user", "warden_service.sentinel_password"},
 	28: {"auth.auth_username_format"},
+	29: {"jmap_login_service.client_ip_header"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
