@@ -530,13 +530,15 @@ func (c *Client) LockShared(ctx context.Context, resource, owner string, ttl tim
 	return Lock{}, fmt.Errorf("locks/client: unexpected response %v: %w", resp, ErrProtocol)
 }
 
-// Unlock implements Locker.
+// Unlock implements Locker. The caller's hold is forgotten whatever the
+// server answers: a release that fails is still given up, and the server ends
+// the lock by its TTL (#2509).
 func (c *Client) Unlock(ctx context.Context, lockID string) error {
+	c.dropHoldByID(lockID)
 	resp, err := c.roundtrip(ctx, cmdUnlock, lockID)
 	if err != nil {
 		return err
 	}
-	c.dropHoldByID(lockID)
 	if len(resp) == 0 {
 		return fmt.Errorf("locks/client: empty unlock response: %w", ErrProtocol)
 	}
