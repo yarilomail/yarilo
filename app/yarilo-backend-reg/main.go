@@ -51,11 +51,10 @@ func main() {
 			MutexFraction: cfg.Telemetry.PprofMutexProfileFraction,
 		},
 	})
-	go func() {
-		if err := tel.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(ctx); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 	tel.SetReady(true)
 
 	client := buildClient(cfg)
@@ -78,9 +77,8 @@ func main() {
 	cancel()
 }
 
-// buildClient constructs the registration client, or nil (registration
-// disabled) when director_addr or POD_IP is unset - the sidecar then just idles
-// on its telemetry endpoint (no crash loop) until the pod is torn down.
+// buildClient builds the registration client, or nil when director_addr or
+// POD_IP is unset: the sidecar then idles on telemetry instead of crash-looping.
 func buildClient(cfg *config.Config) *backendreg.Client {
 	reg := cfg.BackendRegister
 	if reg.DirectorAddr == "" {

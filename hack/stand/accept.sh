@@ -7,6 +7,10 @@
 # Usage:
 #   KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/accept.sh <image-tag> <out-dir>
 #
+# ACCEPT_VALUES names a values file applied on top of values-sandbox.yaml, for
+# a run that measures one stand setting against another; it is printed with
+# the tooling line so the run says what it ran on.
+#
 # Runs on the runner, like a window. Exits 1 when any criterion fails; a SKIP
 # (a criterion that cannot run yet) is counted apart and does not.
 
@@ -25,7 +29,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
 PASSWORD="$(sandbox_password)"
 # What one smoketest run passes; it moves with every check added to the binary.
-SMOKE_CHECKS=56
+SMOKE_CHECKS=59
 # The only rows a run skips: they need the OAuth2 overlay, which acceptance runs without (#2231).
 SMOKE_OAUTH2_SKIPS='oauth2 imap AUTHENTICATE OAUTHBEARER (SASL-IR) + SELECT INBOX
 oauth2 pop3 AUTH OAUTHBEARER + STAT
@@ -351,10 +355,12 @@ cross_check() {
   CROSS_OK=$((CROSS_OK + 1))
 }
 
-echo "-- tooling: $(git -C "$REPO" log --oneline -1) tag=$TAG"
+VALUES=(-f "$REPO/helm_values/values-sandbox.yaml")
+[ -n "${ACCEPT_VALUES:-}" ] && VALUES+=(-f "$ACCEPT_VALUES")
+echo "-- tooling: $(git -C "$REPO" log --oneline -1) tag=$TAG${ACCEPT_VALUES:+ values+=$ACCEPT_VALUES}"
 
 echo "== deploy $(date -u +%FT%TZ)"
-helm upgrade yarilo "$REPO/helm" -n "$NS" -f "$REPO/helm_values/values-sandbox.yaml" \
+helm upgrade yarilo "$REPO/helm" -n "$NS" "${VALUES[@]}" \
   --set image.tag="$TAG" --wait --timeout 10m > "$OUT/deploy.txt" 2>&1
 kube rollout status sts/yarilo-backend --timeout=280s >> "$OUT/deploy.txt" 2>&1
 settle >> "$OUT/deploy.txt" 2>&1

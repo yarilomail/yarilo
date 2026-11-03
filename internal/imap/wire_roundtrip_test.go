@@ -45,7 +45,7 @@ func TestADeliveryOverTheWireFetchesBackOverIMAP(t *testing.T) {
 					return ui, nil
 				},
 			})
-			lln, err := net.Listen("tcp", "127.0.0.1:0")
+			lln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,14 +61,14 @@ func TestADeliveryOverTheWireFetchesBackOverIMAP(t *testing.T) {
 				Resolver:  res,
 				AuthRelay: authtest.RelayTo(t, &formatPassdb{user: user, pass: pass, format: driver}),
 			})
-			iln, err := net.Listen("tcp", "127.0.0.1:0")
+			iln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { iln.Close() }) //nolint:errcheck
 			go isrv.Serve(iln)                //nolint:errcheck
 
-			conn, err := net.Dial("tcp", iln.Addr().String())
+			conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", iln.Addr().String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,7 +114,7 @@ func TestADeliveryOverTheWireFetchesBackOverIMAP(t *testing.T) {
 // socket, which a call into the session would not assert.
 func deliverLMTP(t *testing.T, addr, rcpt, body string) {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -26,7 +26,8 @@ func dispatchQuota(args []string) error {
 
 func dispatchQuotaClone(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: yarctl backend quota clone <list|get> ...")
+		printQuotaCloneUsage()
+		return nil
 	}
 	switch args[0] {
 	case "list":
@@ -36,6 +37,13 @@ func dispatchQuotaClone(args []string) error {
 	default:
 		return fmt.Errorf("unknown quota clone command %q - available: list, get", args[0])
 	}
+}
+
+func printQuotaCloneUsage() {
+	fmt.Println(`yarctl backend quota clone <command>
+
+  list                                The configured quota_clone backends
+  get BACKEND USER                    The usage one clone backend mirrors for USER`)
 }
 
 // quotaCloneList prints the configured quota_clone backend names.

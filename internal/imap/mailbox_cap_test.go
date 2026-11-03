@@ -23,7 +23,7 @@ func TestAppendFillsAFolderToItsCapThenRefuses(t *testing.T) {
 		QuotaEngine: true,
 		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxMessageCount: 2},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestCopyIsRefusedAsABatchAtTheCap(t *testing.T) {
 		QuotaEngine: true,
 		QuotaPolicy: quota.Policy{StoragePercentage: 100, MessagePercentage: 100, MailboxMessageCount: 2},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestCopyRefusesASetHoldingAMessageOverTheMailSize(t *testing.T) {
 			QuotaMailSize: mailSize,
 			QuotaPolicy:   quota.Policy{StoragePercentage: 100, MessagePercentage: 100},
 		})
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -149,7 +149,7 @@ func TestRenameInboxHoldsTheMailboxCount(t *testing.T) {
 		// A namespace naming no mailboxes, so the count is the test's own.
 		Namespaces: []imapserver.NamespaceSpec{{Type: imapserver.NamespacePersonal, Separator: '.', List: imapserver.ListYes, Inbox: true}},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

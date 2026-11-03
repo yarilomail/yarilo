@@ -41,13 +41,13 @@ func TestARefusedAppendLeavesNoBody(t *testing.T) {
 		Resolver:  &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"},
 		AuthRelay: authtest.RelayTo(t, &quotaAuthStub{user: "user@test.com", pass: "testpass", rule: "*:bytes=100000"}),
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

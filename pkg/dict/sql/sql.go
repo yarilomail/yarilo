@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlitefile"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlpool"
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
@@ -100,6 +101,11 @@ func New(cfg dict.Config) (dict.Dict, error) {
 		}
 	}
 
+	if driver == "sqlite" {
+		if err := sqlitefile.Create(dsn); err != nil {
+			return nil, fmt.Errorf("create sqlite file: %w", err)
+		}
+	}
 	db, err := stdsql.Open(driverName(driver), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", driver, err)
@@ -107,7 +113,7 @@ func New(cfg dict.Config) (dict.Dict, error) {
 	// The quota_clone mirror writes on every mail save, so Go's two-idle-connection
 	// default throttles the hottest SQL path.
 	sqlpool.Apply(db, pool)
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		db.Close() //nolint:errcheck
 		return nil, fmt.Errorf("ping: %w", err)
 	}
@@ -137,7 +143,7 @@ func (d *Dict) validateMaps() error {
 		}
 		seen[probe] = true
 		q := fmt.Sprintf(`SELECT %s FROM %s LIMIT 0`, e.valCol, e.table)
-		if _, err := d.db.Exec(q); err != nil {
+		if _, err := d.db.ExecContext(context.Background(), q); err != nil {
 			return fmt.Errorf("mapped schema check for key %q (%s.%s): %w", key, e.table, e.valCol, err)
 		}
 	}
@@ -281,14 +287,14 @@ func (d *Dict) ensureSchema() error {
         expires BIGINT,
         PRIMARY KEY (namespace, k)
     )`, d.table, keyType, keyType, blob)
-	if _, err := d.db.Exec(ddl); err != nil {
+	if _, err := d.db.ExecContext(context.Background(), ddl); err != nil {
 		return fmt.Errorf("ensure schema: %w", err)
 	}
 	idx := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_expires_idx ON %s(expires) WHERE expires IS NOT NULL`, d.table, d.table)
-	if _, err := d.db.Exec(idx); err != nil {
+	if _, err := d.db.ExecContext(context.Background(), idx); err != nil {
 		// Fall back to a non-partial index when the driver rejects the
 		// partial one. The index is an optimisation only, so don't fail.
-		_, _ = d.db.Exec(fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_expires_idx ON %s(expires)`, d.table, d.table))
+		_, _ = d.db.ExecContext(context.Background(), fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_expires_idx ON %s(expires)`, d.table, d.table))
 	}
 	return nil
 }

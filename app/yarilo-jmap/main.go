@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/backend"
+	"github.com/yarilomail/yarilo/v2/internal/fts/language"
 	"github.com/yarilomail/yarilo/v2/internal/jmap"
 	"github.com/yarilomail/yarilo/v2/internal/readyfile"
 	"github.com/yarilomail/yarilo/v2/internal/sieve"
@@ -27,6 +28,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/ftsproto"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
 	"github.com/yarilomail/yarilo/v2/pkg/logging"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -47,12 +49,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	svc := cfg.Services.JMAPBE
-	if !svc.Active() {
-		slog.Error("services.jmap_be is not enabled")
+	if err := config.RequireListeners(cfg, "jmap"); err != nil {
+		slog.Error("listener config", "err", err)
 		os.Exit(1)
 	}
-	addr := fmt.Sprintf(":%d", svc.Port)
+	svc := cfg.Services.JMAP
+	if !svc.Active() {
+		slog.Error("services.jmap is not enabled")
+		os.Exit(1)
+	}
+	addr, from := svc.ListenAddr(config.BackendHost)
 
 	// Internal mTLS, not the client certificate: the client's TLS ended at the
 	// login pod and this hop is between components.
@@ -85,6 +91,7 @@ func main() {
 	slog.Info("yarilo-jmap starting",
 		"version", build.Version,
 		"listen", addr,
+		"from", from,
 		"mtls", tlsCfg != nil,
 		"trust", trust.Mode.String(),
 		"base_url", cfg.Protocol.JMAP.BaseURL,
@@ -103,11 +110,10 @@ func main() {
 		},
 		Lifecycle: true,
 	})
-	go func() {
-		if err := tel.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(ctx); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 
 	store, err := buildStorage(cfg, intTLS)
 	if err != nil {
@@ -151,14 +157,7 @@ func main() {
 	}
 	var ftsOpts *jmap.FTS
 	if ftsClient != nil && cfg.FTS.Search {
-		ftsOpts = &jmap.FTS{
-			Client:     ftsClient,
-			Chain:      ftsChain,
-			MaxConns:   cfg.FTS.MaxConns,
-			MaxFolders: cfg.Protocol.JMAP.MaxQueryFolders,
-			AddMissing: cfg.FTS.SearchAddMissing,
-			Timeout:    time.Duration(cfg.FTS.SearchTimeoutSecs) * time.Second,
-		}
+		ftsOpts = ftsSearch(cfg, ftsClient, ftsChain)
 	}
 
 	// Whether this process can answer a text filter at all is a deployment
@@ -356,4 +355,17 @@ func internalClientTLS(cfg *config.Config) (*tls.Config, error) {
 	}
 	return mtls.ClientConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA,
 		cfg.InternalTLS.ServerName, cfg.InternalTLS.SessionCacheSize, cfg.InternalTLS.SessionCacheTTL)
+}
+
+// ftsSearch is Email/query's share of the fts section.
+func ftsSearch(cfg *config.Config, client ftsproto.Client, chain *language.MultiChain) *jmap.FTS {
+	return &jmap.FTS{
+		Client:       client,
+		Chain:        chain,
+		MaxConns:     cfg.FTS.MaxConns,
+		MaxFolders:   cfg.Protocol.JMAP.MaxQueryFolders,
+		AddMissing:   cfg.FTS.SearchAddMissing,
+		Timeout:      time.Duration(cfg.FTS.SearchTimeoutSecs) * time.Second,
+		ReadFallback: cfg.FTS.SearchReadFallback,
+	}
 }

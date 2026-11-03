@@ -14,11 +14,13 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 	"github.com/yarilomail/yarilo/v2/internal/director"
+	"github.com/yarilomail/yarilo/v2/internal/drain"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
@@ -155,6 +157,8 @@ func main() {
 		BackendExpire:           time.Duration(cfg.DirectorService.BackendExpire) * time.Second,
 		UnreachableReporters:    cfg.DirectorService.BackendUnreachableReporters,
 		UnreachableWindow:       time.Duration(cfg.DirectorService.BackendUnreachableWindow) * time.Second,
+
+		DomainRebalanceMinSessions: cfg.DirectorService.DomainRebalanceMinSessions,
 	})
 
 	// telemetry starts after the server exists so the liveness watchdog
@@ -190,7 +194,10 @@ func main() {
 		os.Exit(1)
 	}
 	errCh := make(chan error, 1)
+	var serving sync.WaitGroup
+	serving.Add(1)
 	go func() {
+		defer serving.Done()
 		if err := srv.Serve(ctx, ringLn); err != nil {
 			errCh <- err
 		}
@@ -234,8 +241,8 @@ func main() {
 		srv.Drain()
 		cancel()
 		grace := time.Duration(cfg.DirectorService.Shutdown.SessionGracePeriod) * time.Second
-		if grace > 0 {
-			time.Sleep(grace)
+		if !drain.Wait(&serving, grace) {
+			slog.Warn("director: connections still open when the grace period ran out", "grace", grace)
 		}
 	case err := <-errCh:
 		if err != nil {
@@ -304,11 +311,10 @@ func startTelemetry(cfg config.TelemetryConfig, srv *director.Server) *telemetry
 		}
 	}
 	tel := telemetry.NewWithOptions(opts)
-	go func() {
-		if err := tel.ListenAndServe(context.Background()); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 	return tel
 }
 
@@ -375,7 +381,7 @@ func startAPI(ctx context.Context, srv *director.Server, api config.DirectorAPIC
 	if err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp", api.Listen)
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", api.Listen)
 	if err != nil {
 		return fmt.Errorf("director API: %w", err)
 	}

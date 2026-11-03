@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -65,7 +64,7 @@ func main() {
 	srv := dictsrv.New(dicts, dictsrv.NewMetrics(reg))
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ctx, ln) }()
-	go runTelemetry(cfg.Telemetry, reg, func() bool { return len(dicts) > 0 })
+	runTelemetry(cfg.Telemetry, reg, func() bool { return len(dicts) > 0 })
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -117,21 +116,23 @@ func runTelemetry(cfg config.TelemetryConfig, reg *prometheus.Registry, ready fu
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	if err := tel.ListenAndServe(context.Background()); err != nil {
-		slog.Error("telemetry server failed", "err", err)
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
 	}
 }
 
 // buildListener serves plain TCP only where a mesh secures the transport; with
 // internal TLS on, the dict service is behind mTLS like every other service.
 func buildListener(cfg *config.Config, addr string) (net.Listener, error) {
+	perm := cfg.DictService.Socket()
 	if !cfg.InternalTLS.Enabled {
 		mtls.WarnRolesUnchecked(mtls.ListenerDict)
-		return net.Listen("tcp", addr)
+		return dictsrv.Listen(addr, perm, nil)
 	}
 	tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerDict)
 	if err != nil {
 		return nil, fmt.Errorf("mtls config: %w", err)
 	}
-	return tls.Listen("tcp", addr, tlsCfg)
+	return dictsrv.Listen(addr, perm, tlsCfg)
 }

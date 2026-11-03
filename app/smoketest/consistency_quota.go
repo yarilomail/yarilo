@@ -49,13 +49,27 @@ func imapReadQuota(user string) (*reading, error) {
 	if err != nil {
 		return nil, fmt.Errorf("getquotaroot: %w", err)
 	}
-	usedKiB, limitKiB, ok := parseQuotaStorage(lines)
-	if !ok {
-		return nil, fmt.Errorf("no STORAGE quota in %q", strings.Join(lines, " | "))
+	return imapQuotaReading(lines)
+}
+
+// unlimited is how every surface spells a storage quota without a limit. IMAP
+// leaves the resource out and reports no usage beside it (#2455).
+const unlimited = "unlimited"
+
+// imapQuotaReading is the STORAGE resource of a QUOTA response, or unlimited
+// for a quota root that lists none.
+func imapQuotaReading(lines []string) (*reading, error) {
+	if usedKiB, limitKiB, ok := parseQuotaStorage(lines); ok {
+		return newReading(surfIMAP).
+			field("storageUsedKiB", strconv.FormatInt(usedKiB, 10)).
+			field("storageLimitKiB", strconv.FormatInt(limitKiB, 10)), nil
 	}
-	return newReading(surfIMAP).
-		field("storageUsedKiB", strconv.FormatInt(usedKiB, 10)).
-		field("storageLimitKiB", strconv.FormatInt(limitKiB, 10)), nil
+	for _, l := range lines {
+		if strings.HasPrefix(l, "* QUOTA ") {
+			return newReading(surfIMAP).field("storageLimitKiB", unlimited), nil
+		}
+	}
+	return nil, fmt.Errorf("no QUOTA response in %q", strings.Join(lines, " | "))
 }
 
 // parseQuotaStorage reads the STORAGE resource out of a QUOTA response:
@@ -109,16 +123,18 @@ func adminReadQuota(user string) (*reading, error) {
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("decode quota/show: %w (%s)", err, strings.TrimSpace(string(body)))
 	}
-	// An unlimited quota is -1 over the admin API and 0 over IMAP: two
-	// spellings of "no limit", converted here rather than tolerated by the
-	// judge, because the conversion is exact and only one of them is a number.
-	limit := out.StorageLimit
-	if limit < 0 {
-		limit = 0
+	return adminQuotaReading(out.StorageValue, out.StorageLimit), nil
+}
+
+// adminQuotaReading spells the admin API's -1 as unlimited.
+func adminQuotaReading(usedKiB, limitKiB int64) *reading {
+	limit := strconv.FormatInt(limitKiB, 10)
+	if limitKiB < 0 {
+		limit = unlimited
 	}
 	return newReading(surfAdminAPI).
-		field("storageUsedKiB", strconv.FormatInt(out.StorageValue, 10)).
-		field("storageLimitKiB", strconv.FormatInt(limit, 10)), nil
+		field("storageUsedKiB", strconv.FormatInt(usedKiB, 10)).
+		field("storageLimitKiB", limit)
 }
 
 // explainBackendAPITransport turns the three transport failures this row
@@ -247,5 +263,5 @@ func jmapReadQuota() (*reading, error) {
 			field("storageUsedKiB", strconv.FormatInt((q.Used+1023)/1024, 10)).
 			field("storageLimitKiB", strconv.FormatInt((q.HardLimit+1023)/1024, 10)), nil
 	}
-	return nil, fmt.Errorf("Quota/get returned no octets root: %s", string(args))
+	return newReading(surfJMAP).field("storageLimitKiB", unlimited), nil
 }

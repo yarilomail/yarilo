@@ -23,7 +23,7 @@ func TestLockCallSurvivesTheServiceVanishing(t *testing.T) {
 	// A server that completes the handshake and then goes away, which is what a
 	// pod being rescheduled looks like from here: the connection is good, the
 	// next command is not.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

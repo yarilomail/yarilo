@@ -5,6 +5,7 @@ package dictsrv
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/dict"
 	"github.com/yarilomail/yarilo/v2/pkg/dict/proxy"
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // Server answers for the dicts it holds. An unknown name is refused by name:
@@ -47,6 +49,16 @@ func (s *Server) observe(sess *session, op, result string, start time.Time) {
 	}
 	s.metrics.ops.WithLabelValues(sess.name, driver, op, result).Inc()
 	s.metrics.seconds.WithLabelValues(sess.name, op).Observe(time.Since(start).Seconds())
+}
+
+// Listen binds addr, host:port or unix:/path, with tlsCfg over TCP; a Unix
+// socket gets perm and is served plain.
+func Listen(addr string, perm sockaddr.Perm, tlsCfg *tls.Config) (net.Listener, error) {
+	ln, err := sockaddr.ListenTLS(addr, perm, tlsCfg)
+	if err != nil {
+		return nil, fmt.Errorf("dictsrv: listen %s: %w", addr, err)
+	}
+	return ln, nil
 }
 
 // Serve accepts until ctx ends.

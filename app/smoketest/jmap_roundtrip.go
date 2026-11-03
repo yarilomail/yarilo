@@ -150,12 +150,17 @@ func checkJMAPRoundTrip() error {
 	}
 
 	made, err := jmapCallLib[*mailbox.SetResponse](writer, &mailbox.Set{Account: account,
-		Create: map[gojmap.ID]*mailbox.Mailbox{"m1": {Name: "smoketest-" + stamp}}})
+		Create: map[gojmap.ID]*mailbox.Mailbox{"m1": {Name: roundTripMailboxName(stamp)}}})
 	if err != nil {
 		return err
 	}
 	if made.Created["m1"] == nil {
-		return fmt.Errorf("Mailbox/set created nothing: %+v", made.NotCreated)
+		if e := made.NotCreated["m1"]; e != nil && e.Description != nil {
+			return fmt.Errorf("Mailbox/set created nothing: %s: %s", e.Type, *e.Description)
+		} else if e != nil {
+			return fmt.Errorf("Mailbox/set created nothing: %s", e.Type)
+		}
+		return fmt.Errorf("Mailbox/set created nothing")
 	}
 	target := made.Created["m1"].ID
 	defer jmapCallLib[*mailbox.SetResponse](writer, &mailbox.Set{Account: account, //nolint:errcheck // cleanup
@@ -171,4 +176,10 @@ func checkJMAPRoundTrip() error {
 		return err
 	}
 	return seen("destroy", id, func(c *email.ChangesResponse) []gojmap.ID { return c.Destroyed })
+}
+
+// roundTripMailboxName is one level of hierarchy whatever the server's
+// separator: "." and "/" both split a name on some deployment (#2473).
+func roundTripMailboxName(stamp string) string {
+	return "smoketest-" + strings.NewReplacer(".", "", "/", "").Replace(stamp)
 }

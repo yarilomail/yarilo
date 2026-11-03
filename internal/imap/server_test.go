@@ -67,7 +67,7 @@ func startTestServerIn(t *testing.T, dir string) *imapclient.Client {
 	}
 	srv := imapserver.New(opts)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
@@ -76,7 +76,7 @@ func startTestServerIn(t *testing.T, dir string) *imapclient.Client {
 
 	t.Cleanup(func() { ln.Close() })
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("net.Dial: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestConcurrentSessions(t *testing.T) {
 		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestConcurrentSessions(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			conn, dialErr := net.Dial("tcp", addr)
+			conn, dialErr := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 			if dialErr != nil {
 				errCh <- fmt.Errorf("goroutine %d dial: %w", g, dialErr)
 				return
@@ -1080,14 +1080,14 @@ func startMetadataClient(t *testing.T, user, pass string) *imapclient.Client {
 	}
 	srv := imapserver.New(opts)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("net.Dial: %v", err)
 	}
@@ -1315,14 +1315,14 @@ func startNamespaceClient(t *testing.T, specs []imapserver.NamespaceSpec) *imapc
 		AuthRelay:  authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		Namespaces: specs,
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("net.Dial: %v", err)
 	}
@@ -1461,14 +1461,14 @@ func startSharedClient(t *testing.T, user, pass string) (*imapclient.Client, str
 			{Type: imapserver.NamespaceOther, Prefix: "user/", Separator: '/', List: imapserver.ListYes},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("net.Dial: %v", err)
 	}
@@ -1624,12 +1624,12 @@ func TestSharedMetadataPrivIsPerAccessingUser(t *testing.T) {
 			{Type: imapserver.NamespaceShared, Prefix: "Shared/", Separator: '/', List: imapserver.ListYes, Location: "maildir:" + sharedRoot},
 		},
 	})
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, _ := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
 	dialAndLogin := func(t *testing.T, user string) *imapclient.Client {
-		conn, err := net.Dial("tcp", ln.Addr().String())
+		conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
@@ -1773,11 +1773,11 @@ func TestPerNamespaceMailboxOverrideRoutesToCorrectBackend(t *testing.T) {
 			"Shared/": sharedRec,
 		},
 	})
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, _ := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, _ := net.Dial("tcp", ln.Addr().String())
+	conn, _ := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	t.Cleanup(func() { conn.Close() })
 	c := imapclient.New(conn, nil)
 	if err := c.WaitGreeting(); err != nil {
@@ -1827,11 +1827,11 @@ func TestPerNamespaceNoOverrideFallsBackToGlobal(t *testing.T) {
 		},
 		// NamespaceMailboxes intentionally nil.
 	})
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, _ := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, _ := net.Dial("tcp", ln.Addr().String())
+	conn, _ := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	t.Cleanup(func() { conn.Close() })
 	c := imapclient.New(conn, nil)
 	if err := c.WaitGreeting(); err != nil {

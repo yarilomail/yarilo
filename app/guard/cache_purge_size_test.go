@@ -29,7 +29,7 @@ func TestACacheMinimumOfZeroReachesTheConfig(t *testing.T) {
 				}
 				args = append(args, "-f", vf)
 			}
-			out, err := exec.Command("helm", args...).Output()
+			out, err := exec.CommandContext(t.Context(), "helm", args...).Output()
 			if err != nil {
 				t.Fatalf("helm template: %v", err)
 			}

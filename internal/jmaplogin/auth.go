@@ -25,61 +25,61 @@ var errBadToken = fmt.Errorf("%w: bearer token refused", errUnauthorized)
 // tried first and a rejected token is never retried as Basic, which would
 // report a token failure as a password one. No penalty accounting here:
 // yarilo-auth applies it for every caller, and a second one double-counts.
-func (s *Server) authenticate(r *http.Request, clientIP, sessionID string) (string, error) {
+func (s *Server) authenticate(r *http.Request, clientIP, peer, sessionID string) (Login, error) {
 	scheme, cred, ok := parseAuthorization(r.Header.Get("Authorization"))
 	if !ok {
-		return "", errUnauthorized
+		return Login{}, errUnauthorized
 	}
 	switch strings.ToLower(scheme) {
 	case "bearer":
 		// A token is a password to whoever reads it: the cleartext rule is Basic's.
 		if s.opts.Tokens == nil || (s.opts.DisablePlainAuth && r.TLS == nil) {
-			return "", errBadToken
+			return Login{}, errBadToken
 		}
-		username, err := s.opts.Tokens.AuthenticateToken(cred, service, clientIP, localIPOf(r), sessionID)
+		login, err := s.opts.Tokens.AuthenticateToken(cred, service, clientIP, localIPOf(r), sessionID)
 		if err != nil {
-			slog.Info("jmap-login: bearer rejected", "ip", clientIP, "err", err)
+			slog.Info("jmap-login: bearer rejected", "ip", clientIP, "peer", peer, "err", err)
 			if errors.Is(err, errTemporary) {
-				return "", err
+				return Login{}, err
 			}
-			return "", errBadToken
+			return Login{}, errBadToken
 		}
-		return username, nil
+		return login, nil
 	case "basic":
-		return s.authenticateBasic(r, cred, clientIP, sessionID)
+		return s.authenticateBasic(r, cred, clientIP, peer, sessionID)
 	}
-	return "", errUnauthorized
+	return Login{}, errUnauthorized
 }
 
-func (s *Server) authenticateBasic(r *http.Request, cred, clientIP, sessionID string) (string, error) {
+func (s *Server) authenticateBasic(r *http.Request, cred, clientIP, peer, sessionID string) (Login, error) {
 	if s.opts.Auth == nil {
-		return "", errUnauthorized
+		return Login{}, errUnauthorized
 	}
 	// Plaintext credentials on a cleartext connection are refused outright
 	// rather than accepted and logged, matching the other protocols.
 	if s.opts.DisablePlainAuth && r.TLS == nil {
-		return "", errUnauthorized
+		return Login{}, errUnauthorized
 	}
 	raw, err := base64.StdEncoding.DecodeString(cred)
 	if err != nil {
-		return "", errUnauthorized
+		return Login{}, errUnauthorized
 	}
 	username, password, found := strings.Cut(string(raw), ":")
 	if !found || username == "" {
-		return "", errUnauthorized
+		return Login{}, errUnauthorized
 	}
-	resolved, err := s.opts.Auth.Authenticate(username, password, service, clientIP, localIPOf(r), sessionID)
+	login, err := s.opts.Auth.Authenticate(username, password, service, clientIP, localIPOf(r), sessionID)
 	if err != nil {
-		slog.Info("jmap-login: basic rejected", "user", username, "ip", clientIP, "err", err)
+		slog.Info("jmap-login: basic rejected", "user", username, "ip", clientIP, "peer", peer, "err", err)
 		if errors.Is(err, errTemporary) {
-			return "", err
+			return Login{}, err
 		}
-		return "", errUnauthorized
+		return Login{}, errUnauthorized
 	}
-	if resolved == "" {
-		resolved = username
+	if login.User == "" {
+		login.User = username
 	}
-	return resolved, nil
+	return login, nil
 }
 
 // parseAuthorization splits an Authorization header into scheme and credential.

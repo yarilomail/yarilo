@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,7 +20,10 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 	"github.com/yarilomail/yarilo/v2/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
+	"github.com/yarilomail/yarilo/v2/pkg/userfmt"
 )
 
 // Config is the top-level yarilo configuration.
@@ -260,10 +264,17 @@ type DictServiceConfig struct {
 	DictAddr string `koanf:"dict_addr"`
 	// DictListen is the address yarilo-dict serves on.
 	DictListen string `koanf:"dict_listen"`
+	// SocketMode and SocketGroup are the octal mode and the group name a
+	// unix:/path listen address gets; empty group keeps the process's.
+	SocketMode  string `koanf:"socket_mode"`
+	SocketGroup string `koanf:"socket_group"`
 	// DictMaxConns bounds the connections one process keeps to one named dict.
 	// An iteration holds its connection to the end, so one is a queue (#1902).
 	DictMaxConns int `koanf:"dict_max_conns"`
 }
+
+// Socket is the permission a unix:/path listen address gets.
+func (c DictServiceConfig) Socket() sockaddr.Perm { return socketPerm(c.SocketMode, c.SocketGroup) }
 
 // DictConfig declares one named dict instance. The Config.Dicts map key is
 // the logical name features reference; Driver selects the pkg/dict driver
@@ -401,14 +412,12 @@ type SSLConfig struct {
 	SSLServerAltCert string `koanf:"ssl_server_alt_cert_file"`
 	SSLServerAltKey  string `koanf:"ssl_server_alt_key_file"`
 	SSLMinProtocol   string `koanf:"ssl_min_protocol"`
-	SSLPreferCiphers bool   `koanf:"ssl_prefer_server_ciphers"`
 
 	TLSCertAlias       string `koanf:"tls_cert"`
 	TLSKeyAlias        string `koanf:"tls_key"`
 	TLSAltCertAlias    string `koanf:"tls_alt_cert"`
 	TLSAltKeyAlias     string `koanf:"tls_alt_key"`
 	TLSMinVersionAlias string `koanf:"tls_min_version"`
-	PreferServerAlias  bool   `koanf:"prefer_server_ciphers"`
 }
 
 // HAProxyConfig is general.haproxy: who may send a PROXY header, and how long to wait for it.
@@ -435,10 +444,44 @@ type LimitsConfig struct {
 	MaxUserIPConnections int `koanf:"mail_max_userip_connections"` // 0 = unlimited
 }
 
+// MaxUserIPConnections is the per-user-and-IP connection limit of one
+// protocol, as yarilo-warden names it: the protocol's own setting, else
+// general.limits. 0 is unlimited.
+func (cfg *Config) MaxUserIPConnections(protocol string) int {
+	if v := cfg.Protocol.userIPOverride(protocol); v != nil {
+		return *v
+	}
+	return cfg.General.Limits.MaxUserIPConnections
+}
+
+// UserIPProtocols are the protocols with their own connection limit.
+var UserIPProtocols = []string{"imap", "pop3", "submission", "lmtp", "managesieve", "jmap"}
+
+func (p *ProtocolConfig) userIPOverride(protocol string) *int {
+	switch strings.ToLower(protocol) {
+	case "imap":
+		return p.IMAP.MailMaxUserIPConnections
+	case "pop3":
+		return p.POP3.MailMaxUserIPConnections
+	case "submission":
+		return p.Submission.MailMaxUserIPConnections
+	case "lmtp":
+		return p.LMTP.MailMaxUserIPConnections
+	case "managesieve":
+		return p.ManageSieve.MailMaxUserIPConnections
+	case "jmap":
+		return p.JMAP.MailMaxUserIPConnections
+	}
+	return nil
+}
+
 // ServiceConfig is per-listener configuration.
 // A nil pointer in ServicesConfig means the listener is not started.
 type ServiceConfig struct {
-	Enabled bool       `koanf:"enabled"`
+	Enabled bool `koanf:"enabled"`
+	// Address is the host the listener binds. Empty leaves it to the role of
+	// the process binding it: BackendHost or PublicHost.
+	Address string     `koanf:"address"`
 	Port    int        `koanf:"port"`
 	SSLMode string     `koanf:"ssl_mode"` // no | ssl | starttls
 	SSL     *SSLConfig `koanf:"ssl"`      // overrides general.ssl
@@ -491,20 +534,85 @@ func (s *ServiceConfig) PlainAuthDisabled() bool { return !s.CleartextAllowed() 
 // Active returns true if the service is configured and enabled.
 func (s *ServiceConfig) Active() bool { return s != nil && s.Enabled }
 
-// ServicesConfig holds per-listener configuration.
-// Nil pointer = listener not started.
+// The host a services.<name> listener binds when its address is empty: a
+// session backend behind a login proxy keeps to loopback, and a listener
+// clients reach directly takes every interface (#2416).
+const (
+	BackendHost = "127.0.0.1"
+	PublicHost  = ""
+)
+
+// ListenAddr is the address the listener binds for a process whose role
+// host is roleHost, and where its host came from: "address" or "role".
+func (s *ServiceConfig) ListenAddr(roleHost string) (addr, from string) {
+	if s == nil {
+		return "", ""
+	}
+	host, from := s.Address, "address"
+	if host == "" {
+		host, from = roleHost, "role"
+	}
+	return net.JoinHostPort(host, strconv.Itoa(s.Port)), from
+}
+
+// ServicesConfig holds per-listener configuration. Each entry is named after
+// the process that reads it: the *_login entries are the login proxies', which
+// alone terminate client TLS, and the bare names are the session backends',
+// one plain listener each (#2415). Nil pointer = listener not started.
 type ServicesConfig struct {
-	IMAP          *ServiceConfig `koanf:"imap"`           // port 143, STARTTLS
-	IMAPS         *ServiceConfig `koanf:"imaps"`          // port 993, SSL
-	Submission    *ServiceConfig `koanf:"submission"`     // port 587, STARTTLS outbound
-	Submissions   *ServiceConfig `koanf:"submissions"`    // port 465, SSL outbound
-	POP3          *ServiceConfig `koanf:"pop3"`           // port 110, STARTTLS
-	POP3S         *ServiceConfig `koanf:"pop3s"`          // port 995, SSL
-	LMTP          *ServiceConfig `koanf:"lmtp"`           // port 24, local delivery (no auth, loopback only)
-	ManageSieve   *ServiceConfig `koanf:"managesieve"`    // port 4190, STARTTLS (login pod)
-	ManageSieveBE *ServiceConfig `koanf:"managesieve_be"` // ManageSieve backend (internal)
-	JMAP          *ServiceConfig `koanf:"jmap"`           // port 8443, HTTPS (yarilo-jmap-login)
-	JMAPBE        *ServiceConfig `koanf:"jmap_be"`        // port 10443, JMAP backend (internal, behind login)
+	IMAPLogin        *ServiceConfig `koanf:"imap_login"`        // yarilo-imap-login, 143 STARTTLS
+	IMAPSLogin       *ServiceConfig `koanf:"imaps_login"`       // yarilo-imap-login, 993 implicit TLS
+	POP3Login        *ServiceConfig `koanf:"pop3_login"`        // yarilo-pop3-login, 110 STARTTLS
+	POP3SLogin       *ServiceConfig `koanf:"pop3s_login"`       // yarilo-pop3-login, 995 implicit TLS
+	SubmissionLogin  *ServiceConfig `koanf:"submission_login"`  // yarilo-submission-login, 587 STARTTLS
+	SubmissionsLogin *ServiceConfig `koanf:"submissions_login"` // yarilo-submission-login, 465 implicit TLS
+	LMTPLogin        *ServiceConfig `koanf:"lmtp_login"`        // yarilo-lmtp-login, 24
+	ManageSieveLogin *ServiceConfig `koanf:"managesieve_login"` // yarilo-managesieve-login, 4190 STARTTLS
+	JMAPLogin        *ServiceConfig `koanf:"jmap_login"`        // yarilo-jmap-login, 8443 HTTPS
+
+	IMAP        *ServiceConfig `koanf:"imap"`        // yarilo-imap
+	POP3        *ServiceConfig `koanf:"pop3"`        // yarilo-pop3
+	Submission  *ServiceConfig `koanf:"submission"`  // yarilo-submission
+	LMTP        *ServiceConfig `koanf:"lmtp"`        // yarilo-lmtp
+	ManageSieve *ServiceConfig `koanf:"managesieve"` // yarilo-managesieve
+	JMAP        *ServiceConfig `koanf:"jmap"`        // yarilo-jmap
+}
+
+// ServiceEntry is one services entry with its key.
+type ServiceEntry struct {
+	Name string
+	Svc  **ServiceConfig
+}
+
+// Entries lists every services entry by key.
+func (s *ServicesConfig) Entries() []ServiceEntry {
+	return []ServiceEntry{
+		{"imap_login", &s.IMAPLogin}, {"imaps_login", &s.IMAPSLogin},
+		{"pop3_login", &s.POP3Login}, {"pop3s_login", &s.POP3SLogin},
+		{"submission_login", &s.SubmissionLogin}, {"submissions_login", &s.SubmissionsLogin},
+		{"lmtp_login", &s.LMTPLogin}, {"managesieve_login", &s.ManageSieveLogin}, {"jmap_login", &s.JMAPLogin},
+		{"imap", &s.IMAP}, {"pop3", &s.POP3}, {"submission", &s.Submission},
+		{"lmtp", &s.LMTP}, {"managesieve", &s.ManageSieve}, {"jmap", &s.JMAP},
+	}
+}
+
+// RequireListeners refuses a start whose config lacks one of the entries this
+// process reads: it reads its own keys only, never a neighbour's port.
+func RequireListeners(cfg *Config, names ...string) error {
+	present := map[string]bool{}
+	for _, e := range cfg.Services.Entries() {
+		present[e.Name] = *e.Svc != nil
+	}
+	var missing []string
+	for _, n := range names {
+		if !present[n] {
+			missing = append(missing, "services."+n)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("config: %s missing; this process listens only on its own entries", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // ProtocolConfig holds protocol-level behaviour settings, independent of listener.
@@ -521,6 +629,9 @@ type ProtocolConfig struct {
 // limits are published in the session resource as well as enforced, since
 // clients batch against them (RFC 8620 §2).
 type JMAPProtocolConfig struct {
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int `koanf:"mail_max_userip_connections"`
 	// CORSAllowOrigins lists the browser origins allowed to call the endpoint.
 	// Empty denies every cross-origin request: an endpoint any page can call
 	// with the user's credentials is an account-takeover surface. Exact match;
@@ -584,10 +695,16 @@ type JMAPProtocolConfig struct {
 	// WebSocketTicketTTL is how long a WebSocket ticket from
 	// jmap_login_service is valid, in seconds; 0 issues none. Default 60.
 	WebSocketTicketTTL int `koanf:"jmap_websocket_ticket_ttl"`
+	// LimitRetryAfter is the Retry-After jmap-login sends with a 429 for
+	// a reached connection limit, in seconds; 0 sends none. Default 10.
+	LimitRetryAfter int `koanf:"jmap_limit_retry_after"`
 }
 
 // LMTPProtocolConfig is protocol.lmtp.
 type LMTPProtocolConfig struct {
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int `koanf:"mail_max_userip_connections"`
 	// Greeting shown in the 220 banner. Default: "Yarilo ready."
 	LoginGreeting string `koanf:"login_greeting"`
 	// AddReceivedHeader prepends a Received: header to delivered messages. Default: true.
@@ -680,9 +797,12 @@ type LMTPProxyConfig struct {
 
 // IMAPProtocolConfig is protocol.imap.
 type IMAPProtocolConfig struct {
-	IdleNotifyInterval int    `koanf:"imap_idle_notify_interval"` // seconds; 0 = disabled
-	MaxLineLength      int    `koanf:"imap_max_line_length"`      // bytes; 0 = unlimited
-	IDSend             string `koanf:"imap_id_send"`              // ID pairs; * = default; empty = disabled
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int   `koanf:"mail_max_userip_connections"`
+	IdleNotifyInterval       int    `koanf:"imap_idle_notify_interval"` // seconds; 0 = disabled
+	MaxLineLength            int    `koanf:"imap_max_line_length"`      // bytes; 0 = unlimited
+	IDSend                   string `koanf:"imap_id_send"`              // ID pairs; * = default; empty = disabled
 	// IDRetain keeps what a client says in ID before login and hands it to the
 	// auth service as client_id, which the policy server sees as device_id.
 	IDRetain          bool     `koanf:"imap_id_retain"`
@@ -744,28 +864,34 @@ type GlobalACLEntry struct {
 
 // POP3ProtocolConfig is protocol.pop3.
 type POP3ProtocolConfig struct {
-	NoFlagUpdates  bool   `koanf:"pop3_no_flag_updates"`
-	ReuseXUIDL     bool   `koanf:"pop3_reuse_xuidl"`
-	UIDLFormat     string `koanf:"pop3_uidl_format"`
-	UIDLDuplicates string `koanf:"pop3_uidl_duplicates"` // allow | rename
-	EnableLast     bool   `koanf:"pop3_enable_last"`
-	DeleteType     string `koanf:"pop3_delete_type"` // expunge | flag
-	DeletedFlag    string `koanf:"pop3_deleted_flag"`
-	SaveUIDL       bool   `koanf:"pop3_save_uidl"`    // persist computed UIDLs to index
-	LockSession    bool   `koanf:"pop3_lock_session"` // dotlock file to prevent IMAP+POP3 conflicts
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int   `koanf:"mail_max_userip_connections"`
+	NoFlagUpdates            bool   `koanf:"pop3_no_flag_updates"`
+	ReuseXUIDL               bool   `koanf:"pop3_reuse_xuidl"`
+	UIDLFormat               string `koanf:"pop3_uidl_format"`
+	UIDLDuplicates           string `koanf:"pop3_uidl_duplicates"` // allow | rename
+	EnableLast               bool   `koanf:"pop3_enable_last"`
+	DeleteType               string `koanf:"pop3_delete_type"` // expunge | flag
+	DeletedFlag              string `koanf:"pop3_deleted_flag"`
+	SaveUIDL                 bool   `koanf:"pop3_save_uidl"`    // persist computed UIDLs to index
+	LockSession              bool   `koanf:"pop3_lock_session"` // dotlock file to prevent IMAP+POP3 conflicts
 }
 
 // SubmissionProtocolConfig is protocol.submission.
 type SubmissionProtocolConfig struct {
-	Hostname           string      `koanf:"hostname"`
-	MaxMsgSize         int64       `koanf:"-"` // resolved from MaxMsgSizeRaw at load
-	MaxMsgSizeRaw      string      `koanf:"submission_max_mail_size"`
-	MaxLineLength      int         `koanf:"max_line_length"`
-	MaxRecipients      int         `koanf:"submission_max_recipients"` // 0 = unlimited
-	RecipientDelimiter string      `koanf:"recipient_delimiter"`
-	Workarounds        []string    `koanf:"submission_client_workarounds"` // whitespace-before-path | mailbox-for-path
-	AddReceivedHeader  bool        `koanf:"submission_add_received_header"`
-	Relay              RelayConfig `koanf:"relay"`
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int        `koanf:"mail_max_userip_connections"`
+	Hostname                 string      `koanf:"hostname"`
+	MaxMsgSize               int64       `koanf:"-"` // resolved from MaxMsgSizeRaw at load
+	MaxMsgSizeRaw            string      `koanf:"submission_max_mail_size"`
+	MaxLineLength            int         `koanf:"max_line_length"`
+	MaxRecipients            int         `koanf:"submission_max_recipients"` // 0 = unlimited
+	RecipientDelimiter       string      `koanf:"recipient_delimiter"`
+	Workarounds              []string    `koanf:"submission_client_workarounds"` // whitespace-before-path | mailbox-for-path
+	AddReceivedHeader        bool        `koanf:"submission_add_received_header"`
+	Relay                    RelayConfig `koanf:"relay"`
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	MaxMsgSizeRawAlias string   `koanf:"max_message_size"`
 	MaxRecipientsAlias int      `koanf:"max_recipients"`
@@ -944,7 +1070,7 @@ func (q QuotaConfig) quotaWarnings() []quota.Warning {
 type QuotaStatusConfig struct {
 	// Listen is the TCP address the policy service binds to.
 	// Postfix connects here via check_policy_service.
-	// Default: ":12340"
+	// Default: "127.0.0.1:12340"
 	Listen string `koanf:"listen"`
 	// RecipientDelimiter is the address detail separator used to derive the
 	// target folder (alice+Spam@ → Spam). Default "+".
@@ -1007,7 +1133,7 @@ type LoginConfig struct {
 // connects here and each session is proxied to yarilo-auth, keeping the
 // yarilo-auth socket internal.
 type SASLLoginConfig struct {
-	// Listen is the TCP address Postfix's smtpd_sasl_path names; default ":12345",
+	// Listen is the TCP address Postfix's smtpd_sasl_path names; default "127.0.0.1:12345",
 	// the port Postfix SASL setups commonly use.
 	Listen string `koanf:"listen"`
 	// AuthAddr is the yarilo-auth client-protocol address to dial.
@@ -1033,8 +1159,12 @@ type WardenServiceConfig struct {
 	// Addr is the address login pods use to dial yarilo-warden.
 	// Defaults to Listen when empty (single-process / dev mode).
 	// In k8s set to the ClusterIP service DNS, e.g. "yarilo-warden:9101".
-	Addr     string         `koanf:"addr"`
-	Shutdown ShutdownConfig `koanf:"shutdown"`
+	Addr string `koanf:"addr"`
+	// SocketMode and SocketGroup are the octal mode and the group name a
+	// unix:/path listen address gets; empty group keeps the process's.
+	SocketMode  string         `koanf:"socket_mode"`
+	SocketGroup string         `koanf:"socket_group"`
+	Shutdown    ShutdownConfig `koanf:"shutdown"`
 	// FailOpen controls login-pod behaviour when yarilo-warden is unreachable.
 	// true = allow the session; false (default) = reject the session.
 	FailOpen bool `koanf:"fail_open"`
@@ -1051,11 +1181,20 @@ type WardenServiceConfig struct {
 	RedisAddr string `koanf:"redis_addr"`
 	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
 	RedisPassword string `koanf:"redis_password"`
+	// SentinelAddrs and SentinelMaster find the master through Sentinel; the
+	// db and password still come from RedisAddr, its host is not used (#2505).
+	SentinelAddrs    []string `koanf:"sentinel_addrs"`
+	SentinelMaster   string   `koanf:"sentinel_master"`
+	SentinelUser     string   `koanf:"sentinel_user"`
+	SentinelPassword string   `koanf:"sentinel_password"`
 	// KeyPrefix / ChannelPrefix namespace warden's Redis keys and Pub/Sub
 	// channels. Empty = defaults "yarilo:warden:" / "yarilo:warden:events:".
 	KeyPrefix     string `koanf:"key_prefix"`
 	ChannelPrefix string `koanf:"channel_prefix"`
 }
+
+// Socket is the permission a unix:/path listen address gets.
+func (c WardenServiceConfig) Socket() sockaddr.Perm { return socketPerm(c.SocketMode, c.SocketGroup) }
 
 // ClientAddr returns the address login pods use to dial yarilo-warden.
 func (c WardenServiceConfig) ClientAddr() string {
@@ -1080,10 +1219,34 @@ type AuthServiceConfig struct {
 	// yarilo-auth master protocol for userdb lookups (USER command).
 	// Defaults to empty (userdb checks disabled) when not set.
 	MasterAddr string `koanf:"master_addr"`
+	// SocketMode and SocketGroup are the octal mode and the group name a
+	// unix:/path listen gets; empty group keeps the process's. The master
+	// listener answers without a password, so it has its own pair.
+	SocketMode        string `koanf:"socket_mode"`
+	SocketGroup       string `koanf:"socket_group"`
+	MasterSocketMode  string `koanf:"master_socket_mode"`
+	MasterSocketGroup string `koanf:"master_socket_group"`
+	// MasterSessionUsers are the users, by name or uid, whose processes may
+	// issue a session on a unix:/path master listener; empty lets none.
+	MasterSessionUsers []string `koanf:"master_session_users"`
 	// StartupWaitSeconds bounds the wait for auth at startup only (#1369).
 	// Unset 30; 0 does not wait.
 	StartupWaitSeconds int            `koanf:"auth_startup_wait"`
 	Shutdown           ShutdownConfig `koanf:"shutdown"`
+}
+
+// Socket is the permission a unix:/path client listen address gets.
+func (c AuthServiceConfig) Socket() sockaddr.Perm { return socketPerm(c.SocketMode, c.SocketGroup) }
+
+// MasterSocket is the permission a unix:/path master listen address gets.
+func (c AuthServiceConfig) MasterSocket() sockaddr.Perm {
+	return socketPerm(c.MasterSocketMode, c.MasterSocketGroup)
+}
+
+// socketPerm reads a mode validate has already accepted.
+func socketPerm(mode, group string) sockaddr.Perm {
+	m, _ := sockaddr.ParseMode(mode)
+	return sockaddr.Perm{Mode: m, Group: group}
 }
 
 // ClientAddr returns the address login pods use to dial yarilo-auth.
@@ -1236,10 +1399,8 @@ type FTSConfig struct {
 
 	SearchAddMissing string `koanf:"fts_search_add_missing"`
 	// SearchReadFallback falls back to the exact scan when a lookup fails or
-	// the index lags. JMAP has no scan: Email/query never reads bodies, so on
-	// that surface the flag cannot choose a fallback and a failed lookup is
-	// refused instead (serverFail; a lagging index is serverUnavailable, which
-	// says "retry"). Deliberate divergence, not an oversight.
+	// the index lags. Email/query falls back only for a filter of header
+	// conditions, which it answers from headers; text and body are refused.
 	SearchReadFallback bool `koanf:"fts_search_read_fallback"`
 	SearchTimeoutSecs  int  `koanf:"fts_search_timeout"`
 	// SearchFirstIndexGraceSecs bounds the wait for a mailbox that has NOTHING
@@ -1434,14 +1595,27 @@ type FTSConfig struct {
 // Mode "remote" runs a Redis-backed server on TCP+mTLS (backend deployment per tag).
 // Empty Mode disables the locks server in this process.
 type LocksServiceConfig struct {
-	Mode          string         `koanf:"mode"`           // embedded | remote | ""
-	Socket        string         `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
-	Listen        string         `koanf:"listen"`         // remote: ":9104"
-	Redis         string         `koanf:"redis"`          // remote: "redis://host:6379/0"
-	RedisPassword string         `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
-	KeyPrefix     string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
-	ChannelPrefix string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
-	Shutdown      ShutdownConfig `koanf:"shutdown"`
+	Mode          string `koanf:"mode"`           // embedded | remote | ""
+	Socket        string `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
+	Listen        string `koanf:"listen"`         // remote: ":9104"
+	SocketMode    string `koanf:"socket_mode"`    // embedded: octal mode of the socket
+	SocketGroup   string `koanf:"socket_group"`   // embedded: group name; empty keeps the process's
+	Redis         string `koanf:"redis"`          // remote: "redis://host:6379/0"
+	RedisPassword string `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
+	// Sentinel: the master found through these; the db and password still
+	// come from Redis, its host is not used (#2505).
+	SentinelAddrs    []string       `koanf:"sentinel_addrs"`
+	SentinelMaster   string         `koanf:"sentinel_master"`
+	SentinelUser     string         `koanf:"sentinel_user"`
+	SentinelPassword string         `koanf:"sentinel_password"`
+	KeyPrefix        string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
+	ChannelPrefix    string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
+	Shutdown         ShutdownConfig `koanf:"shutdown"`
+}
+
+// SocketPerm is the permission the embedded mode's socket gets.
+func (c LocksServiceConfig) SocketPerm() sockaddr.Perm {
+	return socketPerm(c.SocketMode, c.SocketGroup)
 }
 
 // MailServerConfig describes one backend mail server the director routes sessions to.
@@ -1458,7 +1632,7 @@ type MailServerConfig struct {
 
 // DirectorAPIConfig configures the HTTP admin API on yarilo-director.
 type DirectorAPIConfig struct {
-	Listen      string   `koanf:"listen"`       // default ":9103"
+	Listen      string   `koanf:"listen"`       // default "127.0.0.1:9103"
 	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR}
 	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
 	// AuthDisabled is the only way to run the API without a token.
@@ -1601,9 +1775,12 @@ type DirectorServiceConfig struct {
 	// above the quietest, in percent, before one domain is moved down; 0 never
 	// moves one. DomainRebalanceInterval is how often that is judged and
 	// DomainRebalanceCooldown how long a moved domain is left alone.
-	DomainRebalancePercent  int `koanf:"director_domain_rebalance_percent"`
-	DomainRebalanceInterval int `koanf:"director_domain_rebalance_interval"`
-	DomainRebalanceCooldown int `koanf:"director_domain_rebalance_cooldown"`
+	// DomainRebalanceMinSessions is how many sessions the busiest backend must
+	// carry before a spread moves anything; 0 judges any load (#2494).
+	DomainRebalancePercent     int `koanf:"director_domain_rebalance_percent"`
+	DomainRebalanceMinSessions int `koanf:"director_domain_rebalance_min_sessions"`
+	DomainRebalanceInterval    int `koanf:"director_domain_rebalance_interval"`
+	DomainRebalanceCooldown    int `koanf:"director_domain_rebalance_cooldown"`
 	// UserKickDelay: seconds an admin-initiated kick waits before USER-KICKED (#740).
 	// Unset 2; 0 kicks immediately.
 	UserKickDelay int `koanf:"user_kick_delay"`
@@ -1684,6 +1861,9 @@ type JMAPLoginServiceConfig struct {
 	// WebSocketTicketKey signs WebSocket tickets; every jmap-login replica
 	// needs the same one.
 	WebSocketTicketKey string `koanf:"websocket_ticket_key"`
+	// ClientIPHeader names the header a proxy in general.haproxy's trusted
+	// networks puts the client address in; empty reads none.
+	ClientIPHeader string `koanf:"client_ip_header"`
 }
 
 // POP3LoginServiceConfig mirrors IMAPLoginServiceConfig for the POP3 proxy.
@@ -1734,6 +1914,9 @@ func ValidateBackendOrDirector(component, backendAddr, directorAddr string) erro
 
 // ManageSieveProtocolConfig holds ManageSieve protocol-level behaviour settings.
 type ManageSieveProtocolConfig struct {
+	// MailMaxUserIPConnections overrides general.limits for this protocol;
+	// unset takes general's, 0 is unlimited (#2457).
+	MailMaxUserIPConnections *int `koanf:"mail_max_userip_connections"`
 	// MaxScriptSizeAlias is the pre-beta duplicate of sieve.sieve_max_script_size:
 	// two keys for one limit, in two sections. The sieve key is the one that
 	// stays (#1286); this spelling is accepted and folded onto it, and the two
@@ -1778,7 +1961,7 @@ type LMTPLoginServiceConfig struct {
 // CLI surfaces both through nested subcommands (`yarctl
 // director ...` vs `yarctl backend ...`).
 type BackendAPIConfig struct {
-	Listen      string   `koanf:"listen"`       // ":9105" default
+	Listen      string   `koanf:"listen"`       // "127.0.0.1:9105" default
 	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR} via koanf
 	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
 	// AuthDisabled is the only way to run the API without a token.
@@ -1821,6 +2004,12 @@ type AuthConfig struct {
 	// MaxAttemptsAlias is the pre-prefix spelling, kept so a config written
 	// against it still parses.
 	MaxAttemptsAlias int `koanf:"max_attempts"`
+
+	// UsernameFormat is applied to every username yarilo-auth is asked about
+	// before any passdb or userdb lookup; the result is the canonical user,
+	// the name as given stays in original_user. Templates as pkg/userfmt;
+	// "%u" keeps the name as given. Default "%Lu".
+	UsernameFormat string `koanf:"auth_username_format"`
 
 	// FailureDelaySeconds is the timing-leak mitigation: every
 	// failed auth reply (wrong password, unknown user, malformed
@@ -2055,6 +2244,12 @@ type AuthTokenConfig struct {
 	RedisAddr string `koanf:"redis_addr"`
 	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
 	RedisPassword string `koanf:"redis_password"`
+	// SentinelAddrs and SentinelMaster find the master through Sentinel; the
+	// db and password still come from RedisAddr, its host is not used (#2505).
+	SentinelAddrs    []string `koanf:"sentinel_addrs"`
+	SentinelMaster   string   `koanf:"sentinel_master"`
+	SentinelUser     string   `koanf:"sentinel_user"`
+	SentinelPassword string   `koanf:"sentinel_password"`
 	// KeyPrefix namespaces token keys in Redis (#939). The installation
 	// boundary: two installs sharing one Redis need distinct prefixes or their
 	// token keys collide. Empty keeps the default "yarilo:authtoken:".
@@ -2595,12 +2790,16 @@ func Defaults() *Config {
 			CA:      "/etc/yarilo/tls/ca.crt",
 		},
 		WardenService: WardenServiceConfig{
-			Listen:   ":9101",
-			Shutdown: ShutdownConfig{},
+			Listen:     "127.0.0.1:9101",
+			SocketMode: "0660",
+			Shutdown:   ShutdownConfig{},
 		},
 		AuthService: AuthServiceConfig{
-			Listen:   ":9100",
-			Shutdown: ShutdownConfig{},
+			Listen:             "127.0.0.1:9100",
+			SocketMode:         "0660",
+			MasterSocketMode:   "0660",
+			MasterSessionUsers: []string{"yarilo-delivery"},
+			Shutdown:           ShutdownConfig{},
 		},
 		Auth: AuthConfig{
 			// MasterUsers is opt-in (Enabled defaults to false).
@@ -2636,12 +2835,12 @@ func Defaults() *Config {
 			},
 		},
 		DirectorService: DirectorServiceConfig{
-			Listen:                ":9102",
+			Listen:                "127.0.0.1:9102",
 			Shutdown:              ShutdownConfig{},
 			UsernameHashLowercase: true,
 			AssignmentPolicy:      "hash",
 			API: DirectorAPIConfig{
-				Listen: ":9103",
+				Listen: "127.0.0.1:9103",
 				// No default IP restriction - service/pod CIDRs differ per
 				// cluster/CNI, so a hardcoded guess here (kubeadm's
 				// 10.96.0.0/12 + 10.244.0.0/16 was tried and silently
@@ -2654,7 +2853,7 @@ func Defaults() *Config {
 				AllowedNets: nil,
 			},
 		},
-		QuotaStatus: QuotaStatusConfig{Listen: ":12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user",
+		QuotaStatus: QuotaStatusConfig{Listen: "127.0.0.1:12340", RecipientDelimiter: "+", Nouser: "REJECT Unknown user",
 			Success: "OK", Overquota: "554 5.2.2 %{error}"},
 		Quota: QuotaConfig{
 			Name:            "User quota",
@@ -2667,7 +2866,7 @@ func Defaults() *Config {
 			// %h/fts is where an operator looks for it.
 			IndexRoot:                  "posix:prefix=%h/fts/",
 			Mode:                       "remote",
-			Listen:                     ":9106",
+			Listen:                     "127.0.0.1:9106",
 			PrefetchMaxBytesRaw:        "32M",
 			SearchAddMissing:           "body-search-only",
 			SearchReadFallback:         true,
@@ -2681,7 +2880,13 @@ func Defaults() *Config {
 			DecoderDriver: "none",
 		},
 		SASLLogin: SASLLoginConfig{
-			Listen: ":12345",
+			Listen: "127.0.0.1:12345",
+		},
+		BackendAPI: BackendAPIConfig{
+			Listen: "127.0.0.1:9105",
+		},
+		LocksService: LocksServiceConfig{
+			SocketMode: "0660",
 		},
 		Telemetry: TelemetryConfig{
 			Listen:       ":8080",
@@ -2744,6 +2949,7 @@ func Defaults() *Config {
 	c.DirectorService.SeedPollInterval = 2
 	c.DirectorService.UserKillConfirmGrace = 1
 	c.DirectorService.DomainRebalanceCooldown = 600
+	c.DirectorService.DomainRebalanceMinSessions = 50
 	c.General.Limits.MaxUserIPConnections = 10
 	c.Protocol.IMAP.IdleNotifyInterval = 120
 	c.Protocol.IMAP.MaxLineLength = 65536
@@ -2798,6 +3004,7 @@ func Defaults() *Config {
 	c.Sieve.FilterExecTimeout = 10
 	c.Sieve.ExecuteExecTimeout = 10
 	c.Auth.MaxAttempts = 3
+	c.Auth.UsernameFormat = "%Lu"
 	c.Auth.Policy.TimeoutMs = 5000
 	c.Auth.Token.TTLSeconds = 60
 	c.Login.LoginProxyTimeout = 30
@@ -2810,6 +3017,7 @@ func Defaults() *Config {
 	c.DirectorService.DomainRebalanceInterval = 60
 	c.DirectorService.FlushProgramTimeoutSeconds = 10
 	c.DictService.DictMaxConns = 8
+	c.DictService.SocketMode = "0660"
 	c.LocksClient.WaitPoolSize = 64
 	c.WardenService.Conns = 4
 	c.WardenService.EventQueueSize = 4096
@@ -2836,6 +3044,7 @@ func Defaults() *Config {
 	c.Protocol.JMAP.PushPoll = 60
 	c.Protocol.JMAP.WebSocketTimeout = 1800
 	c.Protocol.JMAP.WebSocketTicketTTL = 60
+	c.Protocol.JMAP.LimitRetryAfter = 10
 	for _, sh := range []*ShutdownConfig{&c.AuthService.Shutdown, &c.WardenService.Shutdown,
 		&c.DirectorService.Shutdown, &c.LocksService.Shutdown} {
 		sh.KillTimeout = 5
@@ -2874,7 +3083,7 @@ func Load(path string) (*Config, error) {
 	}
 	warnRetiredKeys(k, retiredKeys())
 	warnChartSkew(cfg.ChartVersion)
-	warnConfigSchemaSkew(cfg.ConfigSchemaVersion)
+	warnConfigSchemaSkew(k, cfg.ConfigSchemaVersion, cfg.ChartVersion)
 	warnXClientUntrusted(cfg)
 	if err := refuseInvertedPairs(cfg); err != nil {
 		return nil, err
@@ -2988,6 +3197,23 @@ func (cfg *Config) validate() error {
 	if err := validateDictPrefixes(cfg.Dicts); err != nil {
 		return err
 	}
+	if err := validateRedisSentinels(cfg); err != nil {
+		return err
+	}
+	if _, err := userfmt.Format(cfg.Auth.UsernameFormat, "user@example.com"); err != nil {
+		return fmt.Errorf("config: auth.auth_username_format: %w", err)
+	}
+	for key, mode := range map[string]string{
+		"auth_service.socket_mode":        cfg.AuthService.SocketMode,
+		"auth_service.master_socket_mode": cfg.AuthService.MasterSocketMode,
+		"warden_service.socket_mode":      cfg.WardenService.SocketMode,
+		"locks_service.socket_mode":       cfg.LocksService.SocketMode,
+		"dict_service.socket_mode":        cfg.DictService.SocketMode,
+	} {
+		if _, err := sockaddr.ParseMode(mode); err != nil {
+			return fmt.Errorf("config: %s: %w", key, err)
+		}
+	}
 	if cfg.InternalTLS.Enabled {
 		if cfg.InternalTLS.Cert == "" || cfg.InternalTLS.Key == "" || cfg.InternalTLS.CA == "" {
 			return fmt.Errorf("config: internal_tls.enabled is true but cert/key/ca are not set")
@@ -3089,9 +3315,8 @@ func BuildTLSConfig(ssl SSLConfig) (*tls.Config, error) {
 		certs = append(certs, alt)
 	}
 	tlsCfg := &tls.Config{
-		Certificates:             certs,
-		PreferServerCipherSuites: ssl.SSLPreferCiphers,
-		MinVersion:               tls.VersionTLS12,
+		Certificates: certs,
+		MinVersion:   tls.VersionTLS12,
 	}
 	if ssl.SSLMinProtocol == "TLS1.3" {
 		tlsCfg.MinVersion = tls.VersionTLS13
@@ -3107,12 +3332,9 @@ func expandEnv(cfg *Config) {
 	cfg.InternalTLS.Cert = expand(cfg.InternalTLS.Cert)
 	cfg.InternalTLS.Key = expand(cfg.InternalTLS.Key)
 	cfg.InternalTLS.CA = expand(cfg.InternalTLS.CA)
-	expandSvcSSL(cfg.Services.IMAP)
-	expandSvcSSL(cfg.Services.IMAPS)
-	expandSvcSSL(cfg.Services.Submission)
-	expandSvcSSL(cfg.Services.Submissions)
-	expandSvcSSL(cfg.Services.POP3)
-	expandSvcSSL(cfg.Services.POP3S)
+	for _, e := range cfg.Services.Entries() {
+		expandSvcSSL(*e.Svc)
+	}
 	cfg.DirectorService.API.Token = expand(cfg.DirectorService.API.Token)
 	cfg.DirectorService.RingSecret = expand(cfg.DirectorService.RingSecret)
 	cfg.JMAPLoginService.WebSocketTicketKey = expand(cfg.JMAPLoginService.WebSocketTicketKey)
@@ -3120,6 +3342,9 @@ func expandEnv(cfg *Config) {
 	cfg.Auth.Token.RedisPassword = expand(cfg.Auth.Token.RedisPassword)
 	cfg.WardenService.RedisPassword = expand(cfg.WardenService.RedisPassword)
 	cfg.LocksService.RedisPassword = expand(cfg.LocksService.RedisPassword)
+	cfg.Auth.Token.SentinelPassword = expand(cfg.Auth.Token.SentinelPassword)
+	cfg.WardenService.SentinelPassword = expand(cfg.WardenService.SentinelPassword)
+	cfg.LocksService.SentinelPassword = expand(cfg.LocksService.SentinelPassword)
 	cfg.Protocol.Submission.Relay.Password = expand(cfg.Protocol.Submission.Relay.Password)
 	for i := range cfg.Auth.Passdb {
 		cfg.Auth.Passdb[i].DSN = expand(cfg.Auth.Passdb[i].DSN)
@@ -3287,6 +3512,48 @@ func validateSharedNamespacesNeedACL(namespaces []NamespaceConfig, aclEnabled bo
 		}
 	}
 	return nil
+}
+
+// validateRedisSentinels refuses half a Sentinel configuration in any block
+// that opens a Redis client, naming the key that is missing.
+func validateRedisSentinels(cfg *Config) error {
+	checks := []struct {
+		prefix string
+		s      redisopt.Sentinel
+	}{
+		{"locks_service.", cfg.LocksService.Sentinel()},
+		{"auth.token.", cfg.Auth.Token.Sentinel()},
+		{"warden_service.", cfg.WardenService.Sentinel()},
+	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Dicts)) {
+		if dc := cfg.Dicts[name]; dc.Driver == "redis" {
+			checks = append(checks, struct {
+				prefix string
+				s      redisopt.Sentinel
+			}{"dicts." + name + ".settings.", redisopt.SentinelFromSettings(dc.Settings)})
+		}
+	}
+	for _, c := range checks {
+		if err := c.s.Check(c.prefix); err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+	}
+	return nil
+}
+
+// Sentinel is the block's sentinel_* keys.
+func (c LocksServiceConfig) Sentinel() redisopt.Sentinel {
+	return redisopt.Sentinel{Addrs: c.SentinelAddrs, Master: c.SentinelMaster, User: c.SentinelUser, Password: c.SentinelPassword}
+}
+
+// Sentinel is the block's sentinel_* keys.
+func (c AuthTokenConfig) Sentinel() redisopt.Sentinel {
+	return redisopt.Sentinel{Addrs: c.SentinelAddrs, Master: c.SentinelMaster, User: c.SentinelUser, Password: c.SentinelPassword}
+}
+
+// Sentinel is the block's sentinel_* keys.
+func (c WardenServiceConfig) Sentinel() redisopt.Sentinel {
+	return redisopt.Sentinel{Addrs: c.SentinelAddrs, Master: c.SentinelMaster, User: c.SentinelUser, Password: c.SentinelPassword}
 }
 
 // validateDictPrefixes refuses a %-variable in a dict prefix: a dict opens once
@@ -3660,7 +3927,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 18
+const minConfigSchema = 29
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3691,6 +3958,22 @@ var schemaAdditions = map[int][]string{
 	16: {"sieve_global"},
 	17: {"sieve_global_extensions"},
 	18: {"submission_client_workarounds"},
+	19: {"address", "socket_mode", "socket_group", "master_socket_mode", "master_socket_group"},
+	20: {"imap_login", "imaps_login", "pop3_login", "pop3s_login", "submission_login", "submissions_login",
+		"lmtp_login", "managesieve_login", "jmap_login"},
+	21: {"master_session_users"},
+	22: {"dict_service.socket_mode", "dict_service.socket_group"},
+	23: {"protocol.imap.mail_max_userip_connections", "protocol.pop3.mail_max_userip_connections",
+		"protocol.submission.mail_max_userip_connections", "protocol.lmtp.mail_max_userip_connections",
+		"protocol.managesieve.mail_max_userip_connections", "protocol.jmap.mail_max_userip_connections"},
+	24: {"protocol.jmap.jmap_limit_retry_after"},
+	25: {"warden_service.fail_open"},
+	26: {"director_service.director_domain_rebalance_min_sessions"},
+	27: {"locks_service.sentinel_addrs", "locks_service.sentinel_master", "locks_service.sentinel_user", "locks_service.sentinel_password",
+		"auth.token.sentinel_addrs", "auth.token.sentinel_master", "auth.token.sentinel_user", "auth.token.sentinel_password",
+		"warden_service.sentinel_addrs", "warden_service.sentinel_master", "warden_service.sentinel_user", "warden_service.sentinel_password"},
+	28: {"auth.auth_username_format"},
+	29: {"jmap_login_service.client_ip_header"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
@@ -3708,33 +3991,56 @@ func warnXClientUntrusted(cfg *Config) {
 	if len(cfg.General.XClient.TrustedNets) > 0 {
 		return
 	}
-	s := cfg.Services
-	for _, l := range []struct {
-		name string
-		svc  *ServiceConfig
-	}{
-		{"imap", s.IMAP}, {"imaps", s.IMAPS}, {"pop3", s.POP3}, {"pop3s", s.POP3S},
-		{"submission", s.Submission}, {"submissions", s.Submissions}, {"lmtp", s.LMTP},
-		{"jmap", s.JMAP}, {"jmap_be", s.JMAPBE},
-	} {
-		if l.svc != nil && l.svc.XClient {
+	for _, e := range cfg.Services.Entries() {
+		if svc := *e.Svc; svc != nil && svc.XClient {
 			slog.Warn("config: xclient_protocol is on but general.xclient.trusted_nets is empty: no forwarded client address is trusted",
-				"listener", l.name)
+				"listener", e.Name)
 		}
 	}
 }
 
-func warnConfigSchemaSkew(fromConfig int) {
+func warnConfigSchemaSkew(k *koanf.Koanf, fromConfig int, fromChart string) {
 	if build.ChartVersion == "dev" {
 		// A local build is not deployed from a chart.
 		return
 	}
-	if fromConfig >= minConfigSchema {
+	// No chart_version: no chart wrote the file, and what it leaves out takes
+	// the defaults by design (#2453).
+	if fromChart == "" || fromConfig >= minConfigSchema {
 		return
 	}
-	missing := defaultedByOlderSchema(fromConfig, minConfigSchema, schemaAdditions)
+	missing := notSetIn(k, defaultedByOlderSchema(fromConfig, minConfigSchema, schemaAdditions))
+	if len(missing) == 0 {
+		return
+	}
 	slog.Warn("config: the ConfigMap was rendered by a chart older than this binary needs; the settings named below are absent and silently defaulted",
 		"configmap_schema", fromConfig, "binary_needs", minConfigSchema, "defaulted", strings.Join(missing, ","))
+}
+
+// notSetIn keeps the keys the loaded file does not set: absent, never equal to
+// the default. A dotted key is a path; a bare one is a name under any section.
+func notSetIn(k *koanf.Koanf, keys []string) []string {
+	segments := map[string]bool{}
+	paths := k.Keys()
+	for _, p := range paths {
+		for _, seg := range strings.Split(p, ".") {
+			segments[seg] = true
+		}
+	}
+	var out []string
+	for _, key := range keys {
+		set := segments[key]
+		if strings.Contains(key, ".") {
+			set = k.Exists(key)
+			for _, p := range paths {
+				set = set || strings.HasPrefix(p, key+".")
+			}
+		}
+		if !set {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 // defaultedByOlderSchema names the settings a chart at have does not render
@@ -3754,9 +4060,7 @@ func warnChartSkew(fromConfig string) {
 	case build.ChartVersion == "dev":
 		// A local build, which is not deployed from a chart.
 	case fromConfig == "":
-		slog.Warn("config: the ConfigMap carries no chart_version, so it was rendered by a chart older than this binary; "+
-			"settings this version reads may be absent and silently defaulted",
-			"binary_built_from_chart", build.ChartVersion)
+		// No chart wrote the file; the schema check names what it lacks (#2453).
 	case fromConfig != build.ChartVersion:
 		slog.Warn("config: the ConfigMap was rendered by one chart version and this binary was built beside another",
 			"configmap_chart", fromConfig, "binary_built_from_chart", build.ChartVersion)

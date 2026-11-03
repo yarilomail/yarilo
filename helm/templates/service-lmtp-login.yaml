@@ -13,6 +13,7 @@ metadata:
   {{- end }}
 spec:
   type: {{ (.Values.components.lmtpLogin.service | default dict).type | default "ClusterIP" }}
+  {{- include "yarilo.serviceTraffic" .Values.components.lmtpLogin.service | nindent 2 }}
   ports:
     {{- if .Values.components.lmtpLogin.listeners.lmtp.enabled }}
     - name: lmtp

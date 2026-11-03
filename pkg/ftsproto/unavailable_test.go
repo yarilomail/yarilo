@@ -37,7 +37,7 @@ func (f failingService) Status(string, fts.MailboxRef) (uint32, uint32, error) {
 
 func serveFailing(t *testing.T, err error) *Remote {
 	t.Helper()
-	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
+	ln, lerr := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if lerr != nil {
 		t.Fatal(lerr)
 	}
@@ -173,4 +173,45 @@ func (f failingService) DropFolder(string, fts.MailboxRef) error { return nil }
 
 func (f failingService) LookupIn(string, []fts.MailboxRef, fts.Query) (fts.SetResult, error) {
 	return fts.SetResult{}, f.err
+}
+
+// The service itself unreachable is unavailability too: a refused dial and a
+// connection the server drops mid-call both say "retry", not "refused" (#2480).
+func TestAnUnreachableServiceIsUnavailable(t *testing.T) {
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := ln.Addr().String()
+	ln.Close() //nolint:errcheck
+	if _, err := Dial(closed, nil, time.Second); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("refused dial = %v, want ErrUnavailable", err)
+	}
+
+	ln, err = new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() }) //nolint:errcheck
+	drop := make(chan struct{})
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		buf := make([]byte, 256)
+		n, _ := c.Read(buf)
+		fmt.Fprintf(c, "%s\tOK\n", strings.TrimSpace(string(buf[:n]))) //nolint:errcheck
+		<-drop
+		c.Close() //nolint:errcheck
+	}()
+	r, err := Dial(ln.Addr().String(), nil, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Close() }) //nolint:errcheck
+	close(drop)
+	if _, _, err := r.Status("u@example.com", testMbox); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("dropped connection = %v, want ErrUnavailable", err)
+	}
 }

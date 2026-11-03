@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -39,8 +38,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := config.RequireListeners(cfg, "submission_login", "submissions_login"); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
 	svcs := cfg.Services
-	if !svcs.Submission.Active() && !svcs.Submissions.Active() {
+	if !svcs.SubmissionLogin.Active() && !svcs.SubmissionsLogin.Active() {
 		slog.Error("no submission listener configured (submission or submissions must be enabled)")
 		os.Exit(1)
 	}
@@ -53,13 +56,13 @@ func main() {
 	)
 
 	// A listener that declares TLS without a certificate must not bind silently.
-	if warn, err := config.CheckListenerTLS("services.submissions", svcs.Submissions, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.submissions_login", svcs.SubmissionsLogin, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
 		slog.Warn(warn)
 	}
-	if warn, err := config.CheckListenerTLS("services.submission", svcs.Submission, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.submission_login", svcs.SubmissionLogin, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
@@ -115,9 +118,9 @@ func main() {
 	tel := startTelemetry(cfg.Telemetry)
 
 	// Port 465 - implicit TLS (Submissions).
-	if svcs.Submissions.Active() {
-		addr := fmt.Sprintf(":%d", svcs.Submissions.Port)
-		ln, err := net.Listen("tcp", addr)
+	if svcs.SubmissionsLogin.Active() {
+		addr, from := svcs.SubmissionsLogin.ListenAddr(config.PublicHost)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			slog.Error("submissions-login: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
@@ -135,7 +138,7 @@ func main() {
 			AuthAddr:            cfg.AuthService.ClientAddr(),
 			AuthTLS:             intTLS,
 			AuthMaxAttempts:     cfg.Auth.MaxAttempts,
-			DisablePlainAuth:    svcs.Submissions.PlainAuthDisabled(),
+			DisablePlainAuth:    svcs.SubmissionsLogin.PlainAuthDisabled(),
 			WardenAddr:          cfg.WardenService.ClientAddr(),
 			WardenTLS:           intTLS,
 			WardenFailOpen:      cfg.WardenService.FailOpen,
@@ -147,10 +150,10 @@ func main() {
 			TransientReloginCap: cfg.Login.TransientReloginCap,
 			ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 			LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
-			HAProxy:             svcs.Submissions.HAProxy,
+			HAProxy:             svcs.SubmissionsLogin.HAProxy,
 			HAProxyTimeout:      haproxyTimeout,
 			HAProxyNets:         haproxyNets,
-			XClient:             svcs.Submissions.XClient,
+			XClient:             svcs.SubmissionsLogin.XClient,
 			XClientNets:         xclientNets,
 
 			SubmissionMaxMessageBytes: cfg.Protocol.Submission.MaxMsgSize,
@@ -166,13 +169,13 @@ func main() {
 		if dirAddr != "" {
 			go srv.Watch(ctx)
 		}
-		slog.Info("submission-login: listening", "addr", addr, "tls", "implicit")
+		slog.Info("submission-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "implicit")
 	}
 
 	// Port 587 - STARTTLS.
-	if svcs.Submission.Active() {
-		addr := fmt.Sprintf(":%d", svcs.Submission.Port)
-		ln, err := net.Listen("tcp", addr)
+	if svcs.SubmissionLogin.Active() {
+		addr, from := svcs.SubmissionLogin.ListenAddr(config.PublicHost)
+		ln, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
 		if err != nil {
 			slog.Error("submission-login: listen failed", "addr", addr, "err", err)
 			os.Exit(1)
@@ -190,7 +193,7 @@ func main() {
 			AuthAddr:            cfg.AuthService.ClientAddr(),
 			AuthTLS:             intTLS,
 			AuthMaxAttempts:     cfg.Auth.MaxAttempts,
-			DisablePlainAuth:    svcs.Submission.PlainAuthDisabled(),
+			DisablePlainAuth:    svcs.SubmissionLogin.PlainAuthDisabled(),
 			WardenAddr:          cfg.WardenService.ClientAddr(),
 			WardenTLS:           intTLS,
 			WardenFailOpen:      cfg.WardenService.FailOpen,
@@ -199,10 +202,10 @@ func main() {
 			LookupHoldMax:       cfg.Login.LookupHoldMax,
 			SessionSyncInterval: time.Duration(cfg.Login.SessionSyncInterval) * time.Second,
 			LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
-			HAProxy:             svcs.Submission.HAProxy,
+			HAProxy:             svcs.SubmissionLogin.HAProxy,
 			HAProxyTimeout:      haproxyTimeout,
 			HAProxyNets:         haproxyNets,
-			XClient:             svcs.Submission.XClient,
+			XClient:             svcs.SubmissionLogin.XClient,
 			XClientNets:         xclientNets,
 			TransientRetries:    cfg.Login.TransientRetries,
 			TransientReloginCap: cfg.Login.TransientReloginCap,
@@ -221,7 +224,7 @@ func main() {
 		if dirAddr != "" {
 			go srv.Watch(ctx)
 		}
-		slog.Info("submission-login: listening", "addr", addr, "tls", "starttls")
+		slog.Info("submission-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "starttls")
 	}
 
 	// Every configured port is bound and serving now, so the pod can accept
@@ -271,10 +274,9 @@ func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	go func() {
-		if err := tel.ListenAndServe(context.Background()); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 	return tel
 }

@@ -15,12 +15,14 @@ import (
 // context closes its channel. Memory and Redis must behave the same.
 func TestStateBackendPubSubContract(t *testing.T) {
 	backends := map[string]func(t *testing.T) StateBackend{
-		"memory": func(*testing.T) StateBackend { return newMemoryBackend(time.Minute, time.Minute, 0) },
+		"memory": func(*testing.T) StateBackend {
+			return newMemoryBackend(time.Minute, time.Minute, ConnLimits{Default: 0})
+		},
 		"redis": func(t *testing.T) StateBackend {
 			mr := miniredis.RunT(t)
 			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			t.Cleanup(func() { rdb.Close() })
-			return NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, 0)
+			return NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, time.Minute, ConnLimits{Default: 0})
 		},
 	}
 	for name, mk := range backends {

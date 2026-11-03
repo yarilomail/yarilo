@@ -83,7 +83,7 @@ func TestAnUnreadableProxyTimeoutRefusesTheLogin(t *testing.T) {
 func startCountingBackend(t *testing.T) (string, *atomic.Int32) {
 	t.Helper()
 	var n atomic.Int32
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestASilentBackendIsGivenOneProxyTimeout(t *testing.T) {
 // it, and holds any later one open without a word.
 func startClosingBackend(t *testing.T, closeAfter []time.Duration) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -196,7 +196,7 @@ func startClosingBackend(t *testing.T, closeAfter []time.Duration) string {
 // greets on every later one.
 func startBackendFailingOnce(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

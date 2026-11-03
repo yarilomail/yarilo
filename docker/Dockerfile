@@ -3,7 +3,7 @@
 ## Pinned to the patch go.mod names: the scan reads go.mod, the image ships the
 ## base, and a floating base makes them disagree silently (#1497). Dependabot
 ## moves it.
-FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS builder
+FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 
 ## A newer go.mod must fail the build, not fetch a toolchain.
 ENV GOTOOLCHAIN=local
@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 ## --- yarilo-fts: the only cgo binary (libxapian). Built in its own stage so
 ## every other binary stays CGO_ENABLED=0 static; ships in the single image.
-FROM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS fts-builder
+FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS fts-builder
 ENV GOTOOLCHAIN=local
 # hadolint ignore=DL3018
 RUN apk add --no-cache build-base xapian-core-dev
@@ -71,10 +71,30 @@ ARG BUILD_CHART_VERSION=dev
 ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    for cmd in yarilo-fts fts-bench; do \
-        go build -tags flatcurve -ldflags="-s -w -X github.com/yarilomail/yarilo/v2/pkg/build.Version=${BUILD_VERSION} -X github.com/yarilomail/yarilo/v2/pkg/build.ChartVersion=${BUILD_CHART_VERSION}" \
-            -trimpath -o "/out/$cmd" "./app/$cmd"; \
-    done
+    go build -tags flatcurve -ldflags="-s -w -X github.com/yarilomail/yarilo/v2/pkg/build.Version=${BUILD_VERSION} -X github.com/yarilomail/yarilo/v2/pkg/build.ChartVersion=${BUILD_CHART_VERSION}" \
+        -trimpath -o /out/yarilo-fts ./app/yarilo-fts
+
+# fts-bench is a stand tool, not a service, so the production image does not
+# carry it (#2431): docker build --target fts-bench builds it alone.
+FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS fts-bench-builder
+ENV GOTOOLCHAIN=local
+# hadolint ignore=DL3018
+RUN apk add --no-cache build-base xapian-core-dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+COPY . .
+ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go build -tags flatcurve -trimpath -o /out/fts-bench ./app/fts-bench
+
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS fts-bench
+# hadolint ignore=DL3018
+RUN apk upgrade --no-cache && apk add --no-cache xapian-core libstdc++
+COPY --from=fts-bench-builder /out/fts-bench /usr/local/bin/fts-bench
+ENTRYPOINT ["/usr/local/bin/fts-bench"]
 
 FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 # tini is PID 1 (see ENTRYPOINT): the components that run external programs --
@@ -91,7 +111,6 @@ RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata xapian-c
 
 COPY --from=builder /out/ /usr/local/bin/
 COPY --from=fts-builder /out/yarilo-fts /usr/local/bin/yarilo-fts
-COPY --from=fts-builder /out/fts-bench /usr/local/bin/fts-bench
 # Backward-compat alias for the operator CLI: the binary is now `yarctl`, but
 # existing tooling (sandbox test jobs, older scripts) still invokes it as
 # `yarilo-admin`. A relative symlink (busybox multi-call convention) keeps that

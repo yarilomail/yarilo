@@ -40,35 +40,66 @@ func (t *tickets) sign(payload string) []byte {
 	return m.Sum(nil)
 }
 
-func (t *tickets) issue(user, ip string) (string, time.Time) {
+// issue signs the login, the user's own connection limits included, so the
+// WebSocket it opens is counted as the login was (#2460).
+func (t *tickets) issue(login Login, ip string) (string, time.Time) {
 	until := t.now().Add(t.ttl).Truncate(time.Second)
-	payload := user + "\n" + ip + "\n" + strconv.FormatInt(until.Unix(), 10)
+	payload := login.User + "\n" + ip + "\n" + strconv.FormatInt(until.Unix(), 10) +
+		"\n" + optInt(login.Limits.UserIP) + "\n" + optInt(login.Limits.User)
 	enc := base64.RawURLEncoding
 	return enc.EncodeToString([]byte(payload)) + "." + enc.EncodeToString(t.sign(payload)), until
 }
 
 // check returns the login a ticket names when it is signed with this key, not
 // yet expired, and presented from the address it was issued to.
-func (t *tickets) check(ticket, ip string) (string, error) {
+func (t *tickets) check(ticket, ip string) (Login, error) {
 	enc := base64.RawURLEncoding
 	p64, s64, ok := strings.Cut(ticket, ".")
 	if !ok {
-		return "", errBadTicket
+		return Login{}, errBadTicket
 	}
 	payload, err1 := enc.DecodeString(p64)
 	sig, err2 := enc.DecodeString(s64)
 	if err1 != nil || err2 != nil || !hmac.Equal(sig, t.sign(string(payload))) {
-		return "", errBadTicket
+		return Login{}, errBadTicket
 	}
 	parts := strings.Split(string(payload), "\n")
-	if len(parts) != 3 {
-		return "", errBadTicket
+	for len(parts) < 5 && len(parts) >= 3 {
+		parts = append(parts, "") // issued before a ticket carried the limits
+	}
+	if len(parts) != 5 {
+		return Login{}, errBadTicket
 	}
 	until, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || !t.now().Before(time.Unix(until, 0)) || parts[1] != ip {
-		return "", errBadTicket
+		return Login{}, errBadTicket
 	}
-	return parts[0], nil
+	login := Login{User: parts[0]}
+	if login.Limits.UserIP, err = parseOptInt(parts[3]); err != nil {
+		return Login{}, errBadTicket
+	}
+	if login.Limits.User, err = parseOptInt(parts[4]); err != nil {
+		return Login{}, errBadTicket
+	}
+	return login, nil
+}
+
+func optInt(n *int) string {
+	if n == nil {
+		return ""
+	}
+	return strconv.Itoa(*n)
+}
+
+func parseOptInt(s string) (*int, error) {
+	if s == "" {
+		return nil, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
 }
 
 // wsTicket is the ticket a WebSocket request presents instead of credentials.
@@ -87,7 +118,7 @@ func dropTicket(r *http.Request) {
 }
 
 // handleTicket issues a ticket to a request that authenticates as usual.
-func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request, st *connState, clientIP string) {
+func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request, st *connState, clientIP, peer string) {
 	if s.tickets == nil {
 		jmapcore.WriteProblem(w, http.StatusNotFound, "Not found")
 		return
@@ -97,7 +128,8 @@ func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request, st *connSt
 		jmapcore.WriteProblem(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	username, err := s.authenticate(r, clientIP, sessionOf(st))
+	login, err := s.authenticate(r, clientIP, peer, sessionOf(st))
+	username := login.User
 	if err != nil {
 		if errors.Is(err, errTemporary) {
 			jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Authentication temporarily unavailable")
@@ -107,8 +139,8 @@ func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request, st *connSt
 		jmapcore.WriteProblem(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	value, until := s.tickets.issue(username, clientIP)
-	slog.Debug("jmap-login: websocket ticket issued", "user", username, "ip", clientIP, "session", sessionOf(st))
+	value, until := s.tickets.issue(login, clientIP)
+	slog.Debug("jmap-login: websocket ticket issued", "user", username, "ip", clientIP, "peer", peer, "session", sessionOf(st))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]string{

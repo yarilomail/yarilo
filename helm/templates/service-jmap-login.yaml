@@ -13,6 +13,7 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.components.jmapLogin.service.type }}
+  {{- include "yarilo.serviceTraffic" .Values.components.jmapLogin.service | nindent 2 }}
   ports:
     - name: jmap
       port: {{ .Values.components.jmapLogin.listeners.jmap.servicePort }}

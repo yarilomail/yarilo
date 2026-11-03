@@ -39,7 +39,7 @@ func buildTestServer(t *testing.T) string {
 		Index:    idx,
 		Resolver: resolver,
 	}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func buildTestServer(t *testing.T) string {
 // dialLMTP connects and reads the greeting line, returns conn + scanner.
 func dialLMTP(t *testing.T, addr string) (net.Conn, *bufio.Scanner) {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

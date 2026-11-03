@@ -10,6 +10,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"flag"
@@ -74,7 +75,7 @@ func main() {
 // upgraded TLS connection ready for AUTH.
 func dialSubmissionSTARTTLS() (*tls.Conn, *bufio.Reader, error) {
 	addr := net.JoinHostPort(*flagHost, strconv.Itoa(*flagSubmissionPort))
-	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
+	conn, err := (&net.Dialer{Timeout: *flagTimeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial: %w", err)
 	}
@@ -157,7 +158,7 @@ const testSubject = "yarilo-smoketest"
 
 func deliverLMTP() error {
 	addr := net.JoinHostPort(*flagHost, strconv.Itoa(*flagLMTPPort))
-	conn, err := net.DialTimeout("tcp", addr, *flagTimeout)
+	conn, err := (&net.Dialer{Timeout: *flagTimeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("dial lmtp: %w", err)
 	}
@@ -245,7 +246,7 @@ func pop3VerifyRETR(auth func(net.Conn, *bufio.Reader) error) error {
 		InsecureSkipVerify: *flagInsecure, //nolint:gosec
 		NextProtos:         []string{"pop3"},
 	}
-	conn, err := tls.Dial("tcp", addr, tlsCfg)
+	conn, err := (&tls.Dialer{Config: tlsCfg}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("pop3 dial: %w", err)
 	}

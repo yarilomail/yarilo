@@ -51,7 +51,7 @@ func NewUserdb(c Config) (*Userdb, error) {
 	pool := c.Pool
 	pool.Driver = c.Driver
 	sqlpool.Apply(db, pool)
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("auth/sql: userdb ping %s: %w", c.Driver, err)
 	}

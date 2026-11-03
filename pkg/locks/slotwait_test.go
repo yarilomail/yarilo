@@ -28,7 +28,7 @@ func partSum(t *testing.T, part string) (float64, uint64) {
 // hold before replying OK, so a caller occupies its pool slot for that long.
 func slowServer(t *testing.T, hold time.Duration) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

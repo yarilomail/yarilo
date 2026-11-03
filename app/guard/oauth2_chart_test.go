@@ -18,7 +18,7 @@ func renderOAuth2(t *testing.T, entry string) ([]byte, error) {
 	if err := os.WriteFile(f, []byte("components:\n  auth:\n    oauth2:\n"+entry), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return exec.Command("helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml", "-f", f).CombinedOutput()
+	return exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml", "-f", f).CombinedOutput()
 }
 
 // A local key given as secret_ref is mounted into yarilo-auth at the path the

@@ -4,7 +4,9 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -169,8 +171,15 @@ func (s *Server) isReady() bool {
 // and is expired ring-wide rather than kept as a live-but-wedged target.
 func (s *Server) IsReady() bool { return s.isReady() }
 
-// ListenAndServe starts the HTTP server. Blocks until ctx is done.
-func (s *Server) ListenAndServe(ctx context.Context) error {
+// Start binds the listener before it returns and serves in the background
+// until ctx is done. A port it cannot bind is the caller's startup failure:
+// served from a goroutine that only logs, the process ran without /healthz,
+// /readyz and /metrics for its whole life (#2419).
+func (s *Server) Start(ctx context.Context) error {
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", s.srv.Addr)
+	if err != nil {
+		return fmt.Errorf("telemetry: listen %s: %w", s.srv.Addr, err)
+	}
 	if s.wd != nil {
 		go s.wd.run(ctx)
 	}
@@ -178,9 +187,20 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		<-ctx.Done()
 		s.srv.Shutdown(context.Background()) //nolint:errcheck
 	}()
-	if err := s.srv.ListenAndServe(); err != http.ErrServerClosed {
+	go func() {
+		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			slog.Error("telemetry: server stopped", "err", err)
+		}
+	}()
+	return nil
+}
+
+// ListenAndServe is Start that blocks until ctx is done.
+func (s *Server) ListenAndServe(ctx context.Context) error {
+	if err := s.Start(ctx); err != nil {
 		return err
 	}
+	<-ctx.Done()
 	return nil
 }
 

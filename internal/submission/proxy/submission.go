@@ -5,6 +5,7 @@ package proxy
 
 import (
 	"cmp"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -217,7 +218,7 @@ func (s *Submission) dial() (*goSmtp.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		conn, err := net.DialTimeout("tcp", addr, ct)
+		conn, err := (&net.Dialer{Timeout: ct}).DialContext(context.Background(), "tcp", addr)
 		if err != nil {
 			return nil, err
 		}
@@ -228,7 +229,7 @@ func (s *Submission) dial() (*goSmtp.Client, error) {
 			return nil, startErr
 		}
 	default: // "no"
-		conn, err := net.DialTimeout("tcp", addr, ct)
+		conn, err := (&net.Dialer{Timeout: ct}).DialContext(context.Background(), "tcp", addr)
 		if err != nil {
 			return nil, err
 		}

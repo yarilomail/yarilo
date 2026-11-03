@@ -40,7 +40,7 @@ func buildOAuthBearerServer(t *testing.T, auth Authenticator, enabled bool) (str
 		OAuth2Enabled: enabled,
 	}
 	srv := New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -83,7 +83,7 @@ func TestWrapProxy_InternalMTLSHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rawLn, err := net.Listen("tcp", "127.0.0.1:0")
+	rawLn, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestWrapProxy_InternalMTLSHandshake(t *testing.T) {
 	wrapped := s.wrapProxy(rawLn)
 	go func() { _, _ = wrapped.Accept() }() // drive the server-side handshake
 
-	conn, err := net.Dial("tcp", rawLn.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", rawLn.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestWrapProxy_InternalMTLSHandshake(t *testing.T) {
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	tc := tls.Client(conn, clientCfg)
-	if err := tc.Handshake(); err != nil {
+	if err := tc.HandshakeContext(t.Context()); err != nil {
 		t.Fatalf("internal mTLS handshake through the imap listener chain must complete, got: %v", err)
 	}
 }

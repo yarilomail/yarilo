@@ -15,7 +15,7 @@ import (
 func startMasterWithCache(t *testing.T, cache *Cache) func() (net.Conn, *bufio.Reader) {
 	t.Helper()
 	srv := NewMasterServer(nil, WithMasterCache(cache))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -27,7 +27,7 @@ func startMasterWithCache(t *testing.T, cache *Cache) func() (net.Conn, *bufio.R
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 		if err == nil {
 			c.Close()
 			break
@@ -37,7 +37,7 @@ func startMasterWithCache(t *testing.T, cache *Cache) func() (net.Conn, *bufio.R
 
 	t.Cleanup(cancel)
 	return func() (net.Conn, *bufio.Reader) {
-		conn, err := net.Dial("tcp", addr)
+		conn, err := new(net.Dialer).DialContext(ctx, "tcp", addr)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}

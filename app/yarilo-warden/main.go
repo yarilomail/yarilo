@@ -9,11 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
+	"github.com/yarilomail/yarilo/v2/internal/drain"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
@@ -38,11 +38,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	limits := connLimits(cfg)
 	slog.Info("yarilo-warden starting",
 		"version", build.Version,
 		"listen", cfg.WardenService.Listen,
 		"telemetry", cfg.Telemetry.Listen,
-		"max_userip_connections", cfg.General.Limits.MaxUserIPConnections,
+		"max_userip_connections", limits.Default,
+		"max_userip_connections_by_protocol", limits.Protocols,
 		"internal_tls", cfg.InternalTLS.Enabled,
 	)
 
@@ -77,7 +79,7 @@ func main() {
 			slog.Error("warden: invalid redis_addr", "addr", cfg.WardenService.RedisAddr, "err", perr)
 			os.Exit(1)
 		}
-		rdb := redis.NewClient(opt)
+		rdb := redisopt.Client(opt, cfg.WardenService.Sentinel())
 		prefix := cfg.WardenService.KeyPrefix
 		if prefix == "" {
 			prefix = "yarilo:warden:"
@@ -86,7 +88,7 @@ func main() {
 		if chanPrefix == "" {
 			chanPrefix = "yarilo:warden:events:"
 		}
-		backend := warden.NewRedisBackend(rdb, prefix, chanPrefix, warden.DefaultPenaltyDecay, warden.DefaultSessionTTL, cfg.General.Limits.MaxUserIPConnections)
+		backend := warden.NewRedisBackend(rdb, prefix, chanPrefix, warden.DefaultPenaltyDecay, warden.DefaultSessionTTL, limits)
 		stateOpts = append(stateOpts, warden.WithStateBackend(backend))
 		closeState = func() { _ = backend.Close() }
 		stateChecks = append(stateChecks, telemetry.FuncCheck("state-redis", func() bool {
@@ -108,20 +110,23 @@ func main() {
 		defer closeState()
 	}
 
-	srv := warden.NewServer(cfg.General.Limits.MaxUserIPConnections, stateOpts...)
+	srv := warden.NewServer(limits.Default, append(stateOpts, warden.WithConnLimits(limits))...)
 
 	// Telemetry starts after the server exists so the liveness watchdog can probe
 	// its session-tracking mutex (#904).
 	tel := startTelemetry(cfg.Telemetry, srv, stateChecks)
 	errCh := make(chan error, 1)
+	var serving sync.WaitGroup
 	// Bind before readiness: ListenAndServe would bind inside the goroutine, so the
 	// pod would announce itself ready without knowing the port came up.
-	ln, err := srv.Listen(cfg.WardenService.Listen, tlsCfg)
+	ln, err := srv.Listen(cfg.WardenService.Listen, cfg.WardenService.Socket(), tlsCfg)
 	if err != nil {
 		slog.Error("warden: listen failed", "addr", cfg.WardenService.Listen, "err", err)
 		os.Exit(1)
 	}
+	serving.Add(1)
 	go func() {
+		defer serving.Done()
 		if err := srv.Serve(ctx, ln); err != nil {
 			errCh <- err
 		}
@@ -139,8 +144,8 @@ func main() {
 		slog.Info("received signal, shutting down", "signal", sig.String())
 		cancel()
 		grace := time.Duration(cfg.WardenService.Shutdown.SessionGracePeriod) * time.Second
-		if grace > 0 {
-			time.Sleep(grace)
+		if !drain.Wait(&serving, grace) {
+			slog.Warn("warden: connections still open when the grace period ran out", "grace", grace)
 		}
 	case err := <-errCh:
 		if err != nil {
@@ -179,11 +184,10 @@ func startTelemetry(cfg config.TelemetryConfig, srv *warden.Server, checks []tel
 		}
 	}
 	tel := telemetry.NewWithOptions(opts)
-	go func() {
-		if err := tel.ListenAndServe(context.Background()); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 	return tel
 }
 
@@ -204,4 +208,15 @@ func wardenLivenessCheck(srv *warden.Server, gate *telemetry.Gate) telemetry.Liv
 		}
 		return nil
 	}
+}
+
+// connLimits reads each protocol's limit from the config here, in the one
+// process that enforces it: the login proxies send only the protocol, so the
+// limit has no second copy to disagree with (#2457).
+func connLimits(cfg *config.Config) warden.ConnLimits {
+	l := warden.ConnLimits{Default: cfg.General.Limits.MaxUserIPConnections, Protocols: map[string]int{}}
+	for _, p := range config.UserIPProtocols {
+		l.Protocols[p] = cfg.MaxUserIPConnections(p)
+	}
+	return l
 }

@@ -36,11 +36,13 @@ type saslExchange struct {
 	// only place the name appears before the exchange finishes.
 	server   sasl.Server
 	username string
-	service  string
-	rip      string
-	lip      string
-	session  string
-	client   clientConn
+	// given is the name as the client sent it; username is canonical.
+	given   string
+	service string
+	rip     string
+	lip     string
+	session string
+	client  clientConn
 	// unknown is a lookup no passdb answered; refused, a policy refusal and
 	// its message. policy is what the policy did, for the log.
 	unknown bool
@@ -144,7 +146,8 @@ func (s *Server) startSCRAM(mech string, cbData []byte, v sqlvars.Vars) (*saslEx
 	// The verifier is looked up with the request's values: a protocol rule in
 	// the password query holds for SCRAM as it does for a password (#2227).
 	lookup := func(user string, sha256 bool) (*sasl.ScramCredentials, error) {
-		x.username = user
+		x.given, x.username = user, canonicalUser(s.usernameFormat, user)
+		user = x.username
 		// The check runs where the credentials are looked up, as for a
 		// password: a SCRAM login is judged like any other.
 		if s.policy != nil && s.policyMode.CheckBefore {
@@ -185,7 +188,7 @@ var errPolicyRefused = errors.New("auth: refused by the policy server")
 // policyRequest is the exchange as the policy server sees it; SCRAM carries no
 // password, so pwhash is over the user alone.
 func (x *saslExchange) policyRequest() PolicyRequest {
-	vars := policyVars{user: x.username, original: x.username, service: x.service, rip: x.rip,
+	vars := policyVars{user: x.username, original: x.given, service: x.service, rip: x.rip,
 		lip: x.lip, session: x.session, mechanism: x.mech, cpid: x.client.cpid, cc: x.client}
 	return PolicyRequest{
 		Username: x.username, RemoteIP: x.rip, LocalIP: x.lip, Service: x.service,
@@ -322,7 +325,7 @@ func (s *Server) advanceSCRAM(conn net.Conn, live *exchanges, id string, x *sasl
 	}
 	// The same reply the password path sends, token included: a session
 	// without one cannot open a backend, whatever proved the identity.
-	reply := buildAuthOK(id, &AuthResponse{Result: AuthOK, Username: user})
+	reply := withOriginalUser(buildAuthOK(id, &AuthResponse{Result: AuthOK, Username: user}), &AuthResponse{Username: user}, x.given, "")
 	reply += "\tsession=" + x.session + "\tservice=" + x.service
 	if s.tokenStore != nil && x.session != "" {
 		if tok, terr := s.tokenStore.Issue(user, x.session, x.service); terr == nil {

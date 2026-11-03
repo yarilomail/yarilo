@@ -27,7 +27,7 @@ func scripts(t *testing.T) []string {
 func TestEveryStandScriptParses(t *testing.T) {
 	for _, s := range scripts(t) {
 		t.Run(s, func(t *testing.T) {
-			if out, err := exec.Command("bash", "-n", s).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(t.Context(), "bash", "-n", s).CombinedOutput(); err != nil {
 				t.Errorf("bash -n: %v\n%s", err, out)
 			}
 		})
@@ -42,7 +42,7 @@ a=()
 printf '%s\n' cmd ${a[@]+"${a[@]}"} tail
 a=(-f over.yaml)
 printf '%s\n' cmd ${a[@]+"${a[@]}"} tail`
-	out, err := exec.Command("bash", "-c", snippet).CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "bash", "-c", snippet).CombinedOutput()
 	if err != nil {
 		t.Fatalf("the guarded expansion did not run: %v\n%s", err, out)
 	}
@@ -462,7 +462,7 @@ func TestTheSmoketestVerdictSkipsOnlyTheOAuth2RowsByName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, err := exec.Command("bash", "-c", checks+"\n"+names+"\n"+fn+"\nsmoke_judge "+tt.log).CombinedOutput()
+			out, err := exec.CommandContext(t.Context(), "bash", "-c", checks+"\n"+names+"\n"+fn+"\nsmoke_judge "+tt.log).CombinedOutput()
 			if err != nil {
 				t.Fatalf("smoke_judge: %v\n%s", err, out)
 			}
@@ -523,7 +523,7 @@ func TestAKickedAppendIsLeftOut(t *testing.T) {
 			if err := os.WriteFile(lf, []byte(tc.line+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			out, err := exec.Command("bash", "-c", fn+"\nnot_kicked "+kf+" "+lf).CombinedOutput()
+			out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\nnot_kicked "+kf+" "+lf).CombinedOutput()
 			if err != nil {
 				t.Fatalf("not_kicked: %v\n%s", err, out)
 			}

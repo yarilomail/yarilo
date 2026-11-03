@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 const (
@@ -116,6 +117,7 @@ type Server struct {
 	sessionTTL    time.Duration
 	sweepInterval time.Duration
 	penaltyDecay  time.Duration
+	limits        ConnLimits
 
 	// state holds sessions, penalties and the kick bus, in memory or
 	// Redis; the Redis backend fans kicks out cross-replica via Pub/Sub.
@@ -140,20 +142,27 @@ func WithPenaltyDecay(d time.Duration) ServerOption {
 	return func(s *Server) { s.penaltyDecay = d }
 }
 
-// NewServer creates an warden server with the given per-user@IP connection limit.
-// max ≤ 0 means unlimited (server still runs but always returns OK).
+// WithConnLimits gives each protocol its own per-user@IP limit (#2457).
+func WithConnLimits(l ConnLimits) ServerOption {
+	return func(s *Server) { s.limits = l }
+}
+
+// NewServer creates an warden server with the given per-user@IP connection limit,
+// counted apart per protocol. max ≤ 0 means unlimited (server still runs but
+// always returns OK).
 func NewServer(max int, opts ...ServerOption) *Server {
 	s := &Server{
 		sessionTTL:    DefaultSessionTTL,
 		sweepInterval: DefaultSweepInterval,
 		penaltyDecay:  DefaultPenaltyDecay,
+		limits:        ConnLimits{Default: max},
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
 	// build after options so decay/TTL/limit reflect them
 	if s.state == nil {
-		s.state = newMemoryBackend(s.penaltyDecay, s.sessionTTL, max)
+		s.state = newMemoryBackend(s.penaltyDecay, s.sessionTTL, s.limits)
 	}
 	return s
 }
@@ -170,26 +179,21 @@ func (s *Server) SessionCount() int {
 	return s.state.SessionCount()
 }
 
-// Listen binds addr (mTLS when tlsCfg is non-nil) and returns the
-// listener, so callers can report readiness only after the bind succeeds.
-func (s *Server) Listen(addr string, tlsCfg *tls.Config) (net.Listener, error) {
-	if tlsCfg != nil {
-		ln, err := tls.Listen("tcp", addr, tlsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("warden: listen %s (tls): %w", addr, err)
-		}
-		return ln, nil
-	}
-	ln, err := net.Listen("tcp", addr)
+// Listen binds addr (mTLS over TCP when tlsCfg is non-nil; a unix:/path addr
+// gets perm and no TLS) and returns the listener, so callers can report
+// readiness only after the bind succeeds.
+func (s *Server) Listen(addr string, perm sockaddr.Perm, tlsCfg *tls.Config) (net.Listener, error) {
+	ln, err := sockaddr.ListenTLS(addr, perm, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("warden: listen %s: %w", addr, err)
 	}
 	return ln, nil
 }
 
-// ListenAndServe binds addr and serves it.
+// ListenAndServe binds addr and serves it; a Unix socket it binds is the
+// owner's only.
 func (s *Server) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error {
-	ln, err := s.Listen(addr, tlsCfg)
+	ln, err := s.Listen(addr, sockaddr.Perm{Mode: 0o600}, tlsCfg)
 	if err != nil {
 		return err
 	}
@@ -250,9 +254,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		start := time.Now()
 		switch fields[0] {
 		case "CONNECT":
-			res := s.handleConnect(conn, fields)
-			connectTotal.WithLabelValues(res).Inc()
-			observeRequest("CONNECT", res, start)
+			observeRequest("CONNECT", s.handleConnect(conn, fields), start)
 		case "DISCONNECT":
 			s.handleDisconnect(conn, fields)
 			observeRequest("DISCONNECT", "ok", start)
@@ -291,33 +293,64 @@ func (s *Server) handleConn(conn net.Conn) {
 }
 
 // handleConnect processes: CONNECT\t{id}\t{user}\t{ip}\t{service}
-// Returns the metric result label.
+// Returns the metric result label, counted before the reply is written so a
+// client that has read the reply also sees the count.
 func (s *Server) handleConnect(conn net.Conn, fields []string) string {
+	reply := func(res, line string) string {
+		connectTotal.WithLabelValues(res).Inc()
+		if line != "" {
+			fmt.Fprint(conn, line)
+		}
+		return res
+	}
 	if len(fields) < 5 {
 		// tolerate the legacy v1.0 4-field form (no service)
 		if len(fields) < 4 {
-			return "bad_request"
+			return reply("bad_request", "")
 		}
 		fields = append(fields, "")
 	}
 	id, user, ip, service := fields[1], fields[2], fields[3], fields[4]
-	ok, err := s.state.SessionConnect(id, user, ip, service)
+	var ok bool
+	var err error
+	if l, given := userLimits(fields[5:]); given {
+		ok, err = s.state.SessionConnectLimits(id, user, ip, service, l)
+	} else {
+		ok, err = s.state.SessionConnect(id, user, ip, service)
+	}
 	if err != nil {
 		// fail open: a Redis blip must not block logins; the limit is
 		// unenforced until the backend recovers
 		slog.Warn("warden: connect state error, failing open", "pod", podID, "sid", id, "user", user, "ip", ip, "err", err)
-		fmt.Fprintf(conn, "OK\t%s\n", id)
-		return "state_error"
+		return reply("state_error", fmt.Sprintf("OK\t%s\n", id))
 	}
 	if !ok {
 		slog.Warn("warden: too many connections", "pod", podID, "sid", id, "user", user, "ip", ip, "service", service)
-		fmt.Fprintf(conn, "FAIL\t%s\treason=too-many-connections\n", id)
-		return "too_many_connections"
+		return reply("too_many_connections", fmt.Sprintf("FAIL\t%s\treason=too-many-connections\n", id))
 	}
 	// no cnt= here: SessionLookupCount is a Redis SCAN, too costly on the hot path
 	slog.Info("warden: session connect", "pod", podID, "sid", id, "user", user, "ip", ip, "service", service)
-	fmt.Fprintf(conn, "OK\t%s\n", id)
-	return "ok"
+	return reply("ok", fmt.Sprintf("OK\t%s\n", id))
+}
+
+// userLimits reads the optional limit=N and user_limit=N a login proxy sends
+// for a user whose userdb names limits of its own (#2460).
+func userLimits(extra []string) (UserLimits, bool) {
+	var l UserLimits
+	for _, f := range extra {
+		key, v, _ := strings.Cut(f, "=")
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			continue
+		}
+		switch key {
+		case "limit":
+			l.UserIP = &n
+		case "user_limit":
+			l.User = &n
+		}
+	}
+	return l, l.UserIP != nil || l.User != nil
 }
 
 // handleDisconnect processes: DISCONNECT\t{id}\t{user}\t{ip}\t{service}
@@ -365,7 +398,7 @@ func (s *Server) handleDump(conn net.Conn) {
 		return
 	}
 	for _, c := range d.Counters {
-		fmt.Fprintf(conn, "CNT\t%s\t%d\t%d\n", c.UserIP, c.Counter, c.Live)
+		fmt.Fprintf(conn, "CNT\t%s\t%d\t%d\t%s\n", c.UserIP, c.Counter, c.Live, c.Service)
 	}
 	for _, p := range d.Penalties {
 		fmt.Fprintf(conn, "PEN\t%s\t%d\t%d\n", p.IP, p.Count, p.TTLSecs)

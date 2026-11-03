@@ -35,10 +35,10 @@ func TestSweepStaleSessions(t *testing.T) {
 		lastSeen:    now.Add(-50 * time.Millisecond), // inside TTL
 	}
 	// Tell the limiter both slots are taken so reap can release.
-	if !mb.limiter.Acquire("alice@example.com", "10.0.0.1") {
+	if !mb.limiter("imap").Acquire("alice@example.com", "10.0.0.1") {
 		t.Fatal("alice acquire")
 	}
-	if !mb.limiter.Acquire("bob@example.com", "10.0.0.2") {
+	if !mb.limiter("imap").Acquire("bob@example.com", "10.0.0.2") {
 		t.Fatal("bob acquire")
 	}
 
@@ -51,11 +51,11 @@ func TestSweepStaleSessions(t *testing.T) {
 		t.Error("fresh session reaped prematurely")
 	}
 	// Alice's slot should be released - a fresh acquire passes.
-	if !mb.limiter.Acquire("alice@example.com", "10.0.0.1") {
+	if !mb.limiter("imap").Acquire("alice@example.com", "10.0.0.1") {
 		t.Error("alice slot not released by sweep")
 	}
 	// Bob's slot is still held - a second acquire fails.
-	if mb.limiter.Acquire("bob@example.com", "10.0.0.2") {
+	if mb.limiter("imap").Acquire("bob@example.com", "10.0.0.2") {
 		t.Error("bob slot leaked into pool - fresh session reaped")
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 // wardenCall records one accounting call so a test can assert the sequence.
@@ -25,16 +27,22 @@ type wardenCall struct {
 type fakeWarden struct {
 	mu    sync.Mutex
 	calls []wardenCall
-	// refuse makes Connect fail, standing in for a reached limit.
-	refuse bool
+	// refuse answers a reached limit; down stands in for an unreachable warden.
+	refuse, down bool
+	// limits are the user's own limits each connect carried.
+	limits []warden.UserLimits
 }
 
-func (f *fakeWarden) Connect(id, user, ip, _ string) error {
+func (f *fakeWarden) ConnectLimits(id, user, ip, _ string, limit warden.UserLimits) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, wardenCall{"connect", id, user, ip})
-	if f.refuse {
-		return errors.New("limit reached")
+	f.limits = append(f.limits, limit)
+	switch {
+	case f.refuse:
+		return warden.ErrTooManyConns
+	case f.down:
+		return errors.New("warden/client: read CONNECT response: EOF")
 	}
 	return nil
 }
@@ -62,13 +70,25 @@ func (f *fakeWarden) countOp(op string) int {
 	return n
 }
 
-type fakeAuth struct{ users map[string]string }
+type fakeAuth struct {
+	users map[string]string
+	// limits and userLimits are the users' own userdb limits, per address
+	// and across addresses.
+	limits, userLimits map[string]int
+}
 
-func (f fakeAuth) Authenticate(username, password, _, _, _, _ string) (string, error) {
+func (f fakeAuth) Authenticate(username, password, _, _, _, _ string) (Login, error) {
 	if pw, ok := f.users[username]; ok && pw == password {
-		return username, nil
+		l := Login{User: username}
+		if n, ok := f.limits[username]; ok {
+			l.Limits.UserIP = &n
+		}
+		if n, ok := f.userLimits[username]; ok {
+			l.Limits.User = &n
+		}
+		return l, nil
 	}
-	return "", errors.New("bad credentials")
+	return Login{}, errors.New("bad credentials")
 }
 
 func basic(user, pass string) string {
@@ -100,7 +120,7 @@ func startProxy(t *testing.T, opts Options) string {
 		opts.Auth = fakeAuth{users: map[string]string{"u1": "pw", "u2": "pw"}}
 	}
 
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("probe listen: %v", err)
 	}
@@ -125,7 +145,7 @@ func startProxy(t *testing.T, opts Options) string {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		c, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 		if err == nil {
 			c.Close() //nolint:errcheck
 			return "http://" + addr
@@ -255,26 +275,59 @@ func TestWardenReleasesOnConnectionClose(t *testing.T) {
 	t.Errorf("close produced no Disconnect: %v", wd.snapshot())
 }
 
-// A refused Connect fails the request closed by default: the limit means
-// something only if it is enforced.
-func TestWardenRefusalIsFailClosed(t *testing.T) {
-	wd := &fakeWarden{refuse: true}
-	base := startProxy(t, Options{Warden: wd})
-	resp := get(t, keepAliveClient(), base, basic("u1", "pw"))
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
+// A reached limit is the client's doing: 429 with Retry-After whatever
+// fail-open says. Only an unreachable warden is 503, and fail-open lets that
+// one through (#2472).
+func TestWardenRefusalStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		wd         *fakeWarden
+		failOpen   bool
+		want       int
+		retry      int
+		retryAfter string
+	}{
+		{"limit reached", &fakeWarden{refuse: true}, false, http.StatusTooManyRequests, 7, "7"},
+		{"limit reached under fail-open", &fakeWarden{refuse: true}, true, http.StatusTooManyRequests, 7, "7"},
+		{"limit reached, Retry-After off", &fakeWarden{refuse: true}, false, http.StatusTooManyRequests, 0, ""},
+		{"warden unreachable", &fakeWarden{down: true}, false, http.StatusServiceUnavailable, 7, ""},
+		{"warden unreachable under fail-open", &fakeWarden{down: true}, true, http.StatusOK, 7, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base := startProxy(t, Options{Warden: tc.wd, WardenFailOpen: tc.failOpen, LimitRetryAfter: tc.retry})
+			resp := get(t, keepAliveClient(), base, basic("u1", "pw"))
+			defer resp.Body.Close() //nolint:errcheck
+			if resp.StatusCode != tc.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			if got := resp.Header.Get("Retry-After"); got != tc.retryAfter {
+				t.Errorf("Retry-After = %q, want %q", got, tc.retryAfter)
+			}
+		})
 	}
 }
 
-// With fail-open the same refusal lets the request through: a warden blip must
-// not lock every user out.
-func TestWardenRefusalCanFailOpen(t *testing.T) {
-	wd := &fakeWarden{refuse: true}
-	base := startProxy(t, Options{Warden: wd, WardenFailOpen: true})
-	resp := get(t, keepAliveClient(), base, basic("u1", "pw"))
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+// A user's own limit from the userdb travels with the connect, so warden holds
+// that user to it rather than to JMAP's (#2460).
+func TestWardenIsGivenTheUsersOwnLimit(t *testing.T) {
+	wd := &fakeWarden{}
+	base := startProxy(t, Options{Warden: wd, Auth: fakeAuth{
+		users:      map[string]string{"u1": "pw", "u2": "pw"},
+		limits:     map[string]int{"u1": 3},
+		userLimits: map[string]int{"u1": 5},
+	}})
+	for _, u := range []string{"u1", "u2"} {
+		resp := get(t, keepAliveClient(), base, basic(u, "pw"))
+		resp.Body.Close() //nolint:errcheck
+	}
+	wd.mu.Lock()
+	defer wd.mu.Unlock()
+	if len(wd.limits) != 2 {
+		t.Fatalf("%d connects, want 2", len(wd.limits))
+	}
+	if u1, u2 := wd.limits[0], wd.limits[1]; u1.UserIP == nil || *u1.UserIP != 3 || u1.User == nil || *u1.User != 5 ||
+		u2.UserIP != nil || u2.User != nil {
+		t.Fatalf("limits sent = %+v, %+v; want u1 3 and 5, u2 none", u1, u2)
 	}
 }

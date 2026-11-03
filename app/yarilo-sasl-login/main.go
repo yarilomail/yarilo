@@ -62,9 +62,10 @@ func main() {
 
 	listen := sl.Listen
 	if listen == "" {
-		listen = ":12345"
+		slog.Error("sasl_login.listen is required")
+		os.Exit(1)
 	}
-	ln, err := net.Listen("tcp", listen)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", listen)
 	if err != nil {
 		slog.Error("listen failed", "addr", listen, "err", err)
 		os.Exit(1)
@@ -111,11 +112,10 @@ func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	go func() {
-		if err := tel.ListenAndServe(context.Background()); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 	return tel
 }
 

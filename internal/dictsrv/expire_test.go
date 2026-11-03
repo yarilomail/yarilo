@@ -26,7 +26,7 @@ func serveRedis(t *testing.T) (dict.Dict, string, *miniredis.Miniredis) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestTheProxyCarriesTheTTL(t *testing.T) {
 
 	t.Run("a client without the expire field writes no TTL", func(t *testing.T) {
 		_, addr, mr := serveRedis(t)
-		conn, err := net.Dial("tcp", addr)
+		conn, err := new(net.Dialer).DialContext(ctx, "tcp", addr)
 		if err != nil {
 			t.Fatal(err)
 		}

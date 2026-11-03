@@ -39,7 +39,7 @@ func (b barred) Authenticate(req *protocol.Request) (protocol.Result, error) {
 // authService serves chain over the real wire and returns the proxy's view of it.
 func authService(t *testing.T, chain ...protocol.Passdb) AuthService {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,11 +160,11 @@ func TestAnAuthOutageIsServiceUnavailable(t *testing.T) {
 
 type outage struct{}
 
-func (outage) Authenticate(string, string, string, string, string, string) (string, error) {
-	return "", classify(authclient.ErrTempFail)
+func (outage) Authenticate(string, string, string, string, string, string) (Login, error) {
+	return Login{}, classify(authclient.ErrTempFail)
 }
-func (outage) AuthenticateToken(string, string, string, string, string) (string, error) {
-	return "", classify(authclient.ErrTempFail)
+func (outage) AuthenticateToken(string, string, string, string, string) (Login, error) {
+	return Login{}, classify(authclient.ErrTempFail)
 }
 func (outage) OffersTokens() bool { return true }
 

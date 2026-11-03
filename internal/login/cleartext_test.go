@@ -132,7 +132,7 @@ func TestCleartextLoginIsRefusedUntilTLS(t *testing.T) {
 			send([]string{tc.starttls})
 			readReply(t, crd, tc.tlsOK)
 			tlsCli := tls.Client(cli, cliTLS)
-			if err := tlsCli.Handshake(); err != nil {
+			if err := tlsCli.HandshakeContext(t.Context()); err != nil {
 				t.Fatalf("STARTTLS handshake: %v", err)
 			}
 			for _, l := range append(tc.afterTLS, tc.login...) {

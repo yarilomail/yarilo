@@ -51,7 +51,7 @@ func TestEmitOnAnAccountKeyIsOneTripToRedis(t *testing.T) {
 	backend := locks.NewRedisBackend(rdb)
 	defer func() { _ = backend.Close() }()
 	srv := locks.NewServer(backend, slog.New(slog.NewTextHandler(os.Stderr, nil)), newTestMetrics(t, "remote"))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen tcp: %v", err)
 	}

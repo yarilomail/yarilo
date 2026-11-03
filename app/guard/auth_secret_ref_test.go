@@ -41,7 +41,7 @@ func renderAuth(t *testing.T, lit, ref map[string]bool) ([]byte, error) {
 	if err := os.WriteFile(f, []byte(v), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return exec.Command("helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml", "-f", f).CombinedOutput()
+	return exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml", "-f", f).CombinedOutput()
 }
 
 // authEnv returns, per component, the env names that come from a Secret.

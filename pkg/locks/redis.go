@@ -439,3 +439,13 @@ func (b *RedisBackend) Close() error {
 	}
 	return nil
 }
+
+// Generation names the lock state Redis keeps, created by the first server to
+// ask: it survives a lock service restart and changes only when the keys go.
+func (b *RedisBackend) Generation(ctx context.Context) (string, error) {
+	key := b.keyPrefix + "generation"
+	if err := b.rdb.SetNX(ctx, key, NewID(), 0).Err(); err != nil {
+		return "", err
+	}
+	return b.rdb.Get(ctx, key).Result()
+}

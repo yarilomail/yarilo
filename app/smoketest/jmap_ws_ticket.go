@@ -116,15 +116,57 @@ func ticketEndpoint(base string) (string, error) {
 	}
 	_ = json.Unmarshal(session.Capabilities[capWebSocketTicket], &cap)
 	acc := session.Accounts[jmapAccountID()].AccountCapabilities
-	if _, ok := acc[capWebSocketTicket]; !ok || cap.GenerationEndpoint == "" {
-		return "", fmt.Errorf("the session does not advertise %s at the session and the account", capWebSocketTicket)
+	if _, ok := acc[capWebSocketTicket]; !ok {
+		return "", unmeasurable("the account does not offer %s", capWebSocketTicket)
+	}
+	if cap.GenerationEndpoint == "" {
+		return "", fmt.Errorf("the account offers %s and the session names no generationEndpoint", capWebSocketTicket)
 	}
 	if _, ok := acc["urn:ietf:params:jmap:websocket"]; !ok {
-		return "", fmt.Errorf("the account does not carry urn:ietf:params:jmap:websocket")
+		return "", unmeasurable("the account does not offer urn:ietf:params:jmap:websocket")
 	}
 	u, err := url.Parse(cap.GenerationEndpoint)
 	if err != nil {
 		return "", fmt.Errorf("generationEndpoint %q: %w", cap.GenerationEndpoint, err)
 	}
 	return u.Path, nil
+}
+
+// checkJMAPForgedClientAddress sends the client address headers a proxy would,
+// from a peer that is not one: the address the ticket names must not move.
+func checkJMAPForgedClientAddress() error {
+	base := "https://" + net.JoinHostPort(jmapHost(), *flagJMAPPort)
+	endpoint, err := ticketEndpoint(base)
+	if err != nil {
+		return err
+	}
+	const forged = "192.0.2.1"
+	var got [2]string
+	for i, headers := range []map[string]string{nil, {"CF-Connecting-IP": forged, "X-Forwarded-For": forged, "X-Real-IP": forged}} {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+endpoint, nil)
+		if err != nil {
+			return err
+		}
+		req.SetBasicAuth(*flagJMAPUser, *flagJMAPPass)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := jmapClient().Do(req)
+		if err != nil {
+			return fmt.Errorf("ticket: %w", err)
+		}
+		var ticket struct {
+			ClientAddress string `json:"clientAddress"`
+		}
+		err = json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&ticket)
+		resp.Body.Close() //nolint:errcheck
+		if err != nil || resp.StatusCode != http.StatusOK || ticket.ClientAddress == "" {
+			return fmt.Errorf("ticket: HTTP %d, %v", resp.StatusCode, err)
+		}
+		got[i] = ticket.ClientAddress
+	}
+	if got[1] != got[0] || got[1] == forged {
+		return fmt.Errorf("a forged header moved the client address from %s to %s", got[0], got[1])
+	}
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 
 	authclient "github.com/yarilomail/yarilo/v2/internal/auth/client"
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 )
 
 // AuthService is the auth service seen by this proxy: Basic as a password
@@ -18,35 +19,35 @@ type AuthService struct{ cl *authclient.Client }
 func NewAuthService(cl *authclient.Client) AuthService { return AuthService{cl: cl} }
 
 // Authenticate satisfies PasswordAuthenticator.
-func (a AuthService) Authenticate(username, password, svc, remoteIP, localIP, sessionID string) (string, error) {
+func (a AuthService) Authenticate(username, password, svc, remoteIP, localIP, sessionID string) (Login, error) {
 	// JMAP is served over HTTPS only.
 	res, err := a.cl.AuthenticateAs("", username, password, svc, remoteIP, localIP, sessionID, authclient.TLS())
 	if err != nil {
-		return "", classify(err)
+		return Login{}, classify(err)
 	}
 	return accepted(res)
 }
 
 // AuthenticateToken satisfies TokenAuthenticator. The token names the user, so
 // the exchange carries no authzid and the service answers with the name.
-func (a AuthService) AuthenticateToken(token, svc, remoteIP, localIP, sessionID string) (string, error) {
+func (a AuthService) AuthenticateToken(token, svc, remoteIP, localIP, sessionID string) (Login, error) {
 	if strings.ContainsAny(token, "\x01\r\n") {
-		return "", errUnauthorized
+		return Login{}, errUnauthorized
 	}
 	initial := []byte("n,,\x01auth=Bearer " + token + "\x01\x01")
 	x, step, err := a.cl.BeginSASL(protocol.MechOAuthBearer, svc, remoteIP, localIP, sessionID, nil, initial, authclient.TLS())
 	if err != nil {
-		return "", classify(err)
+		return Login{}, classify(err)
 	}
 	if !step.Done {
 		// A refused token is answered with an error document first; the
 		// acknowledgement ends the exchange (RFC 7628 §3.2.2).
 		if step, err = x.Next([]byte{1}); err != nil {
-			return "", classify(err)
+			return Login{}, classify(err)
 		}
 		if !step.Done {
 			x.Cancel()
-			return "", errUnauthorized
+			return Login{}, errUnauthorized
 		}
 	}
 	return accepted(step.Result)
@@ -58,14 +59,14 @@ func (a AuthService) OffersTokens() bool {
 	return slices.Contains(a.cl.Mechanisms(), protocol.MechOAuthBearer)
 }
 
-func accepted(res *authclient.AuthResult) (string, error) {
+func accepted(res *authclient.AuthResult) (Login, error) {
 	if res == nil || res.Username == "" {
-		return "", errUnauthorized
+		return Login{}, errUnauthorized
 	}
 	if res.Nologin {
-		return "", fmt.Errorf("%w: login disabled for %s", errUnauthorized, res.Username)
+		return Login{}, fmt.Errorf("%w: login disabled for %s", errUnauthorized, res.Username)
 	}
-	return res.Username, nil
+	return Login{User: res.Username, Limits: warden.UserLimits{UserIP: res.MaxUserIPConnections, User: res.MaxUserConnections}}, nil
 }
 
 // classify keeps a passdb outage apart from a refusal: the client should retry

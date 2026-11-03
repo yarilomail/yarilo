@@ -174,7 +174,7 @@ func readTagged(t *testing.T, rd *bufio.Reader, tag string) string {
 // certainly free, so a dial to it is refused.
 func reservedDeadAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -187,7 +187,7 @@ func reservedDeadAddr(t *testing.T) string {
 // server, so a test can read SessionCount directly.
 func startWardenWithHandle(t *testing.T) (string, *warden.Server) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -213,7 +213,7 @@ func startOKAuth(t *testing.T) string {
 // startOKAuthWith answers every AUTH with OK carrying extra (tab-led fields).
 func startOKAuthWith(t *testing.T, extra string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -260,7 +260,7 @@ func waitDial(t *testing.T, addr string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if c, err := net.DialTimeout("tcp", addr, 50*time.Millisecond); err == nil {
+		if c, err := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(t.Context(), "tcp", addr); err == nil {
 			c.Close()
 			return
 		}

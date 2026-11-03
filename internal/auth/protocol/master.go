@@ -11,12 +11,14 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
 
@@ -40,10 +42,21 @@ type MasterServer struct {
 	cookie           string
 	defaultMailPath  string
 	defaultInboxPath string
+	// sessionPeers, when set, are the uids whose connections may SESSION; a
+	// connection whose peer is unknown is refused too.
+	sessionPeers map[uint32]bool
+	// usernameFormat is auth_username_format, applied as on the client listener.
+	usernameFormat string
 }
 
 // MasterServerOption tunes a NewMasterServer construction.
 type MasterServerOption func(*MasterServer)
+
+// WithMasterUsernameFormat sets auth_username_format for USER, SESSION and
+// CACHE-FLUSH, so a delivery and a login reach the same canonical user.
+func WithMasterUsernameFormat(template string) MasterServerOption {
+	return func(s *MasterServer) { s.usernameFormat = template }
+}
 
 // WithMasterCache attaches the auth cache that CACHE-FLUSH operates on. Pass the
 // same *Cache the client-protocol Server got via WithCache so flushing here empties
@@ -57,6 +70,12 @@ func WithMasterCache(c *Cache) MasterServerOption {
 // Nil store makes SESSION respond FAIL.
 func WithMasterTokenStore(ts TokenStore) MasterServerOption {
 	return func(s *MasterServer) { s.tokenStore = ts }
+}
+
+// WithMasterSessionPeers lets SESSION through only from connections whose peer
+// uid is in uids: a Unix socket carries no TLS role to tell the proxies apart.
+func WithMasterSessionPeers(uids map[uint32]bool) MasterServerOption {
+	return func(s *MasterServer) { s.sessionPeers = uids }
 }
 
 // WithMasterDefaultMailPath sets the cluster-wide mail_path default
@@ -105,25 +124,20 @@ func NewMasterServer(userdb Userdb, opts ...MasterServerOption) *MasterServer {
 }
 
 // Listen binds addr and returns the listener so a caller can report readiness
-// only once the port accepts. Non-nil tlsCfg makes the listener use mTLS.
-func (s *MasterServer) Listen(addr string, tlsCfg *tls.Config) (net.Listener, error) {
-	if tlsCfg != nil {
-		ln, err := tls.Listen("tcp", addr, tlsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("auth/master: listen %s (tls): %w", addr, err)
-		}
-		return ln, nil
-	}
-	ln, err := net.Listen("tcp", addr)
+// only once the port accepts. Non-nil tlsCfg makes a TCP listener use mTLS; a
+// unix:/path addr gets perm and is served without TLS.
+func (s *MasterServer) Listen(addr string, perm sockaddr.Perm, tlsCfg *tls.Config) (net.Listener, error) {
+	ln, err := sockaddr.ListenTLS(addr, perm, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("auth/master: listen %s: %w", addr, err)
 	}
 	return ln, nil
 }
 
-// ListenAndServe binds addr and serves it.
+// ListenAndServe binds addr and serves it; a Unix socket it binds is the
+// owner's only.
 func (s *MasterServer) ListenAndServe(ctx context.Context, addr string, tlsCfg *tls.Config) error {
-	ln, err := s.Listen(addr, tlsCfg)
+	ln, err := s.Listen(addr, sockaddr.Perm{Mode: 0o600}, tlsCfg)
 	if err != nil {
 		return err
 	}
@@ -163,6 +177,7 @@ func (s *MasterServer) handleConn(conn net.Conn) {
 	noteMasterConn()
 	cuid := s.connUID.Add(1)
 	rd := bufio.NewReaderSize(conn, maxLine)
+	peer := s.sessionPeer(conn)
 
 	fmt.Fprintf(conn, "VERSION\t%s\t%d\t%d\n", masterProtoName, masterMajorVer, masterMinorVer)
 	fmt.Fprintf(conn, "SPID\t%d\n", s.pid)
@@ -199,7 +214,7 @@ func (s *MasterServer) handleConn(conn net.Conn) {
 			s.handleUser(conn, fields)
 		case "SESSION":
 			noteMasterRequest("SESSION")
-			s.handleSession(conn, fields)
+			s.handleSession(conn, fields, peer)
 		case "PASS":
 			// Declared in the wire surface; not yet implemented.
 			noteMasterRequest("PASS")
@@ -234,7 +249,7 @@ func (s *MasterServer) handleUser(conn net.Conn, fields []string) {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=USER requires id + username\n", id)
 		return
 	}
-	id, username := fields[1], fields[2]
+	id, username := fields[1], canonicalUser(s.usernameFormat, fields[2])
 	if s.userdb == nil {
 		fmt.Fprintf(conn, "NOTFOUND\t%s\n", id)
 		return
@@ -306,7 +321,11 @@ func (s *MasterServer) handleCacheFlush(conn net.Conn, fields []string) {
 	if len(fields) <= 2 {
 		n = s.cache.Clear()
 	} else {
-		n = s.cache.ClearByUserMask(fields[2:])
+		masks := make([]string, 0, len(fields)-2)
+		for _, m := range fields[2:] {
+			masks = append(masks, canonicalUser(s.usernameFormat, m))
+		}
+		n = s.cache.ClearByUserMask(masks)
 	}
 	fmt.Fprintf(conn, "OK\t%s\t%d\n", id, n)
 }
@@ -317,8 +336,32 @@ func (s *MasterServer) handleCacheFlush(conn net.Conn, fields []string) {
 //	SESSION <id> user=<username> sid=<warden-session-id> ip=<mta-ip>
 //	→ OK <id> token=<tok>
 //	→ FAIL <id> reason=...
-func (s *MasterServer) handleSession(conn net.Conn, fields []string) {
+//
+// sessionGate is what one connection may do with SESSION.
+type sessionGate struct {
+	allowed bool
+	uid     string
+}
+
+func (s *MasterServer) sessionPeer(conn net.Conn) sessionGate {
+	if s.sessionPeers == nil {
+		return sessionGate{allowed: true}
+	}
+	uid, err := sockaddr.PeerUID(conn)
+	if err != nil {
+		slog.Warn("auth/master: peer uid unknown; SESSION refused on this connection", "err", err)
+		return sessionGate{uid: "unknown"}
+	}
+	return sessionGate{allowed: s.sessionPeers[uid], uid: strconv.FormatUint(uint64(uid), 10)}
+}
+
+func (s *MasterServer) handleSession(conn net.Conn, fields []string, peer sessionGate) {
 	id := parseID(fields)
+	if !peer.allowed {
+		slog.Warn("auth/master: SESSION refused, the peer is not in auth_service.master_session_users", "uid", peer.uid)
+		fmt.Fprintf(conn, "FAIL\t%s\treason=peer may not issue sessions\n", id)
+		return
+	}
 	if s.tokenStore == nil {
 		fmt.Fprintf(conn, "FAIL\t%s\treason=token store not configured\n", id)
 		return
@@ -327,7 +370,7 @@ func (s *MasterServer) handleSession(conn net.Conn, fields []string) {
 	for _, f := range fields[2:] {
 		switch {
 		case strings.HasPrefix(f, "user="):
-			username = strings.TrimPrefix(f, "user=")
+			username = canonicalUser(s.usernameFormat, strings.TrimPrefix(f, "user="))
 		case strings.HasPrefix(f, "sid="):
 			sid = strings.TrimPrefix(f, "sid=")
 		case strings.HasPrefix(f, "ip="):

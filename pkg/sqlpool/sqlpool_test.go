@@ -52,7 +52,7 @@ func TestApplyIdleMatchesOpen(t *testing.T) {
 		t.Fatalf("MaxOpenConnections = %d, want 25", stats.MaxOpenConnections)
 	}
 	// no MaxIdleConns getter; assert that a returned connection is retained
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(t.Context()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
 	if idle := db.Stats().Idle; idle == 0 {

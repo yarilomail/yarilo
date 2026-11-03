@@ -65,8 +65,6 @@ type Server struct {
 	// Per-protocol TLS configs, kept so each Run* binds its listener before
 	// reporting readiness. New cannot bind: the co-located pod runs one
 	// protocol per container off a single config.
-	imapTLS       *tls.Config
-	pop3TLS       *tls.Config
 	submissionTLS *tls.Config
 }
 
@@ -169,8 +167,9 @@ func New(cfg *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("backend: namespace mailboxes: %w", err)
 	}
-	// ---- shared connection limiter (IMAP + POP3) ----
-	connLimiter := connlimit.New(cfg.General.Limits.MaxUserIPConnections)
+	// ---- connection limiters, one per protocol as warden counts them (#2457) ----
+	imapConnLimiter := connlimit.New(cfg.MaxUserIPConnections("imap"))
+	pop3ConnLimiter := connlimit.New(cfg.MaxUserIPConnections("pop3"))
 
 	// ---- HAProxy shared nets ----
 	haproxyNets := parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks)
@@ -255,18 +254,12 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// ---- IMAP ----
-	// TLS configs are kept on Server so each Run* can bind after New returns.
-	var imapTLS, pop3TLS, submissionTLS *tls.Config
+	// A backend has one plain listener per protocol; client TLS ends at the
+	// login proxy (#2415).
+	var submissionTLS *tls.Config
 	var imapServer *imapsvr.Server
-	if svcs.IMAP.Active() || svcs.IMAPS.Active() {
-		primary := firstActive(svcs.IMAPS, svcs.IMAP)
-		if svcs.IMAPS.Active() {
-			t, err := buildTLS(cfg, svcs.IMAPS, alpnIMAP)
-			if err != nil {
-				return nil, fmt.Errorf("backend: IMAPS TLS: %w", err)
-			}
-			imapTLS = t
-		}
+	if svcs.IMAP.Active() {
+		primary := svcs.IMAP
 		p := cfg.Protocol.IMAP
 		storageCfg := cfg.Storage
 		aclGlobal, err := acl.NewGlobal(cfg.ACL.Global)
@@ -282,9 +275,7 @@ func New(cfg *config.Config) (*Server, error) {
 				"values", unknownWorkarounds, "known", imapsvr.KnownWorkarounds())
 		}
 		imapServer = imapsvr.New(imapsvr.Options{
-			Addr:      listenAddr(svcs.IMAPS),
 			AddrPlain: listenAddr(svcs.IMAP),
-			TLSConfig: imapTLS,
 			Mailbox:   mbox,
 			MailboxByDriver: func(driver string) mailbox.MailboxBackend {
 				return buildMailboxByDriver(driver, storageCfg, locker)
@@ -305,7 +296,7 @@ func New(cfg *config.Config) (*Server, error) {
 			MasterTLS:          authTLS,
 			IdleNotifyInterval: time.Duration(p.IdleNotifyInterval) * time.Second,
 			MaxLineLength:      p.MaxLineLength,
-			ConnLimit:          connLimiter,
+			ConnLimit:          imapConnLimiter,
 			// warden push of the SELECTed mailbox, used by `yarctl who`
 			WardenAddr:           cfg.WardenService.ClientAddr(),
 			WardenEventQueue:     cfg.WardenService.EventQueueSize,
@@ -353,20 +344,11 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// ---- POP3 ----
 	var pop3Server *pop3svr.Server
-	if svcs.POP3.Active() || svcs.POP3S.Active() {
-		primary := firstActive(svcs.POP3S, svcs.POP3)
-		if svcs.POP3S.Active() {
-			t, err := buildTLS(cfg, svcs.POP3S, alpnPOP3)
-			if err != nil {
-				return nil, fmt.Errorf("backend: POP3S TLS: %w", err)
-			}
-			pop3TLS = t
-		}
+	if svcs.POP3.Active() {
+		primary := svcs.POP3
 		p := cfg.Protocol.POP3
 		pop3Server = pop3svr.New(pop3svr.Options{
-			Addr:      listenAddr(svcs.POP3S),
 			AddrPlain: listenAddr(svcs.POP3),
-			TLSConfig: pop3TLS,
 			Mailbox:   mbox,
 			MailboxByDriver: func(driver string) mailbox.MailboxBackend {
 				return buildMailboxByDriver(driver, cfg.Storage, locker)
@@ -392,7 +374,7 @@ func New(cfg *config.Config) (*Server, error) {
 			DeletedFlag:        p.DeletedFlag,
 			SaveUIDL:           p.SaveUIDL,
 			LockSession:        p.LockSession,
-			ConnLimit:          connLimiter,
+			ConnLimit:          pop3ConnLimiter,
 			Locker:             locker,
 			FailureDelay:       time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second,
 
@@ -410,8 +392,8 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// ---- SMTP submission ----
 	var smtpServer *submsvr.Server
-	if svcs.Submission.Active() || svcs.Submissions.Active() {
-		primary := firstActive(svcs.Submission, svcs.Submissions)
+	if svcs.Submission.Active() {
+		primary := svcs.Submission
 
 		var submissionProxy *submproxy.Submission
 		if cfg.Protocol.Submission.Relay.Host != "" {
@@ -511,7 +493,7 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// ---- ManageSieve ----
 	var msServer *mssvr.Server
-	if svcs.ManageSieveBE.Active() {
+	if svcs.ManageSieve.Active() {
 		msServer = mssvr.New(mssvr.Options{
 			Locker:          locker,
 			DefaultName:     cfg.Sieve.DefaultName,
@@ -575,8 +557,6 @@ func New(cfg *config.Config) (*Server, error) {
 		locker:      locker,
 		quotaClone:  quotaClone,
 
-		imapTLS:       imapTLS,
-		pop3TLS:       pop3TLS,
 		submissionTLS: submissionTLS,
 	}, nil
 }
@@ -619,35 +599,24 @@ func storeLivenessCheck(storePath string, gate *telemetry.Gate) telemetry.Livene
 	}
 }
 
-// bindTCP binds addr and returns the listener, so callers can hold every port
+// bindTCP binds svc's listener and returns it, so callers can hold every port
 // before reporting readiness; binding after SetReady leaves a window where a
-// client gets connection refused.
-func bindTCP(proto, addr string) (net.Listener, error) {
-	ln, err := net.Listen("tcp", addr)
+// client gets connection refused. An empty address binds sessionHost.
+func bindTCP(proto string, svc *config.ServiceConfig) (net.Listener, error) {
+	addr, from := svc.ListenAddr(sessionHost)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s: bind %s: %w", proto, addr, err)
 	}
-	slog.Info("listener bound", "proto", proto, "addr", addr)
-	return ln, nil
-}
-
-// bindTLS is bindTCP for a TLS listener.
-func bindTLS(proto, addr string, cfg *tls.Config) (net.Listener, error) {
-	ln, err := tls.Listen("tcp", addr, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("%s: bind %s (tls): %w", proto, addr, err)
-	}
-	slog.Info("listener bound", "proto", proto, "addr", addr, "tls", true)
+	slog.Info("listener bound", "proto", proto, "addr", ln.Addr().String(), "from", from)
 	return ln, nil
 }
 
 // RunIMAP starts the IMAP/IMAPS listeners and telemetry, then blocks until ctx is cancelled.
 func (s *Server) RunIMAP(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 
 	svcs := s.cfg.Services
 	if s.imap == nil {
@@ -660,31 +629,15 @@ func (s *Server) RunIMAP(ctx context.Context) error {
 
 	// Bind every configured port first; a failure is fatal, otherwise the pod
 	// would report ready with a port unbound.
-	var tlsLn, plainLn net.Listener
-	if svcs.IMAPS.Active() {
-		ln, err := bindTLS("imap", listenAddr(svcs.IMAPS), s.imapTLS)
-		if err != nil {
-			return err
-		}
-		tlsLn = ln
-	}
-	if svcs.IMAP.Active() {
-		ln, err := bindTCP("imap", listenAddr(svcs.IMAP))
-		if err != nil {
-			return err
-		}
-		plainLn = ln
+	ln, err := bindTCP("imap", svcs.IMAP)
+	if err != nil {
+		return err
 	}
 
 	// every port is accepting now
 	s.telem.SetReady(true)
 
-	if tlsLn != nil {
-		stopaccept.Serve(ctx, "imap: TLS", tlsLn, s.imap.Serve)
-	}
-	if plainLn != nil {
-		stopaccept.Serve(ctx, "imap: plain", plainLn, s.imap.Serve)
-	}
+	stopaccept.Serve(ctx, "imap: plain", ln, s.imap.Serve)
 	s.startReadyFile(ctx, "imap")
 	<-ctx.Done()
 	return nil
@@ -692,11 +645,9 @@ func (s *Server) RunIMAP(ctx context.Context) error {
 
 // RunPOP3 starts the POP3/POP3S listeners and telemetry, then blocks until ctx is cancelled.
 func (s *Server) RunPOP3(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 	svcs := s.cfg.Services
 	if s.pop3 == nil {
 		slog.Warn("pop3: no listeners configured")
@@ -706,30 +657,14 @@ func (s *Server) RunPOP3(ctx context.Context) error {
 	}
 
 	// bind before reporting ready
-	var tlsLn, plainLn net.Listener
-	if svcs.POP3S.Active() {
-		ln, err := bindTLS("pop3", listenAddr(svcs.POP3S), s.pop3TLS)
-		if err != nil {
-			return err
-		}
-		tlsLn = ln
-	}
-	if svcs.POP3.Active() {
-		ln, err := bindTCP("pop3", listenAddr(svcs.POP3))
-		if err != nil {
-			return err
-		}
-		plainLn = ln
+	ln, err := bindTCP("pop3", svcs.POP3)
+	if err != nil {
+		return err
 	}
 
 	s.telem.SetReady(true)
 
-	if tlsLn != nil {
-		stopaccept.Serve(ctx, "pop3: TLS", tlsLn, s.pop3.Serve)
-	}
-	if plainLn != nil {
-		stopaccept.Serve(ctx, "pop3: plain", plainLn, s.pop3.Serve)
-	}
+	stopaccept.Serve(ctx, "pop3: plain", ln, s.pop3.Serve)
 	s.startReadyFile(ctx, "pop3")
 	<-ctx.Done()
 	return nil
@@ -737,11 +672,9 @@ func (s *Server) RunPOP3(ctx context.Context) error {
 
 // RunLMTP starts the LMTP listener and telemetry, then blocks until ctx is cancelled.
 func (s *Server) RunLMTP(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 	svcs := s.cfg.Services
 	if s.lmtp == nil || !svcs.LMTP.Active() {
 		slog.Warn("lmtp: no listener configured")
@@ -751,7 +684,7 @@ func (s *Server) RunLMTP(ctx context.Context) error {
 	}
 
 	// bind before reporting ready; a TLS error is fatal at startup
-	ln, err := bindTCP("lmtp", listenAddr(svcs.LMTP))
+	ln, err := bindTCP("lmtp", svcs.LMTP)
 	if err != nil {
 		return err
 	}
@@ -777,13 +710,11 @@ func (s *Server) RunLMTP(ctx context.Context) error {
 // RunManageSieve starts the ManageSieve backend listener and telemetry,
 // then blocks until ctx is cancelled.
 func (s *Server) RunManageSieve(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 	svcs := s.cfg.Services
-	if s.managesieve == nil || !svcs.ManageSieveBE.Active() {
+	if s.managesieve == nil || !svcs.ManageSieve.Active() {
 		slog.Warn("managesieve: no listener configured")
 		s.telem.SetReady(true)
 		<-ctx.Done()
@@ -791,7 +722,7 @@ func (s *Server) RunManageSieve(ctx context.Context) error {
 	}
 
 	// bind before reporting ready
-	ln, err := bindTCP("managesieve", listenAddr(svcs.ManageSieveBE))
+	ln, err := bindTCP("managesieve", svcs.ManageSieve)
 	if err != nil {
 		return err
 	}
@@ -806,11 +737,9 @@ func (s *Server) RunManageSieve(ctx context.Context) error {
 
 // Run starts all configured servers and blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
-	go func() {
-		if err := s.telem.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry: server error", "err", err)
-		}
-	}()
+	if err := s.telem.Start(ctx); err != nil {
+		return err
+	}
 
 	svcs := s.cfg.Services
 
@@ -830,47 +759,27 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	if s.imap != nil {
-		if svcs.IMAPS.Active() {
-			ln, err := bindTLS("imap", listenAddr(svcs.IMAPS), s.imapTLS)
-			if err != nil {
-				closeAll()
-				return err
-			}
-			listeners = append(listeners, listener{"imap/tls", ln, s.imap.Serve})
+		ln, err := bindTCP("imap", svcs.IMAP)
+		if err != nil {
+			closeAll()
+			return err
 		}
-		if svcs.IMAP.Active() {
-			ln, err := bindTCP("imap", listenAddr(svcs.IMAP))
-			if err != nil {
-				closeAll()
-				return err
-			}
-			listeners = append(listeners, listener{"imap", ln, s.imap.Serve})
-		}
+		listeners = append(listeners, listener{"imap", ln, s.imap.Serve})
 	}
 
 	if s.pop3 != nil {
-		if svcs.POP3S.Active() {
-			ln, err := bindTLS("pop3", listenAddr(svcs.POP3S), s.pop3TLS)
-			if err != nil {
-				closeAll()
-				return err
-			}
-			listeners = append(listeners, listener{"pop3/tls", ln, s.pop3.Serve})
+		ln, err := bindTCP("pop3", svcs.POP3)
+		if err != nil {
+			closeAll()
+			return err
 		}
-		if svcs.POP3.Active() {
-			ln, err := bindTCP("pop3", listenAddr(svcs.POP3))
-			if err != nil {
-				closeAll()
-				return err
-			}
-			listeners = append(listeners, listener{"pop3", ln, s.pop3.Serve})
-		}
+		listeners = append(listeners, listener{"pop3", ln, s.pop3.Serve})
 	}
 
 	// Submission STARTTLS: TLS config is handed to Serve, not wrapped around
 	// the listener, since the upgrade happens mid-session.
 	if s.submission != nil && svcs.Submission.Active() {
-		ln, err := bindTCP("submission", listenAddr(svcs.Submission))
+		ln, err := bindTCP("submission", svcs.Submission)
 		if err != nil {
 			closeAll()
 			return err
@@ -891,7 +800,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	if s.lmtp != nil && svcs.LMTP.Active() {
-		ln, err := bindTCP("lmtp", listenAddr(svcs.LMTP))
+		ln, err := bindTCP("lmtp", svcs.LMTP)
 		if err != nil {
 			closeAll()
 			return err
@@ -908,24 +817,6 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 		}
 		listeners = append(listeners, listener{"lmtp", ln, s.lmtp.Serve})
-	}
-
-	// Submissions (implicit TLS on 465).
-	if s.submission != nil && svcs.Submissions.Active() {
-		ln, err := bindTCP("submissions", listenAddr(svcs.Submissions))
-		if err != nil {
-			closeAll()
-			return err
-		}
-		tlsCfg, terr := buildTLS(s.cfg, svcs.Submissions, alpnSMTP)
-		if terr != nil {
-			ln.Close()
-			closeAll()
-			return fmt.Errorf("submissions: TLS: %w", terr)
-		}
-		listeners = append(listeners, listener{"submissions", ln, func(l net.Listener) error {
-			return s.submission.Serve(l, tlsCfg)
-		}})
 	}
 
 	// every port is accepting now
@@ -947,22 +838,16 @@ func (s *Server) Run(ctx context.Context) error {
 
 // ---- helpers ----------------------------------------------------------------
 
-// firstActive returns the first non-nil active ServiceConfig from the list.
-func firstActive(svcs ...*config.ServiceConfig) *config.ServiceConfig {
-	for _, s := range svcs {
-		if s.Active() {
-			return s
-		}
-	}
-	return nil
-}
+// sessionHost is what a session listener here binds when its address is
+// empty. The single binary is no exception: it too takes logins only through
+// a login proxy's preamble, so every listener is a backend's (#2416).
+const sessionHost = config.BackendHost
 
-// listenAddr converts a ServiceConfig into a TCP listen address.
+// listenAddr fills the protocol servers' own Addr options, which only their
+// ListenAndServe reads; the backend binds through bindTCP and bindTLS.
 func listenAddr(svc *config.ServiceConfig) string {
-	if svc == nil {
-		return ""
-	}
-	return fmt.Sprintf(":%d", svc.Port)
+	addr, _ := svc.ListenAddr(sessionHost)
+	return addr
 }
 
 // buildTLS resolves TLS config for a service (merges general.ssl + per-service override)

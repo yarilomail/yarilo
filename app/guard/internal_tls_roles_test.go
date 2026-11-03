@@ -57,7 +57,7 @@ var consoleRole = map[string]mtls.Role{
 
 func renderDocs(t *testing.T, args ...string) []k8sDoc {
 	t.Helper()
-	out, err := exec.Command("helm", append([]string{"template", "yarilo", "../../helm"}, args...)...).Output()
+	out, err := exec.CommandContext(t.Context(), "helm", append([]string{"template", "yarilo", "../../helm"}, args...)...).Output()
 	if err != nil {
 		t.Fatalf("helm template %v: %v", args, err)
 	}
@@ -195,7 +195,7 @@ func TestEveryContainerPresentsItsOwnRole(t *testing.T) {
 // the key that replaced it, rather than half-enabling TLS (#2138).
 func TestAComponentTLSFlagIsRefused(t *testing.T) {
 	for _, flag := range []string{"components.auth.internalTLS.enabled=true", "components.backend.internalTLS.enabled=false"} {
-		out, err := exec.Command("helm", "template", "yarilo", "../../helm", "--set", flag).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "--set", flag).CombinedOutput()
 		if err == nil {
 			t.Errorf("--set %s rendered", flag)
 			continue

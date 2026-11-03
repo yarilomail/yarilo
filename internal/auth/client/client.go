@@ -24,6 +24,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // ErrNoAuthService names the key a session process cannot start without: it
@@ -80,6 +81,12 @@ type AuthResult struct {
 	// DirectorTag is the per-user director backend tag, if the passdb/userdb
 	// chain set one. Empty means the static director_tag config applies.
 	DirectorTag string
+
+	// MaxUserIPConnections and MaxUserConnections are the user's own
+	// connection limits from the userdb, per address and across addresses; nil
+	// when it set none, 0 is unlimited (#2460).
+	MaxUserIPConnections *int
+	MaxUserConnections   *int
 
 	// Userdb is the service's answer in full: a session resolves storage and
 	// ACL identity from it, so nothing it sent may be dropped here (#1890).
@@ -397,7 +404,7 @@ func (c *Client) exchange(id, req string) (string, error) {
 // that let the budget pass in silence, so the next request does not wait too.
 func (c *Client) exchangeWithin(id, req string, budget time.Duration, redial bool) (string, error) {
 	deadline := time.Now().Add(budget)
-	ch := make(chan string, 1)
+	var ch chan string
 	var gen uint64
 
 	for {
@@ -414,6 +421,9 @@ func (c *Client) exchangeWithin(id, req string, budget time.Duration, redial boo
 			c.mu.Unlock()
 			continue // lost the race with a reconnect; wait again
 		}
+		// A fresh channel per attempt: a reconnect another caller started may
+		// already have closed the last one with the rest in flight.
+		ch = make(chan string, 1)
 		c.pending[id] = ch
 		gen = c.gen
 		// Bound the write so a blackholed peer cannot block forever while
@@ -601,11 +611,7 @@ func (c *Client) dial() (net.Conn, *bufio.Reader, error) {
 	}
 	var raw net.Conn
 	var err error
-	if c.tlsCfg != nil {
-		raw, err = tls.DialWithDialer(dialer, "tcp", c.addr, c.tlsCfg)
-	} else {
-		raw, err = dialer.Dial("tcp", c.addr)
-	}
+	raw, err = sockaddr.DialTLS(context.Background(), dialer, c.addr, c.tlsCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth/client: dial %s: %w", c.addr, err)
 	}
@@ -697,6 +703,8 @@ func parseAuthResponse(line string) (*AuthResult, error) {
 		}
 		res.Userdb.Username = res.Username
 		res.DirectorTag = res.Userdb.DirectorTag
+		res.MaxUserIPConnections = userLimit("mail_max_userip_connections", res.Userdb.MailMaxUserIPConnections)
+		res.MaxUserConnections = userLimit("mail_max_user_connections", res.Userdb.MailMaxUserConnections)
 		return res, nil
 	case "FAIL":
 		reason := ""
@@ -738,4 +746,18 @@ func parseVerifyResponse(line string) (string, string, string, error) {
 	default:
 		return "", "", "", fmt.Errorf("auth/client: unknown verify verb %q", fields[0])
 	}
+}
+
+// userLimit reads a userdb connection limit; a value that is not a
+// non-negative number is left out, with a line saying so.
+func userLimit(key, raw string) *int {
+	if raw == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		slog.Warn("auth/client: a userdb connection limit is not a non-negative number; it is not applied", "field", key, "value", raw)
+		return nil
+	}
+	return &n
 }

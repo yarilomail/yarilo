@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +23,7 @@ import (
 
 	proxyproto "github.com/pires/go-proxyproto"
 
+	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
 
@@ -54,6 +57,9 @@ type Options struct {
 	ProxyProtocol      bool
 	HAProxyTrustedNets []*net.IPNet
 	HAProxyTimeout     time.Duration
+	// ClientIPHeader names the header a peer in HAProxyTrustedNets puts the
+	// client address in; empty reads none.
+	ClientIPHeader string
 
 	// LocalIP is this pod's address, reported to the backend in Forwarded.
 	LocalIP string
@@ -71,12 +77,15 @@ type Options struct {
 	// empty key or a zero TTL issues none.
 	WebSocketTicketKey string
 	WebSocketTicketTTL time.Duration
+	// LimitRetryAfter is the Retry-After, in seconds, on a 429 for a reached
+	// connection limit; 0 sends none.
+	LimitRetryAfter int
 }
 
 // ConnAccountant is warden's per-user@IP connection accounting, narrowed to
 // what this proxy calls. Satisfied by *warden.Pool.
 type ConnAccountant interface {
-	Connect(id, user, ip, service string) error
+	ConnectLimits(id, user, ip, service string, l warden.UserLimits) error
 	Disconnect(id, user, ip, service string) error
 }
 
@@ -90,13 +99,20 @@ type Router interface {
 // PasswordAuthenticator verifies a username and password, returning the
 // resolved username. Satisfied by the yarilo-auth client.
 type PasswordAuthenticator interface {
-	Authenticate(username, password, service, remoteIP, localIP, sessionID string) (string, error)
+	Authenticate(username, password, service, remoteIP, localIP, sessionID string) (Login, error)
+}
+
+// Login is who a request authenticated as, and the user's own connection
+// limits from the userdb (#2460).
+type Login struct {
+	User   string
+	Limits warden.UserLimits
 }
 
 // TokenAuthenticator verifies a Bearer token in the auth service, returning the
 // user it names. Satisfied by AuthService.
 type TokenAuthenticator interface {
-	AuthenticateToken(token, service, remoteIP, localIP, sessionID string) (string, error)
+	AuthenticateToken(token, service, remoteIP, localIP, sessionID string) (Login, error)
 	// OffersTokens reports whether Bearer can succeed now, so it is offered
 	// only then.
 	OffersTokens() bool
@@ -109,7 +125,13 @@ type connState struct {
 	mu sync.Mutex
 	// id is this connection's warden session id, allocated once.
 	id string
-	ip string
+	// ip is the address the connection is accounted under; peer is the
+	// address it came from, after the PROXY header and before any header.
+	ip   string
+	peer string
+	// badHeader is set once ClientIPHeader carried a non-address here, so it
+	// is logged once per connection.
+	badHeader atomic.Bool
 	// user is who the connection is currently accounted as. Empty means it has
 	// never authenticated, and such a connection is never accounted: brute
 	// force on it is yarilo-auth's penalty to handle, not a connection count.
@@ -138,6 +160,7 @@ func New(opts Options) *Server {
 	s := &Server{opts: opts, mux: http.NewServeMux(), cors: newCORS(opts.CORSAllowOrigins),
 		tickets: newTickets(opts.WebSocketTicketKey, opts.WebSocketTicketTTL)}
 	s.proxy = newBackendProxy(opts)
+	s.proxy.tickets = s.tickets != nil
 	s.mux.HandleFunc("/", s.handle)
 	return s
 }
@@ -150,6 +173,7 @@ var serverTimeout = 60 * time.Second
 
 // Serve runs until ctx is cancelled, then drains in-flight requests.
 func (s *Server) Serve(ctx context.Context) error {
+	var fresh sync.Map // connections that have sent no request yet
 	srv := &http.Server{
 		Addr:              s.opts.Addr,
 		Handler:           s.mux,
@@ -158,8 +182,16 @@ func (s *Server) Serve(ctx context.Context) error {
 		ReadTimeout:       serverTimeout,
 		WriteTimeout:      serverTimeout,
 		IdleTimeout:       120 * time.Second,
+		ConnState: func(c net.Conn, st http.ConnState) {
+			if st == http.StateNew {
+				fresh.Store(c, struct{}{})
+			} else {
+				fresh.Delete(c)
+			}
+		},
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			st := &connState{ip: hostOnly(c.RemoteAddr().String()), conn: c}
+			peer := hostOnly(c.RemoteAddr().String())
+			st := &connState{ip: peer, peer: peer, conn: c}
 			s.conns.Store(c, st)
 			// Released on close, which a hijacked connection (a WebSocket
 			// upgrade) reports only through its trackedConn.
@@ -171,7 +203,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		},
 	}
 
-	ln, err := net.Listen("tcp", s.opts.Addr)
+	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", s.opts.Addr)
 	if err != nil {
 		return fmt.Errorf("jmap-login: listen %s: %w", s.opts.Addr, err)
 	}
@@ -181,7 +213,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		ln = &proxyproto.Listener{
 			Listener:          ln,
 			ReadHeaderTimeout: timeout,
-			Policy:            proxyPolicy(s.opts.HAProxyTrustedNets),
+			ConnPolicy:        proxyPolicy(s.opts.HAProxyTrustedNets),
 		}
 	}
 
@@ -199,7 +231,21 @@ func (s *Server) Serve(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		done := make(chan error, 1)
+		go func() { done <- srv.Shutdown(shutdownCtx) }()
+		// net/http waits 5 s on a connection that has sent no request, such as
+		// the spare one a client's pool dials; it has nothing in flight (#2462).
+		for {
+			fresh.Range(func(c, _ any) bool {
+				c.(net.Conn).Close() //nolint:errcheck
+				return true
+			})
+			select {
+			case err := <-done:
+				return err
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -217,7 +263,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st, _ := r.Context().Value(ctxKey{}).(*connState)
-	clientIP := clientAddr(r, st)
+	clientIP, peer := s.clientAddr(r, st)
 	if origin := r.Header.Get("Origin"); origin != "" {
 		if !s.cors.allows(origin) {
 			w.Header().Add("Vary", "Origin")
@@ -234,18 +280,19 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == jmapcore.WebSocketTicketPath {
-		s.handleTicket(w, r, st, clientIP)
+		s.handleTicket(w, r, st, clientIP, peer)
 		return
 	}
 
-	var username string
+	var login Login
 	var err error
 	if ticket := s.wsTicket(r); ticket != "" {
-		username, err = s.tickets.check(ticket, clientIP)
+		login, err = s.tickets.check(ticket, clientIP)
 		dropTicket(r)
 	} else {
-		username, err = s.authenticate(r, clientIP, sessionOf(st))
+		login, err = s.authenticate(r, clientIP, peer, sessionOf(st))
 	}
+	username := login.User
 	if err != nil {
 		if errors.Is(err, errTemporary) {
 			jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Authentication temporarily unavailable")
@@ -258,8 +305,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.account(st, username, clientIP); err != nil {
-		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Connection limit reached")
+	if err := s.account(st, login, clientIP); err != nil {
+		// The limit is the client's doing (RFC 6585 §4); 503 would tell
+		// monitoring the server is down, which only an unreachable warden is.
+		if errors.Is(err, warden.ErrTooManyConns) {
+			if s.opts.LimitRetryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(s.opts.LimitRetryAfter))
+			}
+			jmapcore.WriteProblem(w, http.StatusTooManyRequests, "Connection limit reached")
+			return
+		}
+		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Connection accounting temporarily unavailable")
 		return
 	}
 
@@ -331,14 +387,16 @@ func writeLimitProblem(w http.ResponseWriter, limit string) {
 
 // account keeps warden's per-user@IP view in step with this connection. A
 // connection that authenticates as a different user, which HTTP permits on a
-// keep-alive, is re-accounted rather than refused or counted twice.
-func (s *Server) account(st *connState, username, ip string) error {
+// keep-alive, is re-accounted rather than refused or counted twice; so is one
+// whose client address changed, as a proxy's pooled connection does.
+func (s *Server) account(st *connState, login Login, ip string) error {
+	username := login.User
 	if s.opts.Warden == nil || st == nil {
 		return nil
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if st.user == username {
+	if st.user == username && st.ip == ip {
 		return nil
 	}
 	if st.id == "" {
@@ -350,11 +408,16 @@ func (s *Server) account(st *connState, username, ip string) error {
 		}
 		st.user = ""
 	}
-	if err := s.opts.Warden.Connect(st.id, username, ip, service); err != nil {
-		if !s.opts.WardenFailOpen {
-			slog.Warn("jmap-login: warden connect refused", "user", username, "ip", ip, "err", err)
-			return err
-		}
+	err := s.opts.Warden.ConnectLimits(st.id, username, ip, service, login.Limits)
+	switch {
+	case errors.Is(err, warden.ErrTooManyConns):
+		// Fail-open covers an unreachable warden, never a reached limit.
+		slog.Warn("jmap-login: warden connect refused", "user", username, "ip", ip, "reason", "too_many_connections")
+		return err
+	case err != nil && !s.opts.WardenFailOpen:
+		slog.Error("jmap-login: warden connect failed", "user", username, "ip", ip, "err", err)
+		return err
+	case err != nil:
 		// A warden blip must not lock everyone out; the count is approximate
 		// until it recovers.
 		slog.Warn("jmap-login: warden unreachable, allowing", "user", username, "err", err)
@@ -459,14 +522,59 @@ func newSessionID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// clientAddr is the peer address the passdb and warden see. The PROXY header
-// has already rewritten it at the listener; request headers are never consulted,
-// since a client choosing its own source address defeats allow_nets.
-func clientAddr(r *http.Request, st *connState) string {
-	if st != nil && st.ip != "" {
-		return st.ip
+// clientAddr is the address the passdb, warden and limits see, and the peer
+// the request came from. The PROXY header has already rewritten the peer at the
+// listener; ClientIPHeader is read only from a peer in HAProxyTrustedNets,
+// since a client choosing its own source address defeats allow_nets (#2512).
+func (s *Server) clientAddr(r *http.Request, st *connState) (client, peer string) {
+	peer = hostOnly(r.RemoteAddr)
+	if st != nil && st.peer != "" {
+		peer = st.peer
 	}
-	return hostOnly(r.RemoteAddr)
+	ip, bad := s.headerAddr(r, peer)
+	if bad != "" && (st == nil || !st.badHeader.Swap(true)) {
+		if len(bad) > 64 {
+			bad = bad[:64]
+		}
+		slog.Warn("jmap-login: client address header is not an address", "header", s.opts.ClientIPHeader, "value", bad, "peer", peer)
+	}
+	if ip != "" {
+		return ip, peer
+	}
+	return peer, peer
+}
+
+// headerAddr is the address ClientIPHeader carries from a trusted peer: the
+// last of a list, the one the trusted hop appended. Anything but a bare IPv4
+// or IPv6 address is returned as bad and never used.
+func (s *Server) headerAddr(r *http.Request, peer string) (ip, bad string) {
+	if s.opts.ClientIPHeader == "" || !inNets(peer, s.opts.HAProxyTrustedNets) {
+		return "", ""
+	}
+	values := r.Header.Values(s.opts.ClientIPHeader)
+	if len(values) == 0 {
+		return "", ""
+	}
+	last := values[len(values)-1]
+	if i := strings.LastIndexByte(last, ','); i >= 0 {
+		last = last[i+1:]
+	}
+	last = strings.TrimSpace(last)
+	addr, err := netip.ParseAddr(last)
+	if err != nil || addr.Zone() != "" {
+		return "", last
+	}
+	return addr.Unmap().String(), ""
+}
+
+func inNets(addr string, nets []*net.IPNet) bool {
+	ip := net.ParseIP(addr)
+	for _, n := range nets {
+		if ip != nil && n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func hostOnly(addr string) string {
@@ -479,8 +587,9 @@ func hostOnly(addr string) string {
 
 // proxyPolicy trusts a PROXY header only from a configured upstream. An empty
 // list trusts nobody rather than everybody.
-func proxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
-	return func(upstream net.Addr) (proxyproto.Policy, error) {
+func proxyPolicy(nets []*net.IPNet) proxyproto.ConnPolicyFunc {
+	return func(o proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		upstream := o.Upstream
 		if len(nets) == 0 {
 			return proxyproto.IGNORE, nil
 		}

@@ -39,11 +39,15 @@ type FTS struct {
 	// query waits for it before answering "retry".
 	AddMissing string
 	Timeout    time.Duration
+	// ReadFallback mirrors fts_search_read_fallback: a folder the service
+	// cannot answer is searched by reading headers when the filter needs no
+	// more than headers, as IMAP scans (#2480).
+	ReadFallback bool
 }
 
 // errIndexLagging and errPoolBusy are transient: the client should retry rather
 // than conclude the mail is not there, so they answer serverUnavailable while
-// an outright lookup failure answers serverFail.
+// a lookup the service refused answers serverFail.
 var (
 	errIndexLagging = errors.New("jmap: full-text index is catching up")
 	errPoolBusy     = errors.New("jmap: no free connection to the full-text service")
@@ -99,8 +103,10 @@ func (e *ftsEvaluator) startRequest() {
 // engine could only over-approximate; they are confirmed against the message
 // before they reach a response, which is the invariant IMAP holds too.
 type folderMatches struct {
-	covered map[uint32]bool
-	verify  map[uint32]bool
+	// headerScan answers the folder from each message's header (#2480).
+	headerScan bool
+	covered    map[uint32]bool
+	verify     map[uint32]bool
 	// terms is what a verified UID is checked against.
 	terms []verifyTerm
 }
@@ -137,6 +143,16 @@ func (e *ftsEvaluator) unsupported(*jmapcore.EmailFilter) []string { return nil 
 // prepare looks one folder up. It runs once per folder, and the query runs
 // several of them at once (see prepareScope).
 func (e *ftsEvaluator) prepare(ctx context.Context, h *userHandle, sf scopeFolder, f *jmapcore.EmailFilter) error {
+	err := e.lookupFolder(ctx, h, sf, f)
+	if err == nil || ctx.Err() != nil || !e.fts.ReadFallback || len(headerEvaluator{}.unsupported(f)) > 0 {
+		return err
+	}
+	slog.Warn("jmap: fts cannot answer, reading headers instead", "user", e.user, "folder", sf.name, "err", err)
+	e.store(sf.id, &folderMatches{headerScan: true})
+	return nil
+}
+
+func (e *ftsEvaluator) lookupFolder(ctx context.Context, h *userHandle, sf scopeFolder, f *jmapcore.EmailFilter) error {
 	terms := f.TextConditions()
 	if len(terms) == 0 {
 		return nil
@@ -197,10 +213,10 @@ func (e *ftsEvaluator) prepare(ctx context.Context, h *userHandle, sf scopeFolde
 	return nil
 }
 
-// catchUp waits for a lagging folder rather than searching a stale index. IMAP
-// falls back to the exact scan at this point; Email/query has no scan, so the
-// only honest ending is "retry" -- a result computed from a half-indexed folder
-// would be missing mail and say nothing about it.
+// catchUp waits for a lagging folder rather than searching a stale index. Short
+// of the header fallback in prepare, the only honest ending is "retry" -- a
+// result computed from a half-indexed folder would be missing mail and say
+// nothing about it.
 func (e *ftsEvaluator) catchUp(ctx context.Context, h *userHandle, sf scopeFolder) error {
 	metas, err := h.mbox.Messages(sf.id, mailbox.SeqSet{{From: 1, To: 0}})
 	if err != nil || len(metas) == 0 {
@@ -284,6 +300,9 @@ func (e *ftsEvaluator) match(m *mailbox.MessageMeta, sf scopeFolder, scope *quer
 	fm, ok := e.matches(sf.id)
 	if !ok {
 		return true // no text condition in this filter
+	}
+	if fm.headerScan {
+		return headerEvaluator{mbox: e.mbox}.match(m, sf, scope, f)
 	}
 	if !fm.covered[m.UID] {
 		return false

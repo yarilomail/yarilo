@@ -138,9 +138,10 @@ func main() {
 
 	listen := fc.Listen
 	if listen == "" {
-		listen = ":9106"
+		slog.Error("fts.fts_listen is required")
+		os.Exit(1)
 	}
-	ln, err := net.Listen("tcp", listen)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", listen)
 	if err != nil {
 		slog.Error("listen failed", "addr", listen, "err", err)
 		os.Exit(1)
@@ -163,11 +164,10 @@ func main() {
 			MutexFraction: cfg.Telemetry.PprofMutexProfileFraction,
 		},
 	})
-	go func() {
-		if err := tel.ListenAndServe(ctx); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(ctx); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 
 	slog.Info("yarilo-fts listening", "addr", listen, "telemetry", cfg.Telemetry.Listen,
 		"engine", engine.Name(), "mode", fc.Mode)

@@ -15,7 +15,7 @@ import (
 func countingAuthServer(t *testing.T, mechs []string) (addr string, conns, handshakes, auths, cancels *atomic.Int64) {
 	t.Helper()
 	conns, handshakes, auths, cancels = &atomic.Int64{}, &atomic.Int64{}, &atomic.Int64{}, &atomic.Int64{}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

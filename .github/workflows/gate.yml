@@ -94,19 +94,27 @@ jobs:
 
       ## Pinned, and only rebuilt when the pin changes: `@latest` recompiled the
       ## linter on every run and silently changed the ruleset under us, so a
-      ## green PR could go red on merge without a code change. v1 is required -
-      ## .golangci.yml is v1 format (it enables `gosimple`, which v2 folded into
-      ## staticcheck), so bumping to v2 needs a config migration first.
+      ## green PR could go red on merge without a code change. .golangci.yml is
+      ## v2 format and names staticcheck's checks, so the v1 ruleset carries over.
       - name: Install golangci-lint
         run: |
-          want=v1.64.8
-          have=$(golangci-lint version 2>/dev/null | grep -oE 'version v?[0-9.]+' | grep -oE '[0-9.]+' || true)
-          if [ "v${have}" != "$want" ]; then
-            go install github.com/golangci/golangci-lint/cmd/golangci-lint@$want
+          want=v2.15.0
+          ## The binary outlives a Go bump on the runner, and one built by an
+          ## older Go refuses a newer go.mod (#2447).
+          if ! golangci-lint version 2>/dev/null | grep -qE "version v?${want#v} built with $(go env GOVERSION) "; then
+            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$want
           fi
 
+      ## Twice, like go vet below: the image is built with -tags flatcurve, and
+      ## an untagged run never reads the files behind that tag (#2461).
       - name: Run golangci-lint
-        run: golangci-lint run ./...
+        run: |
+          golangci-lint run ./...
+          if ! dpkg -s libxapian-dev >/dev/null 2>&1 || ! command -v g++ >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq libxapian-dev g++
+          fi
+          CGO_ENABLED=1 golangci-lint run --build-tags flatcurve ./...
 
       ## On every gate run, not on a clock: Trivy asks what CVEs exist in an
       ## image, which changes when a CVE is published; this asks whether our
@@ -130,6 +138,13 @@ jobs:
             sudo apt-get install -y -qq libxapian-dev g++
           fi
           CGO_ENABLED=1 go vet -tags flatcurve ./...
+
+      ## Pure Go only: the cgo flatcurve set needs a BSD host to build.
+      - name: Run go vet for the BSDs
+        run: |
+          for goos in freebsd netbsd openbsd; do
+            CGO_ENABLED=0 GOOS=$goos GOARCH=amd64 go vet ./...
+          done
 
       # Lines in blocks of three or more, against the package's Go lines --
       # exactly what the sweep removes, and not godoc, which it keeps. The

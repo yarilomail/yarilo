@@ -1,0 +1,41 @@
+[Unit]
+Description=yarilo POP3 session backend
+Documentation=https://doc.yarilomail.org/
+PartOf=yarilo.target
+After=network.target yarilo-locks.service yarilo-auth.service yarilo-warden.service yarilo-dict.service
+Wants=yarilo-locks.service yarilo-auth.service yarilo-warden.service yarilo-dict.service
+
+[Service]
+Type=simple
+User=yarilo
+Group=yarilo
+SupplementaryGroups=yarilo-auth yarilo-master
+Environment=TELEMETRY_LISTEN=127.0.0.1:18086
+ExecStart=/usr/libexec/yarilo/yarilo-pop3
+Restart=on-failure
+RestartSec=2s
+KillMode=mixed
+TimeoutStopSec=60s
+CapabilityBoundingSet=
+ReadWritePaths=/var/mail/vhosts /var/lib/yarilo/state
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=yarilo.target

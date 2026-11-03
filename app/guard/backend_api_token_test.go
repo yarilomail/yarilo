@@ -14,7 +14,7 @@ func TestEveryBackendAPIContainerGetsItsToken(t *testing.T) {
 		if values != "" {
 			args = append(args, "-f", values)
 		}
-		out, err := exec.Command("helm", args...).Output()
+		out, err := exec.CommandContext(t.Context(), "helm", args...).Output()
 		if err != nil {
 			t.Fatalf("helm template %v: %v", args, err)
 		}

@@ -85,14 +85,14 @@ type varsSession struct {
 
 func serveVars(t *testing.T, srv *Server) *varsSession {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go srv.Serve(ctx, ln) //nolint:errcheck
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(ctx, "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,14 +244,14 @@ func TestTheCacheIsKeyedByTheAddressesAPassdbReads(t *testing.T) {
 // USER carries the protocol of a login or a delivery; a lookup naming none
 // is neither and the rule's ELSE lets it through (#2227).
 func TestUSERCarriesTheProtocol(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go NewMasterServer(ruledUserdb{map[string]bool{"lmtp": true}}).Serve(ctx, ln) //nolint:errcheck
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(ctx, "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

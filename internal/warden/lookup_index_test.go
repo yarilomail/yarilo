@@ -15,7 +15,7 @@ func newIndexBackend(t *testing.T, ttl time.Duration) (*miniredis.Miniredis, *re
 	mr.SetTime(time.Unix(1_790_000_000, 0))
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
-	return mr, rdb, NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, ttl, 0)
+	return mr, rdb, NewRedisBackend(rdb, "test:warden:", "test:warden:events:", time.Minute, ttl, ConnLimits{Default: 0})
 }
 
 // LOOKUP is one round trip whatever else Redis holds (#2149).

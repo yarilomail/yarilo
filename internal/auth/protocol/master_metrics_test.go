@@ -88,7 +88,7 @@ func TestUnknownMasterVerbDoesNotBecomeALabel(t *testing.T) {
 func serveMaster(t *testing.T, userdb Userdb) string {
 	t.Helper()
 	srv := NewMasterServer(userdb)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -105,7 +105,7 @@ func dialMaster(t *testing.T, addr string) (net.Conn, *bufio.Reader) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), "tcp", addr)
 		if err == nil {
 			t.Cleanup(func() { conn.Close() })
 			return conn, bufio.NewReader(conn)

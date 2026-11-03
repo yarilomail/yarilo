@@ -21,6 +21,9 @@ type Server struct {
 	backend Backend
 	logger  *slog.Logger
 	metrics *Metrics
+	// generation names the lock state this server serves, told to every client
+	// at handshake (#2425).
+	generation string
 
 	closing chan struct{}
 	closeMu sync.Mutex
@@ -45,11 +48,32 @@ func NewServer(backend Backend, logger *slog.Logger, metrics *Metrics) *Server {
 		logger = slog.Default()
 	}
 	return &Server{
-		backend: backend,
-		logger:  logger,
-		metrics: metrics,
-		closing: make(chan struct{}),
+		backend:    backend,
+		logger:     logger,
+		metrics:    metrics,
+		generation: generationOf(backend, logger),
+		closing:    make(chan struct{}),
 	}
+}
+
+// generationOf names the backend's lock state: the store's own name when it
+// keeps state past a restart, a new one per process when the state lives and
+// dies with it. Unnamed, clients keep their holds until a renew fails.
+func generationOf(b Backend, logger *slog.Logger) string {
+	g, ok := b.(interface {
+		Generation(context.Context) (string, error)
+	})
+	if !ok {
+		return NewID()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	gen, err := g.Generation(ctx)
+	if err != nil {
+		logger.Warn("locks: the store did not name its generation; clients learn of a lost state at renew", "err", err)
+		return ""
+	}
+	return gen
 }
 
 // Serve accepts connections on ln until ctx is cancelled or ln.Accept errors
@@ -235,7 +259,10 @@ func (s *Server) handshake(r *reader, w io.Writer) error {
 		_ = writeFields(w, respError, "version_mismatch")
 		return fmt.Errorf("locks/server: unexpected version frame %v: %w", fields, ErrProtocol)
 	}
-	return writeFields(w, cmdVersion, protocolVersion, respOK)
+	if s.generation == "" {
+		return writeFields(w, cmdVersion, protocolVersion, respOK)
+	}
+	return writeFields(w, cmdVersion, protocolVersion, respOK, s.generation)
 }
 
 func (s *Server) handleLock(ctx context.Context, w io.Writer, fields []string, peer string) {
@@ -456,7 +483,7 @@ func (s *Server) handleSubscribe(ctx context.Context, conn net.Conn, fields []st
 // ListenUnix opens a Unix socket listener. Caller is responsible for removing
 // any stale socket at path before calling.
 func ListenUnix(path string) (net.Listener, error) {
-	ln, err := net.Listen("unix", path)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("locks/server: listen unix %q: %w", path, err)
 	}

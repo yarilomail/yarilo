@@ -17,7 +17,7 @@ import (
 
 func dialTest(t *testing.T, addr string) (net.Conn, *bufio.Scanner) {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -68,7 +68,7 @@ func startServer(t *testing.T) (*Server, string) {
 func startServerOpts(t *testing.T, opts Options) (*Server, string) {
 	t.Helper()
 	srv := NewWithOptions(testOptions(opts))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -615,7 +615,7 @@ func TestMultipleClients_SharedRing(t *testing.T) {
 
 func TestGracefulShutdown(t *testing.T) {
 	srv := NewWithOptions(testOptions(Options{}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

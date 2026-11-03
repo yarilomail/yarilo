@@ -2,11 +2,11 @@ mode: single   # single | proxy | director | backend
 
 general:
   ssl:
-    tls_cert: /etc/yarilo/tls/cert.pem
-    tls_key:  /etc/yarilo/tls/key.pem
-    tls_min_version: TLS1.2
+    ssl_server_cert_file: /etc/yarilo/tls/cert.pem
+    ssl_server_key_file:  /etc/yarilo/tls/key.pem
+    ssl_min_protocol: TLS1.2
   haproxy:
-    trusted_nets: ["127.0.0.1/32", "10.0.0.0/8"]
+    haproxy_trusted_networks: ["127.0.0.1/32", "10.0.0.0/8"]
     timeout: 3
   xclient:
     trusted_nets: ["127.0.0.1/32", "10.0.0.0/8"]
@@ -14,50 +14,29 @@ general:
     mail_max_userip_connections: 10
 
 services:
-  imaps:
-    enabled: true
-    port: 993
-    ssl_mode: ssl
+  ## The single binary serves the session backends only; the login proxies
+  ## (services.*_login) take the client ports and dial these.
   imap:
     enabled: true
-    port: 143
-    ssl_mode: starttls
-    disable_plaintext_auth: false
+    port: 10143
+    ssl_mode: "no"
   submission:
     enabled: true
-    port: 587
-    ssl_mode: starttls
-    disable_plaintext_auth: false
-  submissions:
-    enabled: true
-    port: 465
-    ssl_mode: ssl
+    port: 10587
+    ssl_mode: "no"
   pop3:
     enabled: true
-    port: 110
-    ssl_mode: starttls
-    disable_plaintext_auth: false
-  pop3s:
-    enabled: true
-    port: 995
-    ssl_mode: ssl
+    port: 10110
+    ssl_mode: "no"
   lmtp:
     enabled: true
-    port: 24
-    ssl_mode: "no"
-  managesieve:
-    enabled: true
-    port: 4190
-    ssl_mode: starttls
-  managesieve_be:
-    enabled: false
-    port: 14190
+    port: 10024
     ssl_mode: "no"
 
 sieve:
   scripts_driver: fs
   enabled: false
-  max_script_size: 65536
+  sieve_max_script_size: 65536
   max_redirects: 32
   vacation_enabled: true
   submission_host: ""
@@ -90,16 +69,15 @@ protocol:
     imap_id_send: "name *"
   submission:
     hostname: mail.smoke.local
-    max_message_size: 41943040
+    submission_max_mail_size: 41943040
     max_line_length: 4096
     recipient_delimiter: "+"
     submission_add_received_header: true
   lmtp:
     login_greeting: "Yarilo smoke ready."
-    add_received_header: true
-    hdr_delivery_address: final
+    lmtp_add_received_header: true
+    lmtp_hdr_delivery_address: final
   managesieve:
-    max_script_size: 65536
     max_invalid_commands: 3
 
 auth:
@@ -108,7 +86,7 @@ auth:
       dsn: /var/lib/yarilo/users.db
 
 storage:
-  mailbox: maildir
+  mail_driver: maildir
   maildir_root: /var/mail/vhosts
   # mdbox tuning (only used when mailbox: mdbox):
   # mdbox_rotate_size: 10M           # max size per m.<N> before rolling (10M/1G or raw bytes; 0 = default 10 MiB)

@@ -60,7 +60,8 @@ func main() {
 
 	listen := cfg.BackendAPI.Listen
 	if listen == "" {
-		listen = ":9105"
+		slog.Error("backend_api.listen is required")
+		os.Exit(1)
 	}
 	slog.Info("yarilo-backend-api starting",
 		"version", build.Version,
@@ -239,7 +240,7 @@ func main() {
 
 	// The admin API's own counters live in this process: what an admin command
 	// moved is unreadable from another container's registry (#1999).
-	go runTelemetry(cfg.Telemetry)
+	runTelemetry(cfg.Telemetry)
 
 	if err := srv.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("backend-api: serve failed", "err", err)
@@ -308,8 +309,9 @@ func runTelemetry(cfg config.TelemetryConfig) {
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	if err := tel.ListenAndServe(context.Background()); err != nil {
-		slog.Error("backend-api: telemetry server failed", "err", err)
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
 	}
 }
 

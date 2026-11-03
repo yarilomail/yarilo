@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 18
+config_schema_version: 29
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -506,6 +506,11 @@ components:
     director_domain_rebalance_percent: 20
     director_domain_rebalance_interval: 60
     director_domain_rebalance_cooldown: 600
+    ## Sessions the busiest backend of a tag must carry before a spread moves
+    ## a domain. Every moved session is a client cut off, and on a quiet
+    ## backend two sessions against none is already a 100 % spread. 0 judges
+    ## any load.
+    director_domain_rebalance_min_sessions: 50
 
     ## Grace window (seconds) before an admin-initiated kick pushes USER-KICKED
     ## (#740), letting a user's in-flight command on the old backend finish
@@ -706,10 +711,6 @@ components:
       ## CIDRs as opt-in defense-in-depth once you know them.
       allowed_nets: []
 
-    service:
-      type: LoadBalancer
-      annotations: {}
-
     resources:
       requests:
         cpu: 100m
@@ -767,6 +768,15 @@ components:
     ## endpoints and CLI tooling. Empty disables; the binary then only
     ## opens the client listener.
     masterListen: ":9102"
+    ## socket_mode / socket_group (and the master_ pair) - octal mode and group
+    ## name of a unix:/path listener on a host install; pods listen on TCP.
+    socket_mode: "0660"
+    socket_group: ""
+    master_socket_mode: "0660"
+    master_socket_group: ""
+    ## master_session_users - users, by name or uid, whose processes may issue a
+    ## session on a unix:/path master listener; pods listen on TCP, where mTLS roles decide.
+    master_session_users: ["yarilo-delivery"]
 
     ## startupProbe waits for Redis and (when applicable) the SQL database to accept
     ## a TCP connection before this pod takes traffic, replacing the wait-redis /
@@ -865,6 +875,12 @@ components:
     ## auth_max_attempts - failed authentications allowed on one connection,
     ## a refused SASL exchange included, before it is closed. Default 3.
     auth_max_attempts: 3
+    ## auth_username_format - applied to every username before any passdb or
+    ## userdb lookup: logins, delivery, master-user targets. The result is the
+    ## canonical user; the name as given stays in original_user. %Lu lowercases
+    ## the whole name, %u keeps it as given; %n, %d and the %L prefix as in
+    ## oauth2_username_validation_format.
+    auth_username_format: "%Lu"
     failure_delay: 2
     ## internal_failure_delay_ms - separate delay for INTERNAL
     ## failures (passdb backend down, SQL refused). Typically shorter
@@ -1062,6 +1078,10 @@ components:
     ## the level above. See the boundary note at the top of components:.
     service:
       listen: ":9101"
+      ## socket_mode / socket_group - octal mode and group name of a unix:/path
+      ## listener on a host install; pods listen on TCP.
+      socket_mode: "0660"
+      socket_group: ""
       ## conns - long-lived connections each login pod keeps to yarilo-warden
       ## (#878). Must be positive. Sessions do not own a connection: every
       ## command carries the session id and the server keeps no per-connection
@@ -1069,6 +1089,10 @@ components:
       ## protocol has no request id, so one connection serves one command at a
       ## time - each is a sub-ms round trip, so a handful covers any login rate.
       conns: 4
+      ## fail_open - when a login pod cannot reach yarilo-warden: true lets the
+      ## connection in uncounted, false refuses it (IMAP NO [UNAVAILABLE], JMAP
+      ## 503). A reached connection limit is refused either way.
+      fail_open: false
 
       ## event_queue_size - SELECT events a backend queues for the warden
       ## writer. The events are accounting: the warden records the folder so
@@ -1169,6 +1193,10 @@ components:
     enabled: true
     replicas: 1
     listen: ":9107"
+    ## socket_mode / socket_group - octal mode and group name of a unix:/path
+    ## listen address on a host install; pods listen on TCP.
+    socket_mode: "0660"
+    socket_group: ""
     ## Connections a session keeps to one named dict. An iteration holds its
     ## connection to the end, so one connection is a queue (#1902).
     max_conns: 8
@@ -1196,6 +1224,10 @@ components:
     ## at the top of components:.
     service:
       listen: ":9104"
+      ## socket_mode / socket_group - octal mode and group name of the embedded
+      ## mode's socket on a host install; pods run remote mode on TCP.
+      socket_mode: "0660"
+      socket_group: ""
       ## Redis key/channel prefixes (#938). The prefix is the installation
       ## boundary: when several installations share one Redis, give each a
       ## DISTINCT prefix so their lock keys and event channels do not collide.
@@ -1251,13 +1283,11 @@ components:
     enabled: true
     replicas: 1
 
+    ## The backend's one plain listener (services.imap), which the login
+    ## proxies dial; client TLS ends at yarilo-imap-login.
     listeners:
-      imaps:
-        enabled: true
-        servicePort: 993
-        containerPort: 10993
       imap:
-        enabled: false
+        enabled: true
         servicePort: 143
         containerPort: 10143
 
@@ -1283,13 +1313,11 @@ components:
     enabled: false
     replicas: 1
 
+    ## The backend's one plain listener (services.pop3), which the login
+    ## proxies dial; client TLS ends at yarilo-pop3-login.
     listeners:
-      pop3s:
-        enabled: true
-        servicePort: 995
-        containerPort: 10995
       pop3:
-        enabled: false
+        enabled: true
         servicePort: 110
         containerPort: 10110
 
@@ -1380,6 +1408,18 @@ components:
     service:
       type: ClusterIP
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1467,6 +1507,18 @@ components:
     service:
       type: ClusterIP
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1488,15 +1540,13 @@ components:
     enabled: false
     replicas: 1
 
+    ## The backend's one plain listener (services.submission); implicit TLS
+    ## ends at yarilo-submission-login.
     listeners:
       submission:
         enabled: true
         servicePort: 587
         containerPort: 10587
-      submissions:
-        enabled: false
-        servicePort: 465
-        containerPort: 10465
 
     internalTLS:
       secretName: ""
@@ -1506,6 +1556,18 @@ components:
 
     service:
       type: ClusterIP
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1592,6 +1654,18 @@ components:
     service:
       type: LoadBalancer
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1661,6 +1735,18 @@ components:
     service:
       type: LoadBalancer
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1732,6 +1818,18 @@ components:
     service:
       type: LoadBalancer
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1799,6 +1897,18 @@ components:
     service:
       type: ClusterIP
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1892,6 +2002,18 @@ components:
     service:
       type: ClusterIP
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -1923,7 +2045,7 @@ components:
     auth_master_addr: ""
 
     listeners:
-      ## Internal listener the login proxy dials (services.jmap_be). Deliberately
+      ## Internal listener the login proxy dials (services.jmap). Deliberately
       ## clear of 8080, which is the telemetry port on every component pod.
       jmap:
         enabled: true
@@ -2008,10 +2130,27 @@ components:
     backend_port: 0
     ## director_tag - see imapLogin's comment for the tag/pool-topology rule.
     director_tag: ""
+    ## client_ip_header - the header a proxy puts the client address in, read
+    ## only from a peer in general.haproxy.trusted_nets: CF-Connecting-IP behind
+    ## Cloudflare, X-Forwarded-For (its last address) behind a plain proxy.
+    ## Empty reads none.
+    client_ip_header: ""
 
     service:
       type: LoadBalancer
       annotations: {}
+      ## ipFamilyPolicy / ipFamilies - address families of the client Service.
+      ## PreferDualStack takes IPv4 and IPv6 on a dual-stack cluster and stays
+      ## IPv4 on a single-stack one; empty ipFamilies leaves the order to it.
+      ipFamilyPolicy: PreferDualStack
+      ipFamilies: []
+      ## externalTrafficPolicy - applies off ClusterIP only. Local keeps the
+      ## client address (SPF, RBL, per-IP limits); only nodes running a pod of
+      ## this component accept the traffic. Cluster spreads it and hides it.
+      ## Services that share one load-balancer address (MetalLB allow-shared-ip)
+      ## must all be Cluster: under Local MetalLB shares an address only
+      ## between Services with the same pods, and the others stay pending.
+      externalTrafficPolicy: Local
 
     resources:
       requests:
@@ -2027,6 +2166,10 @@ components:
 ## -------------------------------------------------------------------
 protocol:
   imap:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     imap_idle_notify_interval: 120
     imap_max_line_length: 65536
     imap_id_send: "name *"
@@ -2052,6 +2195,10 @@ protocol:
       Junk: "\\Junk"
       Archive: "\\Archive"
   pop3:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     pop3_no_flag_updates: false
     pop3_reuse_xuidl: false
     pop3_uidl_format: "%u.%v"
@@ -2063,6 +2210,10 @@ protocol:
     pop3_lock_session: false  # dotlock file in user home to prevent simultaneous IMAP+POP3 access
 
   lmtp:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     login_greeting: "Yarilo ready."
     add_received_header: true
     # Synthesise a Message-ID when a message arrives without one. A message
@@ -2111,6 +2262,10 @@ protocol:
       per_recipient_window_seconds: 60
 
   submission:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     hostname: ""
     ## max_message_size - human-readable (bytes or K/M/G/T, e.g. "40M"). Quote it.
     max_message_size: "40M"
@@ -2140,6 +2295,10 @@ protocol:
       command_timeout: 300
 
   managesieve:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     ## The script-size limit lives in the sieve section as sieve_max_script_size:
     ## one limit, one key. A values file still carrying max_script_size here
     ## keeps working - the server folds it onto the sieve key and says so once.
@@ -2149,6 +2308,10 @@ protocol:
     managesieve_max_line_length: 65536
 
   jmap:
+    ## mail_max_userip_connections - this protocol's own connection limit per
+    ## user and IP, counted apart from the other protocols; unset takes
+    ## general.limits.max_user_ip_connections, 0 lifts it.
+    # mail_max_userip_connections: 10
     ## Public origin clients reach this deployment on. It prefixes every URL in
     ## the session resource, so it must be the externally visible name, not a
     ## pod address. Empty renders relative-looking URLs no client can follow.
@@ -2197,6 +2360,9 @@ protocol:
     ## jmap-login for a ticket and opens the WebSocket with it; 0 issues none
     ## and leaves the ticket capability out of the session.
     jmap_websocket_ticket_ttl: 60
+    ## Seconds jmap-login names in Retry-After when it answers 429 to a client
+    ## over its connection limit; 0 sends no Retry-After.
+    jmap_limit_retry_after: 10
     ## Browser origins allowed to call the JMAP endpoint. Empty denies every
     ## cross-origin request, which is the default: an endpoint any page can
     ## call with the user's credentials is an account-takeover surface. Exact
@@ -2366,7 +2532,7 @@ general:
   ## The director reads the header before TLS handshake; conn.RemoteAddr() always reflects
   ## the real client IP after this point.
   ##
-  ## haproxy_protocol must also be enabled per-listener (services.imaps.haproxy_protocol etc.)
+  ## haproxy_protocol must also be enabled per-listener (services.imaps_login.haproxy_protocol etc.)
   ## in the generated config - the global enabled flag controls all listeners at once.
   ##
   ## trustedNets: CIDRs of load balancers allowed to send PROXY headers.
@@ -2443,6 +2609,22 @@ redis:
   ##   redis://my-redis.prod.svc:6379/0
   ##   rediss://master.cache.amazonaws.com:6379/0
   externalUrl: ""
+
+  ## Sentinel: every Redis client finds the master through these Sentinels
+  ## instead of the URL's host; the db and the password still come from the
+  ## URL and passwordSecret. Empty addrs keeps one address, which is also the
+  ## form for a proxy in front of Sentinel. The password reaches every Redis
+  ## client as YARILO_REDIS_SENTINEL_PASSWORD, never the ConfigMap; a redis
+  ## dict takes the same keys in its settings (sentinel_addrs, sentinel_master,
+  ## sentinel_user, sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}").
+  sentinel:
+    addrs: []
+    master: ""
+    ## Empty: the Sentinels' default user.
+    user: ""
+    passwordSecret:
+      name: ""
+      key: password
 
   resources:
     requests:
@@ -3102,6 +3284,10 @@ dicts:
 #       addr: yarilo-redis.{{ .Release.Namespace }}.svc.cluster.local:6379
 #       db: 0
 #       prefix: "yarilo:quota:"
+#       # Through Sentinel instead (redis.sentinel); addr is then not used:
+#       # sentinel_addrs: [redis-sentinel.redis.svc:26379]
+#       # sentinel_master: mymaster
+#       # sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
 #     expire_secs: 86400
 #   # Optional: duplicate-test dedup (RFC 7352). driver=redis makes the dedup
 #   # window cross-pod; omit (or driver=memory) for per-process behaviour.

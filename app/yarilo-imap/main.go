@@ -38,7 +38,10 @@ func main() {
 
 	// One listener per session binary; the login proxy holds the client
 	// certificate this process must not read (#1863).
-	config.KeepOnlySessionListener(cfg, config.RoleIMAP)
+	if err := config.KeepOnlySessionListener(cfg, config.RoleIMAP); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
 
 	srv, err := backend.New(cfg)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 )
@@ -56,6 +57,9 @@ func (s *Server) emailGet(ctx context.Context, h *userHandle, accountID string, 
 	found, err := s.findMessages(h, want)
 	if err != nil {
 		return nil, storeFailure("Email/get lookup failed", accountID, err)
+	}
+	if props := propsOf(req); props == nil || slices.Contains(props, "threadId") {
+		h.threadLate(found)
 	}
 
 	// Projected, not the object itself: a response must carry the properties

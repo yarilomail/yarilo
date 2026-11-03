@@ -9,15 +9,15 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 
 	"github.com/yarilomail/yarilo/v2/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/v2/internal/auth/passdbs"
 	"github.com/yarilomail/yarilo/v2/internal/auth/policy"
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
+	"github.com/yarilomail/yarilo/v2/internal/drain"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/internal/warden"
 	"github.com/yarilomail/yarilo/v2/pkg/authtoken"
@@ -121,6 +121,7 @@ func main() {
 	defer tokenClose()
 
 	srvOpts := []protocol.ServerOption{
+		protocol.WithUsernameFormat(cfg.Auth.UsernameFormat),
 		protocol.WithTokenStore(tokenStore),
 		protocol.WithUserdb(combinedUserdb),
 		protocol.WithFailureDelay(time.Duration(cfg.Auth.FailureDelaySeconds) * time.Second),
@@ -213,14 +214,17 @@ func main() {
 	}
 	srv := protocol.NewServer(dbs, srvOpts...)
 	errCh := make(chan error, 3)
+	var serving sync.WaitGroup
 	// Bind before readiness: ListenAndServe would bind inside the
 	// goroutine, so the pod would announce ready before the port came up.
-	clientLn, err := srv.Listen(cfg.AuthService.Listen, tlsCfg)
+	clientLn, err := srv.Listen(cfg.AuthService.Listen, cfg.AuthService.Socket(), tlsCfg)
 	if err != nil {
 		slog.Error("auth: listen failed", "addr", cfg.AuthService.Listen, "err", err)
 		os.Exit(1)
 	}
+	serving.Add(1)
 	go func() {
+		defer serving.Done()
 		if err := srv.Serve(ctx, clientLn); err != nil {
 			errCh <- err
 		}
@@ -231,6 +235,7 @@ func main() {
 	// of an extra bind nothing consumes.
 	if cfg.AuthService.MasterListen != "" {
 		masterOpts := []protocol.MasterServerOption{
+			protocol.WithMasterUsernameFormat(cfg.Auth.UsernameFormat),
 			protocol.WithMasterCache(authCache),
 			protocol.WithMasterTokenStore(tokenStore),
 		}
@@ -240,14 +245,25 @@ func main() {
 		if cfg.Storage.MailInboxPath != "" {
 			masterOpts = append(masterOpts, protocol.WithMasterDefaultInboxPath(cfg.Storage.MailInboxPath))
 		}
+		peers, perr := masterSessionPeers(cfg.AuthService)
+		if perr != nil {
+			slog.Error("auth/master: session peers", "err", perr)
+			os.Exit(1)
+		}
+		if peers != nil {
+			masterOpts = append(masterOpts, protocol.WithMasterSessionPeers(peers))
+			slog.Info("yarilo-auth master SESSION limited to peers", "users", cfg.AuthService.MasterSessionUsers)
+		}
 		master := protocol.NewMasterServer(combinedUserdb, masterOpts...)
 		slog.Info("yarilo-auth master listener", "addr", cfg.AuthService.MasterListen)
-		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, masterTLSCfg)
+		masterLn, merr := master.Listen(cfg.AuthService.MasterListen, cfg.AuthService.MasterSocket(), masterTLSCfg)
 		if merr != nil {
 			slog.Error("auth/master: listen failed", "addr", cfg.AuthService.MasterListen, "err", merr)
 			os.Exit(1)
 		}
+		serving.Add(1)
 		go func() {
+			defer serving.Done()
 			if err := master.Serve(ctx, masterLn); err != nil {
 				errCh <- err
 			}
@@ -265,8 +281,8 @@ func main() {
 		slog.Info("received signal, shutting down", "signal", sig.String())
 		cancel()
 		grace := time.Duration(cfg.AuthService.Shutdown.SessionGracePeriod) * time.Second
-		if grace > 0 {
-			time.Sleep(grace)
+		if !drain.Wait(&serving, grace) {
+			slog.Warn("auth: connections still open when the grace period ran out", "grace", grace)
 		}
 	case err := <-errCh:
 		if err != nil {
@@ -304,11 +320,10 @@ func startTelemetry(cfg config.TelemetryConfig, cache *protocol.Cache) *telemetr
 		}
 	}
 	tel := telemetry.NewWithOptions(opts)
-	go func() {
-		if err := tel.ListenAndServe(context.Background()); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 	return tel
 }
 
@@ -346,7 +361,7 @@ func buildTokenStore(cfg config.AuthTokenConfig, dialRetries int) (protocol.Toke
 			slog.Error("auth.token.redis_addr invalid", "err", err)
 			os.Exit(1)
 		}
-		rdb := redis.NewClient(opt)
+		rdb := redisopt.Client(opt, cfg.Sentinel())
 		if err := retry.Do(context.Background(), dialRetries, time.Second, func() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

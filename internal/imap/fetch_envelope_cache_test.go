@@ -24,7 +24,7 @@ func startEnvelopeCacheServer(t *testing.T) (root, addr string) {
 		Resolver:  &mailbox.Resolver{Root: root, HomeTemplate: "%d/%n"},
 		AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

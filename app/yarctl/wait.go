@@ -81,7 +81,7 @@ func probeURL(u string, timeout time.Duration) error {
 // probeTCP reports nil when a TCP connection to addr (host:port) can be established
 // within timeout. The timeout covers DNS resolution and the dial together.
 func probeTCP(addr string, timeout time.Duration) error {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("tcp://%s: %w", addr, err)
 	}

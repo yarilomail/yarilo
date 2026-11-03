@@ -87,6 +87,8 @@ var (
 		"protocol.jmap.jmap_push_poll of the deployment; the push row waits two of them")
 	flagJMAPMaxRequest = flag.Int("jmap-max-size-request", 10485760,
 		"protocol.jmap.jmap_max_size_request of the deployment; the body-cap check sends one byte more")
+	flagJMAPConnLimit = flag.Int("jmap-conn-limit", 0,
+		"the JMAP connection limit per user and address of the deployment, for -jmap-user; enables the 429 row")
 
 	flagPasswdFileUser = flag.String("passwd-file-user", "", "IMAP username backed by the passwd-file passdb (enables the check)")
 	flagPasswdFilePass = flag.String("passwd-file-pass", "", "password for -passwd-file-user")
@@ -301,6 +303,9 @@ func register() []check {
 	want("imap", *flagIMAPUser != "", "imap login", "needs -imap-user", func() error {
 		return checkIMAPLogin(*flagIMAPUser, *flagIMAPPass)
 	})
+	want("imap", *flagIMAPUser != "", "imap login with the name in capitals reaches the same mailbox", "needs -imap-user", func() error {
+		return checkIMAPLoginCase(*flagIMAPUser, *flagIMAPPass)
+	})
 	oauth := *flagOAuth2TokenURL != "" && *flagIMAPUser != ""
 	const oauthNeeds = "needs -oauth2-token-url and -imap-user"
 	want("oauth2", oauth, oauth2IMAPCheck, oauthNeeds, checkOAuth2IMAP)
@@ -342,8 +347,9 @@ func register() []check {
 	for _, acct := range ftsCopyAccounts() {
 		user, pass := acct.user, acct.pass
 		withJMAP := *flagJMAP && user == *flagJMAPUser
-		want("imap", user != "", "imap FTS document is the message ("+user+")",
-			"needs -fts-user or -fts-copy-users", func() error {
+		// The row reads the index through the admin API (#2456).
+		want("imap", user != "" && *flagBackendAPI != "", "imap FTS document is the message ("+user+")",
+			"needs -fts-user or -fts-copy-users, and -backend-api", func() error {
 				return checkFTSDocumentIsMessage(user, pass, withJMAP)
 			})
 	}
@@ -360,6 +366,8 @@ func register() []check {
 	want("jmap", jmap, "jmap session resource (/.well-known/jmap)", "needs -jmap", checkJMAPSession)
 	want("jmap", jmap, "jmap batch + back-reference (Core/echo x2)", "needs -jmap", checkJMAPBatch)
 	want("jmap", jmap, "jmap body cap refused at the login edge", "needs -jmap", checkJMAPBodyCap)
+	want("jmap", jmap && *flagJMAPUser != "" && *flagJMAPConnLimit > 0, "jmap connection limit refused with 429 and Retry-After",
+		"needs -jmap, -jmap-user and -jmap-conn-limit", checkJMAPConnLimit)
 	want("jmap", jmap, "jmap Mailbox/get (roles, ids, parent tree)", "needs -jmap", checkJMAPMailboxes)
 	want("jmap", jmap, "jmap Mailbox/query + back-referenced get", "needs -jmap", checkJMAPMailboxQuery)
 	want("jmap", jmap, "jmap Email/query -> Email/get -> download", "needs -jmap", checkJMAPEmailDiscovery)
@@ -373,6 +381,7 @@ func register() []check {
 	want("jmap", jmap, "jmap download refuses another account's blob", "needs -jmap", checkJMAPDownloadIsolation)
 	want("jmap", jmap && *flagJMAPPushPoll > 0, "jmap WebSocket opened with a ticket alone pushes a StateChange",
 		"needs -jmap and -jmap-push-poll", checkJMAPWebSocketTicket)
+	want("jmap", jmap, "jmap forged client address header from an untrusted peer is ignored", "needs -jmap", checkJMAPForgedClientAddress)
 	want("jmap", jmap && *flagJMAPUser != "" && *flagFTSUser != "",
 		"jmap Email/query over full-text search",
 		"needs -jmap, -jmap-user and -fts-user (the latter states that FTS is configured)", func() error {
@@ -533,6 +542,46 @@ func checkIMAPLogin(user, pass string) error {
 	}
 	if _, err := c.selectFolder("INBOX"); err != nil {
 		return fmt.Errorf("select INBOX: %w", err)
+	}
+	return nil
+}
+
+// checkIMAPLoginCase logs in as user and as user in capitals: with
+// auth_username_format lowercasing, both select the same INBOX, the same
+// UIDVALIDITY and the same count, not a second home made for the capitals.
+func checkIMAPLoginCase(user, pass string) error {
+	upper := strings.ToUpper(user)
+	if upper == user {
+		return fmt.Errorf("%q has no letter to put in capitals", user)
+	}
+	var seen [2]string
+	for i, name := range []string{user, upper} {
+		c, err := imapDial()
+		if err != nil {
+			return fmt.Errorf("dial: %w", err)
+		}
+		if err := c.login(name, pass); err != nil {
+			c.close()
+			return fmt.Errorf("login %q: %w", name, err)
+		}
+		lines, err := c.cmd("SELECT INBOX")
+		c.close()
+		if err != nil {
+			return fmt.Errorf("%s: select INBOX: %w", name, err)
+		}
+		var uidvalidity, exists string
+		for _, l := range lines {
+			if _, v, ok := strings.Cut(l, "[UIDVALIDITY "); ok {
+				uidvalidity, _, _ = strings.Cut(v, "]")
+			}
+			if n, ok := strings.CutSuffix(strings.TrimPrefix(l, "* "), " EXISTS"); ok {
+				exists = n
+			}
+		}
+		seen[i] = "UIDVALIDITY " + uidvalidity + ", " + exists + " messages"
+	}
+	if seen[0] != seen[1] {
+		return fmt.Errorf("%s selected INBOX with %s, %s with %s: two mailboxes for one user", user, seen[0], upper, seen[1])
 	}
 	return nil
 }
@@ -852,7 +901,7 @@ func submissionTLS() (net.Conn, map[string]bool, error) {
 		return nil, nil, fmt.Errorf("STARTTLS: %w", err)
 	}
 	tlsConn := tls.Client(conn, publicTLS(smtpHost()))
-	if err := tlsConn.Handshake(); err != nil {
+	if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 		conn.Close() //nolint:errcheck
 		return nil, nil, fmt.Errorf("STARTTLS TLS handshake: %w", err)
 	}

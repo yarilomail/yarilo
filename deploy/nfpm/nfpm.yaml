@@ -1,0 +1,83 @@
+# .deb for a single Linux host; hack/package/deb.sh builds the binaries into dist/bin.
+name: yarilo
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: mail
+priority: optional
+maintainer: "YariloMail <bsdport@yarilomail.org>"
+description: |
+  Multi-process IMAP, POP3, LMTP, Submission and JMAP mail server.
+  Login proxies terminate TLS, per-protocol session backends serve the
+  mail, and shared authentication, warden and lock services coordinate
+  them. One host needs no external service: locks are kept in memory and
+  users can live in SQLite.
+vendor: YariloMail
+homepage: https://doc.yarilomail.org/
+license: AGPL-3.0-only
+suggests:
+  - postfix
+  - redis-server
+
+contents:
+  - src: dist/bin/yarilo-auth
+    dst: /usr/libexec/yarilo/yarilo-auth
+  - src: dist/bin/yarilo-backend-api
+    dst: /usr/libexec/yarilo/yarilo-backend-api
+  - src: dist/bin/yarilo-dict
+    dst: /usr/libexec/yarilo/yarilo-dict
+  - src: dist/bin/yarilo-imap
+    dst: /usr/libexec/yarilo/yarilo-imap
+  - src: dist/bin/yarilo-imap-login
+    dst: /usr/libexec/yarilo/yarilo-imap-login
+  - src: dist/bin/yarilo-jmap
+    dst: /usr/libexec/yarilo/yarilo-jmap
+  - src: dist/bin/yarilo-jmap-login
+    dst: /usr/libexec/yarilo/yarilo-jmap-login
+  - src: dist/bin/yarilo-lmtp
+    dst: /usr/libexec/yarilo/yarilo-lmtp
+  - src: dist/bin/yarilo-lmtp-login
+    dst: /usr/libexec/yarilo/yarilo-lmtp-login
+  - src: dist/bin/yarilo-locks
+    dst: /usr/libexec/yarilo/yarilo-locks
+  - src: dist/bin/yarilo-managesieve
+    dst: /usr/libexec/yarilo/yarilo-managesieve
+  - src: dist/bin/yarilo-managesieve-login
+    dst: /usr/libexec/yarilo/yarilo-managesieve-login
+  - src: dist/bin/yarilo-pop3
+    dst: /usr/libexec/yarilo/yarilo-pop3
+  - src: dist/bin/yarilo-pop3-login
+    dst: /usr/libexec/yarilo/yarilo-pop3-login
+  - src: dist/bin/yarilo-quota-status
+    dst: /usr/libexec/yarilo/yarilo-quota-status
+  - src: dist/bin/yarilo-sasl-login
+    dst: /usr/libexec/yarilo/yarilo-sasl-login
+  - src: dist/bin/yarilo-submission
+    dst: /usr/libexec/yarilo/yarilo-submission
+  - src: dist/bin/yarilo-submission-login
+    dst: /usr/libexec/yarilo/yarilo-submission-login
+  - src: dist/bin/yarilo-warden
+    dst: /usr/libexec/yarilo/yarilo-warden
+  - src: dist/bin/yarctl
+    dst: /usr/sbin/yarctl
+  - src: dist/bin/yarilo-migrate
+    dst: /usr/sbin/yarilo-migrate
+
+  - src: deploy/systemd/yarilo-*.service
+    dst: /usr/lib/systemd/system/
+  - src: deploy/systemd/yarilo.target
+    dst: /usr/lib/systemd/system/yarilo.target
+  - src: deploy/systemd/sysusers.d/yarilo.conf
+    dst: /usr/lib/sysusers.d/yarilo.conf
+  - src: deploy/systemd/tmpfiles.d/yarilo.conf
+    dst: /usr/lib/tmpfiles.d/yarilo.conf
+  - src: deploy/systemd/yarilo.yaml
+    dst: /etc/yarilo/yarilo.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: deploy/nfpm/postinst
+  preremove: deploy/nfpm/prerm
+  postremove: deploy/nfpm/postrm

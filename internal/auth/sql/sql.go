@@ -16,6 +16,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/v2/internal/auth/scheme"
+	"github.com/yarilomail/yarilo/v2/pkg/sqlitefile"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlpool"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 
@@ -97,6 +98,11 @@ func New(c Config) (*Passdb, error) {
 	if !ok {
 		return nil, fmt.Errorf("auth/sql: unsupported driver %q (want sqlite|mysql|postgres)", c.Driver)
 	}
+	if drv == "sqlite" {
+		if err := sqlitefile.Create(c.DSN); err != nil {
+			return nil, fmt.Errorf("auth/sql: create sqlite file: %w", err)
+		}
+	}
 	db, err := sql.Open(drv, c.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("auth/sql: open %s: %w", c.Driver, err)
@@ -104,13 +110,13 @@ func New(c Config) (*Passdb, error) {
 	pool := c.Pool
 	pool.Driver = c.Driver
 	sqlpool.Apply(db, pool)
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("auth/sql: ping %s: %w", c.Driver, err)
 	}
 	if !c.SkipSchema {
 		if schema, ok := schemaFor(c.Driver); ok {
-			if _, err := db.Exec(schema); err != nil {
+			if _, err := db.ExecContext(context.Background(), schema); err != nil {
 				db.Close()
 				return nil, fmt.Errorf("auth/sql: schema %s: %w", c.Driver, err)
 			}

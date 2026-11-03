@@ -82,13 +82,13 @@ func TestLHLOAdvertisesXClientOnlyToTrustedRelays(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s := New(testOpts(Options{Hostname: "lmtp.test", XClient: true, XClientNets: c.nets}))
-			l, err := net.Listen("tcp", "127.0.0.1:0")
+			l, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
 			go s.srv.Serve(l) //nolint:errcheck
 			defer s.srv.Close()
-			cli, err := net.Dial("tcp", l.Addr().String())
+			cli, err := new(net.Dialer).DialContext(t.Context(), "tcp", l.Addr().String())
 			if err != nil {
 				t.Fatal(err)
 			}

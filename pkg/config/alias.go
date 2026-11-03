@@ -273,12 +273,6 @@ func sslAliasesFor(path string, ssl *SSLConfig) []aliasedKey {
 		str("ssl_server_alt_cert_file", "tls_alt_cert", &ssl.SSLServerAltCert, &ssl.TLSAltCertAlias),
 		str("ssl_server_alt_key_file", "tls_alt_key", &ssl.SSLServerAltKey, &ssl.TLSAltKeyAlias),
 		str("ssl_min_protocol", "tls_min_version", &ssl.SSLMinProtocol, &ssl.TLSMinVersionAlias),
-		{
-			canonical: path + ".ssl_prefer_server_ciphers",
-			alias:     path + ".prefer_server_ciphers",
-			adopt:     func() { ssl.SSLPreferCiphers = ssl.PreferServerAlias },
-			equal:     func() bool { return ssl.SSLPreferCiphers == ssl.PreferServerAlias },
-		},
 	}
 }
 
@@ -286,14 +280,11 @@ func sslAliasesFor(path string, ssl *SSLConfig) []aliasedKey {
 // an alias path can be built for a block that is one of many rather than at a
 // fixed location.
 func servicesByName(cfg *Config) map[string]*ServiceConfig {
-	s := &cfg.Services
-	return map[string]*ServiceConfig{
-		"imap": s.IMAP, "imaps": s.IMAPS,
-		"submission": s.Submission, "submissions": s.Submissions,
-		"pop3": s.POP3, "pop3s": s.POP3S,
-		"lmtp": s.LMTP, "managesieve": s.ManageSieve, "managesieve_be": s.ManageSieveBE,
-		"jmap": s.JMAP, "jmap_be": s.JMAPBE,
+	out := map[string]*ServiceConfig{}
+	for _, e := range cfg.Services.Entries() {
+		out[e.Name] = *e.Svc
 	}
+	return out
 }
 
 // sieveAliases folds the duplicate managesieve limit onto the sieve key it
@@ -541,7 +532,7 @@ func refuseRemovedKeys(k *koanf.Koanf, keys []retiredKey) error {
 // removedKeys is that list, on the same terms as the retired one: a key lands
 // here only once the chart has stopped rendering it.
 func removedKeys() []retiredKey {
-	return []retiredKey{
+	keys := []retiredKey{
 		{
 			key:  "director_service.lmtp_listen",
 			note: "the director no longer serves LMTP; point the MTA at the LMTP login service (#1756)",
@@ -552,9 +543,24 @@ func removedKeys() []retiredKey {
 		},
 		{
 			key:  "auth_service.sasl_listen",
-			note: "Postfix authenticates through yarilo-sasl-login (sasl_login.listen, default :12345), which relays to auth",
+			note: "Postfix authenticates through yarilo-sasl-login (sasl_login.listen, default 127.0.0.1:12345), which relays to auth",
 		},
+		{key: "services.imaps", note: "the login proxy's implicit-TLS listener is services.imaps_login; backends have no TLS listener (#2415)"},
+		{key: "services.pop3s", note: "the login proxy's implicit-TLS listener is services.pop3s_login; backends have no TLS listener (#2415)"},
+		{key: "services.submissions", note: "the login proxy's implicit-TLS listener is services.submissions_login; backends have no TLS listener (#2415)"},
+		{key: "services.managesieve_be", note: "the ManageSieve backend's listener is services.managesieve; the login proxy's is services.managesieve_login (#2415)"},
+		{key: "services.jmap_be", note: "the JMAP backend's listener is services.jmap; the login proxy's is services.jmap_login (#2415)"},
 	}
+	const ciphers = "Go's TLS has picked the cipher suite itself since Go 1.17, with no switch for the server's order (#2442)"
+	blocks := []string{"general.ssl"}
+	for _, e := range (&ServicesConfig{}).Entries() {
+		blocks = append(blocks, "services."+e.Name+".ssl")
+	}
+	for _, b := range blocks {
+		keys = append(keys, retiredKey{key: b + ".ssl_prefer_server_ciphers", note: ciphers},
+			retiredKey{key: b + ".prefer_server_ciphers", note: ciphers})
+	}
+	return keys
 }
 
 // retiredKeys is the whole list. It is short by construction: a key only lands
@@ -569,10 +575,9 @@ func retiredKeys() []retiredKey {
 				"are one profile with different default sample types (#1488)",
 		},
 	}
-	for _, l := range []string{"imap", "imaps", "submission", "submissions", "pop3", "pop3s",
-		"lmtp", "managesieve", "managesieve_be", "jmap", "jmap_be"} {
+	for _, e := range (&ServicesConfig{}).Entries() {
 		keys = append(keys, retiredKey{
-			key:  "services." + l + ".connection_limit",
+			key:  "services." + e.Name + ".connection_limit",
 			note: "nothing ever read it; per-user and per-IP connection limits are warden's (#2112)",
 		})
 	}

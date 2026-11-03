@@ -26,7 +26,7 @@ type countingMaster struct {
 
 func newCountingMaster(t *testing.T) *countingMaster {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestSessionLookupsShareTheMasterConnection(t *testing.T) {
 // Staged as the deadline row in #1408 is: a peer that answers the handshake
 // and then never answers a request.
 func TestASilentMasterFailsTheLookupInsteadOfHangingTheSession(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

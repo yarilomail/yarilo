@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 func jmapHost() string {
@@ -20,14 +22,25 @@ func jmapHost() string {
 }
 
 // jmapClient dials the client-facing JMAP port, which the login proxy serves.
+// The transport is shared, as a real client's pool is: one per request leaves
+// an idle connection behind each, and those fill the connection limit (#2472).
 func jmapClient() *http.Client {
-	return &http.Client{
-		Timeout: *flagTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig: publicTLS(jmapHost()),
-		},
+	tlsConf := publicTLS(jmapHost())
+	key := tlsConf.ServerName + "|" + strconv.FormatBool(tlsConf.InsecureSkipVerify)
+	jmapTransports.mu.Lock()
+	defer jmapTransports.mu.Unlock()
+	tr, ok := jmapTransports.byTLS[key]
+	if !ok {
+		tr = &http.Transport{TLSClientConfig: tlsConf, IdleConnTimeout: 30 * time.Second}
+		jmapTransports.byTLS[key] = tr
 	}
+	return &http.Client{Timeout: *flagTimeout, Transport: tr}
 }
+
+var jmapTransports = struct {
+	mu    sync.Mutex
+	byTLS map[string]*http.Transport
+}{byTLS: map[string]*http.Transport{}}
 
 // checkJMAPUnauthenticated proves the endpoint refuses an anonymous request.
 // A 200 here would mean the backend is reachable without the login layer, which

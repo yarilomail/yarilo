@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -38,8 +37,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if !cfg.Services.LMTP.Active() {
-		slog.Error("no LMTP listener configured (services.lmtp must be enabled)")
+	if !cfg.Services.LMTPLogin.Active() {
+		slog.Error("no LMTP listener configured (services.lmtp_login must be enabled)")
 		os.Exit(1)
 	}
 
@@ -98,8 +97,8 @@ func main() {
 
 	opts := options(cfg, hostname, intTLS, authMasterPool)
 
-	addr := fmt.Sprintf(":%d", cfg.Services.LMTP.Port)
-	ln, err := net.Listen("tcp", addr)
+	addr, from := cfg.Services.LMTPLogin.ListenAddr(config.PublicHost)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		slog.Error("lmtp-login: listen failed", "addr", addr, "err", err)
 		os.Exit(1)
@@ -110,7 +109,7 @@ func main() {
 		slog.Error("lmtp-login: server error", "err", srv.Serve(ln))
 		os.Exit(1)
 	}()
-	slog.Info("lmtp-login: listening", "addr", addr)
+	slog.Info("lmtp-login: listening", "addr", ln.Addr().String(), "from", from)
 
 	tel := startTelemetry(cfg.Telemetry)
 
@@ -147,10 +146,10 @@ func options(cfg *config.Config, hostname string, intTLS *tls.Config, authMaster
 		ConcurrencyLimit: cfg.Protocol.LMTP.UserConcurrencyLimit,
 		// Inbound client-IP forwarding (#742): a Postfix relay in front conveys
 		// the original SMTP client's IP via PROXY protocol and/or XCLIENT.
-		HAProxy:         cfg.Services.LMTP.HAProxy,
+		HAProxy:         cfg.Services.LMTPLogin.HAProxy,
 		HAProxyTimeout:  time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
 		HAProxyNets:     parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
-		XClient:         cfg.Services.LMTP.XClient,
+		XClient:         cfg.Services.LMTPLogin.XClient,
 		XClientNets:     parseCIDRs(cfg.General.XClient.TrustedNets),
 		MaxMessageBytes: quota.ParseSize(cfg.Quota.MailSize),
 		MaxRecipients:   cfg.Protocol.LMTP.MaxRecipients,
@@ -183,10 +182,9 @@ func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	go func() {
-		if err := tel.ListenAndServe(context.Background()); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 	return tel
 }

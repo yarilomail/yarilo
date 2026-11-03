@@ -40,7 +40,7 @@ func startAutoStand(t *testing.T, personal, shared map[string]mailbox.AutoMailbo
 				Location: "maildir:" + st.shared, Mailboxes: shared},
 		},
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func startAutoStand(t *testing.T, personal, shared map[string]mailbox.AutoMailbo
 
 func (st autoStand) login(t *testing.T) *imapclient.Client {
 	t.Helper()
-	conn, err := net.Dial("tcp", st.addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", st.addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestAServerWithNoNamespacesMakesTheDefaultMailboxes(t *testing.T) {
 		AuthRelay:          authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 		SpecialUseDefaults: config.Defaults().Protocol.IMAP.SpecialUseDefaults,
 	})
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

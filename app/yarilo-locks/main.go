@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
@@ -30,6 +29,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/logging"
 	"github.com/yarilomail/yarilo/v2/pkg/mtls"
 	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // version is set via pkg/build.
@@ -85,7 +85,7 @@ func main() {
 		serveErr <- srv.Serve(ctx, ln)
 	}()
 
-	go runTelemetry(cfg.Telemetry, reg, backendReady)
+	runTelemetry(cfg.Telemetry, reg, backendReady)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -97,7 +97,10 @@ func main() {
 		grace := time.Duration(lcfg.Shutdown.SessionGracePeriod) * time.Second
 		// Wait for Serve to return or grace to expire.
 		select {
-		case <-serveErr:
+		case err := <-serveErr:
+			if err != nil {
+				slog.Warn("locks: serve ended with an error", "err", err)
+			}
 		case <-time.After(grace):
 			slog.Warn("graceful shutdown timed out", "grace", grace)
 		}
@@ -128,8 +131,8 @@ func buildBackend(lcfg config.LocksServiceConfig) (locks.Backend, func() bool, e
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse redis url: %w", err)
 		}
-		rdb := redis.NewClient(opts)
-		// No eager Ping: redis.NewClient is lazy, so the process comes up even when
+		rdb := redisopt.Client(opts, lcfg.Sentinel())
+		// No eager Ping: the client is lazy, so the process comes up even when
 		// Redis is not yet reachable rather than crash-looping. The startupProbe gates
 		// traffic and `ready` reports Redis health on /readyz. A bad URL or unknown
 		// mode still fails loudly below since no retry fixes those.
@@ -151,19 +154,15 @@ func buildBackend(lcfg config.LocksServiceConfig) (locks.Backend, func() bool, e
 	}
 }
 
-// buildListener returns the net.Listener for the mode: embedded a Unix socket
-// (a stale one is removed first), remote a TCP listener wrapped in cfg.InternalTLS mTLS.
+// buildListener returns the mode's listener: embedded a Unix socket by the
+// pkg/sockaddr rules, remote a TCP listener wrapped in cfg.InternalTLS mTLS.
 func buildListener(cfg *config.Config, lcfg config.LocksServiceConfig) (net.Listener, error) {
 	switch lcfg.Mode {
 	case "embedded":
 		if lcfg.Socket == "" {
 			return nil, fmt.Errorf("locks_service.socket is required for embedded mode")
 		}
-		// Remove a stale socket from a previous run; ignore not-exists.
-		if err := os.Remove(lcfg.Socket); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("remove stale socket %q: %w", lcfg.Socket, err)
-		}
-		return locks.ListenUnix(lcfg.Socket)
+		return sockaddr.Listen("unix:"+lcfg.Socket, lcfg.SocketPerm())
 	case "remote":
 		if lcfg.Listen == "" {
 			return nil, fmt.Errorf("locks_service.listen is required for remote mode")
@@ -171,7 +170,7 @@ func buildListener(cfg *config.Config, lcfg config.LocksServiceConfig) (net.List
 		if !cfg.InternalTLS.Enabled {
 			// Plain TCP only when a service mesh handles transport security.
 			mtls.WarnRolesUnchecked(mtls.ListenerLocks)
-			return net.Listen("tcp", lcfg.Listen)
+			return new(net.ListenConfig).Listen(context.Background(), "tcp", lcfg.Listen)
 		}
 		tlsCfg, err := mtls.ServerConfig(cfg.InternalTLS.Cert, cfg.InternalTLS.Key, cfg.InternalTLS.CA, mtls.ListenerLocks)
 		if err != nil {
@@ -197,7 +196,8 @@ func runTelemetry(cfg config.TelemetryConfig, reg *prometheus.Registry, backendR
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	if err := tel.ListenAndServe(context.Background()); err != nil {
-		slog.Error("telemetry server failed", "err", err)
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
 	}
 }

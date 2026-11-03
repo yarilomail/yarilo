@@ -3,6 +3,7 @@ package login
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -286,7 +287,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 			}
 			fmt.Fprintf(conn, "%s OK Begin TLS negotiation\r\n", tag) //nolint:errcheck
 			tlsConn := tls.Server(conn, extTLS)
-			if err := tlsConn.Handshake(); err != nil {
+			if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 				return nil, conn, rd, fmt.Errorf("imap: STARTTLS handshake: %w", err)
 			}
 			conn = tlsConn
@@ -511,7 +512,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 			}
 			fmt.Fprintf(conn, "+OK Begin TLS\r\n") //nolint:errcheck
 			tlsConn := tls.Server(conn, extTLS)
-			if err := tlsConn.Handshake(); err != nil {
+			if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 				return nil, conn, rd, fmt.Errorf("pop3: STLS handshake: %w", err)
 			}
 			conn = tlsConn
@@ -732,7 +733,7 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			}
 			fmt.Fprintf(conn, "220 Ready to start TLS\r\n") //nolint:errcheck
 			tlsConn := tls.Server(conn, extTLS)
-			if err := tlsConn.Handshake(); err != nil {
+			if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 				return nil, conn, rd, fmt.Errorf("smtp: STARTTLS handshake: %w", err)
 			}
 			conn = tlsConn

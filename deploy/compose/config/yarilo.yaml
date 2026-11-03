@@ -2,12 +2,12 @@ mode: cluster
 
 general:
   ssl:
-    tls_cert: /etc/yarilo/tls/cert.pem
-    tls_key: /etc/yarilo/tls/key.pem
-    tls_min_version: TLS1.2
+    ssl_server_cert_file: /etc/yarilo/tls/cert.pem
+    ssl_server_key_file: /etc/yarilo/tls/key.pem
+    ssl_min_protocol: TLS1.2
   haproxy:
     timeout: 3
-    trusted_nets:
+    haproxy_trusted_networks:
       - "127.0.0.1/32"
       - "10.0.0.0/8"
   xclient:
@@ -21,71 +21,113 @@ general:
     mail_max_userip_connections: 0
   startup_dial_retries: 3
 
+## Each service runs in its own container and is reached over the compose
+## network, so listeners bind every interface here. Only the ports the
+## docker-compose.yml publishes reach the host's network.
 services:
-  imaps:
+  ## Login proxies: client TLS ends here.
+  imaps_login:
     enabled: true
     port: 10993
+    address: "0.0.0.0"
     ssl_mode: ssl
     haproxy_protocol: false
     xclient_protocol: true
-  imap:
+  imap_login:
     enabled: true
     port: 10143
+    address: "0.0.0.0"
     ssl_mode: starttls
     haproxy_protocol: false
     xclient_protocol: true
-  pop3s:
+  pop3s_login:
     enabled: true
     port: 10995
+    address: "0.0.0.0"
     ssl_mode: ssl
+    haproxy_protocol: false
+    xclient_protocol: true
+  pop3_login:
+    enabled: true
+    port: 10110
+    address: "0.0.0.0"
+    ssl_mode: starttls
+    haproxy_protocol: false
+    xclient_protocol: true
+  submission_login:
+    enabled: true
+    port: 10587
+    address: "0.0.0.0"
+    ssl_mode: starttls
+    auth_allow_cleartext: false
+  submissions_login:
+    enabled: false
+    port: 10465
+    address: "0.0.0.0"
+    ssl_mode: ssl
+    auth_allow_cleartext: false
+  lmtp_login:
+    enabled: true
+    port: 10024
+    address: "0.0.0.0"
+    ssl_mode: "no"
+    haproxy_protocol: false
+    xclient_protocol: true
+  managesieve_login:
+    enabled: true
+    port: 14190
+    address: "0.0.0.0"
+    ssl_mode: starttls
+    auth_allow_cleartext: true
+    haproxy_protocol: false
+  jmap_login:
+    enabled: true
+    port: 8443
+    address: "0.0.0.0"
+    ssl_mode: ssl
+    haproxy_protocol: false
+    auth_allow_cleartext: false
+  ## Session backends, one plain listener each; the login proxies dial them.
+  imap:
+    enabled: true
+    port: 10143
+    address: "0.0.0.0"
+    ssl_mode: starttls
     haproxy_protocol: false
     xclient_protocol: true
   pop3:
     enabled: true
     port: 10110
+    address: "0.0.0.0"
     ssl_mode: starttls
-    haproxy_protocol: false
-    xclient_protocol: true
-  lmtp:
-    enabled: true
-    port: 10024
-    ssl_mode: "no"
     haproxy_protocol: false
     xclient_protocol: true
   submission:
     enabled: true
     port: 10587
+    address: "0.0.0.0"
     ssl_mode: starttls
-    disable_plaintext_auth: true
-  submissions:
-    enabled: false
-    port: 10465
-    ssl_mode: ssl
-    disable_plaintext_auth: true
+    auth_allow_cleartext: false
+  lmtp:
+    enabled: true
+    port: 10024
+    address: "0.0.0.0"
+    ssl_mode: "no"
+    haproxy_protocol: false
+    xclient_protocol: true
   managesieve:
     enabled: true
     port: 14190
-    ssl_mode: starttls
-    disable_plaintext_auth: false
-    haproxy_protocol: false
-  managesieve_be:
-    enabled: true
-    port: 14190
+    address: "0.0.0.0"
     ssl_mode: "no"
-  ## JMAP client listener on yarilo-jmap-login.
-  jmap:
-    enabled: true
-    port: 8443
-    ssl_mode: ssl
-    haproxy_protocol: false
-    disable_plaintext_auth: true
   ## Backend listener on yarilo-jmap, reached only by the login proxy. This
   ## stack runs without internal mTLS, so the trust anchor is the peer address:
   ## xclient_protocol here plus general.xclient.trusted_nets. Without both the
   ## backend refuses every request with 403.
-  jmap_be:
+  jmap:
     enabled: true
     port: 10443
+    address: "0.0.0.0"
     ssl_mode: "no"
     xclient_protocol: true
 
@@ -112,30 +154,30 @@ protocol:
     pop3_deleted_flag: ""
   lmtp:
     login_greeting: "Yarilo ready."
-    add_received_header: true
-    save_to_detail_mailbox: false
-    hdr_delivery_address: "final"
-    verbose_replies: false
-    user_concurrency_limit: 10
+    lmtp_add_received_header: true
+    lmtp_save_to_detail_mailbox: false
+    lmtp_hdr_delivery_address: "final"
+    lmtp_verbose_replies: false
+    lmtp_user_concurrency_limit: 10
     read_timeout: 300
     write_timeout: 300
   submission:
     hostname: ""
-    max_message_size: 41943040
+    submission_max_mail_size: 41943040
     max_line_length: 4096
-    max_recipients: 0
+    submission_max_recipients: 0
     recipient_delimiter: "+"
     submission_add_received_header: true
     relay:
-      host: ""
-      port: 25
-      user: ""
-      password: ""
-      ssl: "no"
-      ssl_verify: true
-      trusted: false
-      connect_timeout: 30
-      command_timeout: 300
+      submission_relay_host: ""
+      submission_relay_port: 25
+      submission_relay_user: ""
+      submission_relay_password: ""
+      submission_relay_ssl: "no"
+      submission_relay_ssl_verify: true
+      submission_relay_trusted: false
+      submission_relay_connect_timeout: 30
+      submission_relay_command_timeout: 300
   managesieve:
     max_script_size: 65536
     max_invalid_commands: 3
@@ -244,26 +286,26 @@ sieve:
   sieve_filter_input_eol: "crlf"
 
 auth:
-  failure_delay: 2
+  auth_failure_delay: 2
   internal_failure_delay_ms: 2000
   cache:
     size_bytes: 1.048576e+08
-    ttl_seconds: 1800
-    negative_ttl_seconds: 1800
+    auth_cache_ttl: 1800
+    auth_cache_negative_ttl: 1800
   penalty:
     enabled: false
   policy:
-    url: ""
-    api_header: ""
-    hash_mech: "sha256"
-    hash_nonce: ""
-    hash_truncate_bits: 12
+    auth_policy_server_url: ""
+    auth_policy_server_api_header: ""
+    auth_policy_hash_mech: "sha256"
+    auth_policy_hash_nonce: ""
+    auth_policy_hash_truncate: 12
     timeout_ms: 5000
-    reject_on_fail: false
-    log_only: false
-    check_before: true
-    check_after: true
-    report_after: true
+    auth_policy_reject_on_fail: false
+    auth_policy_log_only: false
+    auth_policy_check_before_auth: true
+    auth_policy_check_after_auth: true
+    auth_policy_report_after_auth: true
   oauth2:
   passdb:
     - driver: sqlite
@@ -271,7 +313,7 @@ auth:
 acl:
   enabled: true
   defaults_from_inbox: false
-  globals_only: false
+  acl_globals_only: false
 fts:
   enabled: false
   fts_engine: "flatcurve"
@@ -297,7 +339,7 @@ fts:
   fts_commit_limit: 500
   fts_search_add_missing: "body-search-only"
   fts_search_read_fallback: true
-  fts_search_timeout_secs: 30
+  fts_search_timeout: 30
   fts_search_strict: false
   languages: ["en"]
   language_filters: ["lowercase","stopwords","snowball"]
@@ -314,7 +356,7 @@ quota:
   quota_mail_size: "50M"
   quota_storage_percentage: 100
   quota_message_percentage: 100
-  quota_grace: "10M"
+  quota_storage_grace: "10M"
   quota_warning_exec_timeout: 10
   quota_clone_dicts:
     - "quota_clone_redis"
@@ -336,9 +378,9 @@ namespaces:
     acl_ignore: false
     location: "maildir:/var/mail/vhosts/public"
 storage:
-  mailbox: "maildir"
+  mail_driver: "maildir"
   maildir_root: "/var/mail/vhosts"
-  mail_home_template: "%d/%u"
+  mail_home: "%d/%u"
   index: "fileindex"
   # mdbox tuning (only used when mailbox: mdbox):
   # mdbox_rotate_size: 10M           # max size per m.<N> before rolling (10M/1G or raw bytes; 0 = default 10 MiB)

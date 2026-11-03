@@ -3,6 +3,7 @@ package pop3
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"encoding/base64"
@@ -326,6 +327,9 @@ func (s *session) handleSASLScram(parts []string, plus bool, b scramBuilder) {
 		defer relayed.Cancel()
 	}
 	if err := s.driveSASL(parts, saslSrv); err != nil {
+		if errors.Is(err, errSASLAnswered) {
+			return
+		}
 		if d := s.srv.opts.FailureDelay; d > 0 {
 			time.Sleep(d)
 		}
@@ -359,19 +363,21 @@ func (s *session) tlsExporter() []byte {
 	return out
 }
 
+// errSASLAnswered is an exchange that ended with the client already told why.
+var errSASLAnswered = errors.New("pop3: sasl exchange already answered")
+
 // driveSASL runs the multi-round SASL exchange: writes "+ <base64>"
 // continuations, reads client responses, returns nil on success.
 func (s *session) driveSASL(parts []string, srv sasl.Server) error {
-	var resp []byte
-	// initial response is optional in POP3 SASL
-	if len(parts) == 2 {
-		decoded, err := base64.StdEncoding.DecodeString(parts[1])
-		if err != nil {
-			return err
-		}
-		resp = decoded
-	} else {
-		fmt.Fprintf(s.conn, "+ \r\n")
+	// The initial response is optional in POP3 SASL; without it the client
+	// sends it after the empty challenge (RFC 5034 §4).
+	payload, ok := s.readSASLPayload(parts)
+	if !ok {
+		return errSASLAnswered
+	}
+	resp, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return err
 	}
 	for {
 		challenge, done, err := srv.Next(resp)
@@ -380,9 +386,9 @@ func (s *session) driveSASL(parts []string, srv sasl.Server) error {
 		}
 		if done {
 			// POP3 cannot deliver post-success SASL data, so the final
-			// v=ServerSignature challenge is dropped.
+			// v=ServerSignature challenge is dropped. The one +OK is the
+			// caller's, once the mailbox is open.
 			_ = challenge
-			fmt.Fprintf(s.conn, "+OK authenticated\r\n")
 			return nil
 		}
 		fmt.Fprintf(s.conn, "+ %s\r\n",
@@ -865,7 +871,7 @@ func (s *session) cmdSTLS() {
 	}
 	s.ok("Begin TLS negotiation")
 	tlsConn := tls.Server(s.conn, s.srv.opts.TLSConfig)
-	if err := tlsConn.Handshake(); err != nil {
+	if err := tlsConn.HandshakeContext(context.Background()); err != nil {
 		slog.Info("pop3: TLS handshake failed", "err", err)
 		s.state = stateDone
 		return

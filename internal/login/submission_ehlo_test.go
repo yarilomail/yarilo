@@ -54,7 +54,7 @@ func (nopSession) Logout() error                          { return nil }
 // The session opens with nothing of the backend's EHLO reply left over: the
 // next reply the client reads is the reply to its own next command (#2271).
 func TestSubmissionSessionLeavesNoEHLOReplyBehind(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestHeloDomain(t *testing.T) {
 // A backend whose reply to the login's EHLO is not 250 does not get the
 // session: its reply belongs to some other command.
 func TestSubmissionSessionRefusesANon250EHLOReply(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

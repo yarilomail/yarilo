@@ -13,9 +13,12 @@ import (
 )
 
 // startStubAuth starts a minimal yarilo-auth server that always returns OK.
-func startStubAuth(t *testing.T) string {
+func startStubAuth(t *testing.T) string { return startStubAuthOK(t, "") }
+
+// startStubAuthOK answers every AUTH with OK carrying extra, a userdb field.
+func startStubAuthOK(t *testing.T, extra string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,13 +29,13 @@ func startStubAuth(t *testing.T) string {
 			if err != nil {
 				return
 			}
-			go handleStubAuth(conn)
+			go handleStubAuth(conn, extra)
 		}
 	}()
 	return ln.Addr().String()
 }
 
-func handleStubAuth(conn net.Conn) {
+func handleStubAuth(conn net.Conn, extra string) {
 	defer conn.Close()
 	rd := bufio.NewReader(conn)
 	fmt.Fprintf(conn, "VERSION\t1\t0\n")
@@ -53,7 +56,7 @@ func handleStubAuth(conn net.Conn) {
 			// already sent ours; ignore client's VERSION
 		case "AUTH":
 			id := fields[1]
-			fmt.Fprintf(conn, "OK\t%s\tuser=alice\ttoken=stubtoken1234567890123456789012345678901234567890123456789012\n", id)
+			fmt.Fprintf(conn, "OK\t%s\tuser=alice\ttoken=stubtoken1234567890123456789012345678901234567890123456789012%s\n", id, extra)
 		}
 	}
 }
@@ -61,7 +64,7 @@ func handleStubAuth(conn net.Conn) {
 // startWarden starts a real yarilo-warden server and returns its address.
 func startWarden(t *testing.T, max int) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +82,7 @@ func startWarden(t *testing.T, max int) string {
 // stubDirector starts a minimal director that always returns backendAddr for any LOOKUP.
 func stubDirector(t *testing.T, backendAddr string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +143,7 @@ func handleStubDirector(conn net.Conn, backendAddr string) {
 // stubIMAPBackend starts a minimal IMAP backend that accepts any LOGIN/AUTHENTICATE.
 func stubIMAPBackend(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,9 +191,13 @@ func handleStubIMAPBackend(conn net.Conn) {
 
 func buildWardenLoginServer(t *testing.T, wardenAddr string, maxConns int) (loginAddr string) {
 	t.Helper()
+	return buildWardenLoginServerAuth(t, wardenAddr, startStubAuth(t))
+}
+
+func buildWardenLoginServerAuth(t *testing.T, wardenAddr, authAddr string) (loginAddr string) {
+	t.Helper()
 	backendAddr := stubIMAPBackend(t)
 	dirAddr := stubDirector(t, backendAddr)
-	authAddr := startStubAuth(t)
 
 	srv := New(testOpts(Options{
 		Protocol:       ProtocolIMAP,
@@ -200,7 +207,7 @@ func buildWardenLoginServer(t *testing.T, wardenAddr string, maxConns int) (logi
 		WardenFailOpen: false,
 		AuthAddr:       authAddr,
 	}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +220,7 @@ func TestLogin_Warden_AllowsSession(t *testing.T) {
 	wardenAddr := startWarden(t, 5)
 	loginAddr := buildWardenLoginServer(t, wardenAddr, 5)
 
-	conn, err := net.DialTimeout("tcp", loginAddr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", loginAddr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +255,7 @@ func TestLogin_Warden_RejectsWhenLimitReached(t *testing.T) {
 
 	loginAddr := buildWardenLoginServer(t, wardenAddr, 1)
 
-	conn, err := net.DialTimeout("tcp", loginAddr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", loginAddr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,6 +282,53 @@ func TestLogin_Warden_RejectsWhenLimitReached(t *testing.T) {
 	}
 }
 
+// A user whose userdb names mail_max_userip_connections is held to it, not to
+// the protocol's limit: the login proxy hands it to warden with CONNECT (#2460).
+func TestLogin_Warden_AppliesTheUsersOwnLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name, extra string
+		protocol    int // the protocol's configured limit
+		wantOK      bool
+	}{
+		{"no field: the protocol's 10", "", 10, true},
+		{"own limit 1, one session open", "\tmail_max_userip_connections=1", 10, false},
+		{"own limit 0 lifts the protocol's 1", "\tmail_max_userip_connections=0", 1, true},
+		{"userdb_ spelling", "\tuserdb_mail_max_userip_connections=1", 10, false},
+		{"own limit 1 across addresses", "\tmail_max_user_connections=1", 10, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wardenAddr := startWarden(t, tc.protocol)
+			ac, err := warden.Dial(wardenAddr, nil, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ac.Close()
+			if err := ac.Connect("pre", "alice", "127.0.0.1", "imap"); err != nil {
+				t.Fatalf("pre-fill: %v", err)
+			}
+			loginAddr := buildWardenLoginServerAuth(t, wardenAddr, startStubAuthOK(t, tc.extra))
+			conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", loginAddr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(3 * time.Second))
+			rd := bufio.NewReader(conn)
+			if greeting, _ := rd.ReadString('\n'); !strings.HasPrefix(greeting, "* OK") {
+				t.Fatalf("unexpected greeting: %q", greeting)
+			}
+			fmt.Fprintf(conn, "A1 LOGIN alice secret\r\n")
+			resp, _ := rd.ReadString('\n')
+			if got := strings.HasPrefix(resp, "A1 OK"); got != tc.wantOK {
+				t.Fatalf("LOGIN = %q, want OK %v", resp, tc.wantOK)
+			}
+			if !tc.wantOK && !strings.Contains(resp, "[LIMIT]") {
+				t.Errorf("refusal %q does not say [LIMIT]", resp)
+			}
+		})
+	}
+}
+
 func TestLogin_Warden_FailOpen_WhenUnreachable(t *testing.T) {
 	backendAddr := stubIMAPBackend(t)
 	dirAddr := stubDirector(t, backendAddr)
@@ -287,14 +341,14 @@ func TestLogin_Warden_FailOpen_WhenUnreachable(t *testing.T) {
 		WardenFailOpen: true,
 		AuthAddr:       authAddr,
 	}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go srv.Serve(ln) //nolint:errcheck
 
-	conn, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,14 +381,14 @@ func TestLogin_Warden_FailClosed_WhenUnreachable(t *testing.T) {
 		WardenFailOpen: false,
 		AuthAddr:       authAddr,
 	}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
 	go srv.Serve(ln) //nolint:errcheck
 
-	conn, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

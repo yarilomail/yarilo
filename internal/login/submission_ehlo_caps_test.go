@@ -71,7 +71,7 @@ func TestSubmissionEHLOListsWhatTheBackendServes(t *testing.T) {
 // with the same limits, less the lines that depend on the connection.
 func backendEHLO(t *testing.T, size int64, rcpt int) []string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func backendEHLO(t *testing.T, size int64, rcpt int) []string {
 	srv.MaxRecipients = rcpt
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { srv.Close() })
-	c, err := net.Dial("tcp", ln.Addr().String())
+	c, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

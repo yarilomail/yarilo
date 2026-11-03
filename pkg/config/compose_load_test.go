@@ -1,9 +1,12 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +21,32 @@ func TestTheComposeConfigLoads(t *testing.T) {
 	if cfg.BackendAPI.Listen != ":9105" || cfg.BackendAPI.Token != "compose-test-token" {
 		t.Errorf("backend_api listen %q, token from the environment %v; want :9105 and the BACKEND_API_TOKEN value",
 			cfg.BackendAPI.Listen, cfg.BackendAPI.Token == "compose-test-token")
+	}
+}
+
+// The shipped examples use the current names: a key the loader accepts only as
+// a deprecated alias stops loading once the alias goes (#2418). Any warning the
+// loader logs for one fails here, each on a line of its own.
+func TestTheExamplesLoadWithoutAWarning(t *testing.T) {
+	t.Setenv("BACKEND_API_TOKEN", "compose-test-token")
+	for _, path := range []string{
+		filepath.Join("..", "..", "deploy", "compose", "config", "yarilo.yaml"),
+		filepath.Join("..", "..", "config", "yarilo.yaml"),
+		filepath.Join("..", "..", "deploy", "systemd", "yarilo.yaml"),
+	} {
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		_, err := Load(path)
+		slog.SetDefault(prev)
+		if err != nil {
+			t.Fatalf("%s does not load: %v", path, err)
+		}
+		for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+			if line != "" {
+				t.Errorf("loading %s warns: %s", path, line)
+			}
+		}
 	}
 }
 

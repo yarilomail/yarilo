@@ -46,83 +46,126 @@ data:
         mail_max_userip_connections: {{ .Values.general.limits.max_user_ip_connections }}
       startup_dial_retries: {{ .Values.general.startup_dial_retries }}
 
+    ## A pod is reached over its own network, so every listener takes every
+    ## interface; outside k8s an empty address leaves it to the process's role.
     services:
-      imaps:
+      ## One entry per process, named after it (#2415). The *_login entries are
+      ## the login proxies', from their components; the bare names are the
+      ## session backends', from theirs, one plain listener each.
+      imaps_login:
         enabled: {{ .Values.components.imapLogin.listeners.imaps.enabled }}
         port: {{ .Values.components.imapLogin.listeners.imaps.containerPort }}
+        address: "0.0.0.0"
         ssl_mode: ssl
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
-      imap:
+      imap_login:
         enabled: {{ .Values.components.imapLogin.listeners.imap.enabled }}
         port: {{ .Values.components.imapLogin.listeners.imap.containerPort }}
+        address: "0.0.0.0"
         ssl_mode: starttls
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
-      pop3s:
+      pop3s_login:
         enabled: {{ .Values.components.pop3Login.listeners.pop3s.enabled }}
         port: {{ .Values.components.pop3Login.listeners.pop3s.containerPort }}
+        address: "0.0.0.0"
         ssl_mode: ssl
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
-      pop3:
+      pop3_login:
         enabled: {{ .Values.components.pop3Login.listeners.pop3.enabled }}
         port: {{ .Values.components.pop3Login.listeners.pop3.containerPort }}
+        address: "0.0.0.0"
         ssl_mode: starttls
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
-      lmtp:
-        ## Always the lmtp/lmtp-login pods' listener (#748 item 1).
-        enabled: {{ .Values.components.lmtp.listeners.lmtp.enabled }}
-        port: {{ .Values.components.lmtp.listeners.lmtp.containerPort }}
-        ssl_mode: "no"
-        haproxy_protocol: {{ .Values.general.haproxy.enabled }}
-        xclient_protocol: {{ .Values.general.xclient.enabled }}
-      submission:
+      submission_login:
         enabled: {{ .Values.components.submissionLogin.listeners.submission.enabled }}
         port: {{ .Values.components.submissionLogin.listeners.submission.containerPort }}
+        address: "0.0.0.0"
         ssl_mode: starttls
         auth_allow_cleartext: false
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
-      submissions:
+      submissions_login:
         enabled: {{ .Values.components.submissionLogin.listeners.submissions.enabled }}
         port: {{ .Values.components.submissionLogin.listeners.submissions.containerPort }}
+        address: "0.0.0.0"
         ssl_mode: ssl
         auth_allow_cleartext: false
+        haproxy_protocol: {{ .Values.general.haproxy.enabled }}
+        xclient_protocol: {{ .Values.general.xclient.enabled }}
+      lmtp_login:
+        enabled: {{ .Values.components.lmtpLogin.listeners.lmtp.enabled }}
+        port: {{ .Values.components.lmtpLogin.listeners.lmtp.containerPort }}
+        address: "0.0.0.0"
+        ssl_mode: "no"
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       {{- $msLoginL := (((.Values.components.manageSieveLogin | default dict).listeners | default dict).managesieve | default dict) }}
-      managesieve:
+      managesieve_login:
         enabled: {{ $msLoginL.enabled | default false }}
         port: {{ $msLoginL.containerPort | default 4190 }}
+        address: "0.0.0.0"
         ssl_mode: starttls
         auth_allow_cleartext: {{ not ($msLoginL.disablePlainAuth | default false) }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
-      {{- $msL := (((.Values.components.manageSieve | default dict).listeners | default dict).managesieve | default dict) }}
-      managesieve_be:
-        enabled: {{ $msL.enabled | default false }}
-        port: {{ $msL.containerPort | default 14190 }}
-        ssl_mode: "no"
       {{- $jmapL := (((.Values.components.jmapLogin | default dict).listeners | default dict).jmap | default dict) }}
-      jmap:
+      jmap_login:
         enabled: {{ $jmapL.enabled | default false }}
         port: {{ $jmapL.containerPort | default 8443 }}
+        address: "0.0.0.0"
         ssl_mode: ssl
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         auth_allow_cleartext: {{ not ($jmapL.disablePlainAuth | default false) }}
-      {{- /* The backend listener belongs to the yarilo-jmap container, so it is
-             derived from components.jmap and nowhere else: the login proxy reads
-             the same value to know where to dial. */}}
+      imap:
+        enabled: {{ .Values.components.imap.listeners.imap.enabled }}
+        port: {{ .Values.components.imap.listeners.imap.containerPort }}
+        address: "0.0.0.0"
+        ssl_mode: starttls
+        haproxy_protocol: {{ .Values.general.haproxy.enabled }}
+        xclient_protocol: {{ .Values.general.xclient.enabled }}
+      pop3:
+        enabled: {{ .Values.components.pop3.listeners.pop3.enabled }}
+        port: {{ .Values.components.pop3.listeners.pop3.containerPort }}
+        address: "0.0.0.0"
+        ssl_mode: starttls
+        haproxy_protocol: {{ .Values.general.haproxy.enabled }}
+        xclient_protocol: {{ .Values.general.xclient.enabled }}
+      submission:
+        enabled: {{ .Values.components.submission.listeners.submission.enabled }}
+        port: {{ .Values.components.submission.listeners.submission.containerPort }}
+        address: "0.0.0.0"
+        ssl_mode: starttls
+        auth_allow_cleartext: false
+        haproxy_protocol: {{ .Values.general.haproxy.enabled }}
+        xclient_protocol: {{ .Values.general.xclient.enabled }}
+      lmtp:
+        enabled: {{ .Values.components.lmtp.listeners.lmtp.enabled }}
+        port: {{ .Values.components.lmtp.listeners.lmtp.containerPort }}
+        address: "0.0.0.0"
+        ssl_mode: "no"
+        haproxy_protocol: {{ .Values.general.haproxy.enabled }}
+        xclient_protocol: {{ .Values.general.xclient.enabled }}
+      {{- $msL := (((.Values.components.manageSieve | default dict).listeners | default dict).managesieve | default dict) }}
+      managesieve:
+        enabled: {{ $msL.enabled | default false }}
+        port: {{ $msL.containerPort | default 14190 }}
+        address: "0.0.0.0"
+        ssl_mode: "no"
       {{- $jmapBE := ((.Values.components.jmap | default dict).listeners | default dict).jmap | default dict }}
-      jmap_be:
-        enabled: {{ (.Values.components.jmap | default dict).enabled | default false }}
+      jmap:
+        enabled: {{ and ((.Values.components.jmap | default dict).enabled | default false) ($jmapBE.enabled | default false) }}
         port: {{ $jmapBE.containerPort | default 10443 }}
+        address: "0.0.0.0"
         ssl_mode: "no"
         xclient_protocol: {{ $jmapBE.xclient | default false }}
-
     protocol:
       imap:
+        {{- with include "yarilo.userIPLimit" .Values.protocol.imap }}
+        {{ . }}
+        {{- end }}
         imap_idle_notify_interval: {{ .Values.protocol.imap.imap_idle_notify_interval }}
         imap_quota: {{ .Values.protocol.imap.imap_quota }}
         imap_max_line_length: {{ .Values.protocol.imap.imap_max_line_length | int64 }}
@@ -143,6 +186,9 @@ data:
           {{- end }}
         {{- end }}
       pop3:
+        {{- with include "yarilo.userIPLimit" .Values.protocol.pop3 }}
+        {{ . }}
+        {{- end }}
         pop3_lock_session: {{ .Values.protocol.pop3.pop3_lock_session }}
         pop3_save_uidl: {{ .Values.protocol.pop3.pop3_save_uidl }}
         pop3_no_flag_updates: {{ .Values.protocol.pop3.pop3_no_flag_updates }}
@@ -153,6 +199,9 @@ data:
         pop3_delete_type: {{ .Values.protocol.pop3.pop3_delete_type | quote }}
         pop3_deleted_flag: {{ .Values.protocol.pop3.pop3_deleted_flag | quote }}
       lmtp:
+        {{- with include "yarilo.userIPLimit" .Values.protocol.lmtp }}
+        {{ . }}
+        {{- end }}
         login_greeting: {{ .Values.protocol.lmtp.login_greeting | quote }}
         lmtp_add_received_header: {{ .Values.protocol.lmtp.add_received_header }}
         lmtp_add_message_id: {{ .Values.protocol.lmtp.add_message_id }}
@@ -182,6 +231,9 @@ data:
           rate_limit_per_recipient_burst: {{ .Values.protocol.lmtp.rate_limit.per_recipient_burst | int64 }}
           rate_limit_per_recipient_window_seconds: {{ .Values.protocol.lmtp.rate_limit.per_recipient_window_seconds | int64 }}
       submission:
+        {{- with include "yarilo.userIPLimit" .Values.protocol.submission }}
+        {{ . }}
+        {{- end }}
         hostname: {{ .Values.protocol.submission.hostname | quote }}
         submission_max_mail_size: {{ .Values.protocol.submission.max_message_size | quote }}
         max_line_length: {{ int .Values.protocol.submission.max_line_length }}
@@ -211,6 +263,9 @@ data:
           submission_relay_connect_timeout: {{ .Values.protocol.submission.relay.connect_timeout }}
           submission_relay_command_timeout: {{ .Values.protocol.submission.relay.command_timeout }}
       managesieve:
+        {{- with include "yarilo.userIPLimit" (.Values.protocol.managesieve | default dict) }}
+        {{ . }}
+        {{- end }}
         max_invalid_commands: {{ (.Values.protocol.managesieve | default dict).max_invalid_commands }}
         managesieve_max_line_length: {{ (.Values.protocol.managesieve | default dict).managesieve_max_line_length | int64 }}
         {{- /* The duplicate limit: rendered only when the operator set it, so a
@@ -222,6 +277,9 @@ data:
         {{- end }}
       jmap:
         {{- $jmapP := (.Values.protocol.jmap | default dict) }}
+        {{- with include "yarilo.userIPLimit" $jmapP }}
+        {{ . }}
+        {{- end }}
         jmap_base_url: {{ $jmapP.jmap_base_url | default "" | quote }}
         jmap_max_concurrent_requests: {{ $jmapP.jmap_max_concurrent_requests }}
         jmap_max_calls_in_request: {{ $jmapP.jmap_max_calls_in_request }}
@@ -238,6 +296,7 @@ data:
         jmap_push_poll: {{ $jmapP.jmap_push_poll }}
         jmap_websocket_timeout: {{ $jmapP.jmap_websocket_timeout }}
         jmap_websocket_ticket_ttl: {{ $jmapP.jmap_websocket_ticket_ttl }}
+        jmap_limit_retry_after: {{ $jmapP.jmap_limit_retry_after }}
         jmap_cors_allow_origins:
         {{- range ($jmapP.jmap_cors_allow_origins | default list) }}
           - {{ . | quote }}
@@ -332,6 +391,7 @@ data:
       {{- /* hasKey, not | default: an explicit 0, false or "" is a setting (#2162). */}}
       auth_failure_delay: {{ $auth.failure_delay }}
       auth_max_attempts: {{ .Values.components.auth.auth_max_attempts }}
+      auth_username_format: {{ .Values.components.auth.auth_username_format | quote }}
       internal_failure_delay_ms: {{ $auth.internal_failure_delay_ms }}
       cache:
         # Raw values: an explicit 0 turns caching off. int64 keeps a large TTL
@@ -540,6 +600,16 @@ data:
         redis_addr: {{ . | quote }}
         {{- if ($.Values.redis.passwordSecret | default dict).name }}
         redis_password: "${YARILO_REDIS_PASSWORD}"
+        {{- end }}
+        {{- with $.Values.redis.sentinel }}
+        {{- if .addrs }}
+        sentinel_addrs: {{ toJson .addrs }}
+        sentinel_master: {{ .master | quote }}
+        sentinel_user: {{ .user | quote }}
+        {{- if (.passwordSecret | default dict).name }}
+        sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
+        {{- end }}
+        {{- end }}
         {{- end }}
         {{- end }}
         key_prefix: {{ .Values.components.auth.token.key_prefix | default "yarilo:authtoken:" | quote }}
@@ -898,6 +968,11 @@ data:
       master_addr: {{ printf "%s-auth.%s.svc.cluster.local:%s" (include "yarilo.fullname" .) .Release.Namespace (trimPrefix ":" .Values.components.auth.masterListen) | quote }}
       auth_startup_wait: {{ .Values.components.auth.startup_wait | int64 }}
       {{- end }}
+      socket_mode: {{ .Values.components.auth.socket_mode | quote }}
+      socket_group: {{ .Values.components.auth.socket_group | quote }}
+      master_socket_mode: {{ .Values.components.auth.master_socket_mode | quote }}
+      master_socket_group: {{ .Values.components.auth.master_socket_group | quote }}
+      master_session_users: {{ toJson .Values.components.auth.master_session_users }}
       shutdown:
         session_grace_period: {{ .Values.components.auth.shutdown.session_grace_period | int64 }}
         kill_timeout: {{ .Values.components.auth.shutdown.kill_timeout | int64 }}
@@ -907,7 +982,10 @@ data:
     warden_service:
       listen: {{ $wardenListen | quote }}
       addr: {{ printf "%s-warden%s" (include "yarilo.fullname" .) $wardenListen | quote }}
+      socket_mode: {{ $wardenSvc.socket_mode | quote }}
+      socket_group: {{ $wardenSvc.socket_group | quote }}
       conns: {{ $wardenSvc.conns }}
+      fail_open: {{ $wardenSvc.fail_open }}
       ## SELECT events a backend queues for the warden. They are accounting --
       ## the warden records the folder for `who` and can refuse nothing -- so a
       ## full queue drops the oldest rather than holding the command.
@@ -919,6 +997,16 @@ data:
       redis_addr: {{ if $wardenSvc.redis_addr }}{{ $wardenSvc.redis_addr | quote }}{{ else if .Values.redis.bundled }}{{ printf "redis://%s-redis.%s.svc.cluster.local:6379/0" (include "yarilo.fullname" .) .Release.Namespace | quote }}{{ else }}{{ .Values.redis.externalUrl | quote }}{{ end }}
       {{- if (.Values.redis.passwordSecret | default dict).name }}
       redis_password: "${YARILO_REDIS_PASSWORD}"
+      {{- end }}
+      {{- with $.Values.redis.sentinel }}
+      {{- if .addrs }}
+      sentinel_addrs: {{ toJson .addrs }}
+      sentinel_master: {{ .master | quote }}
+      sentinel_user: {{ .user | quote }}
+      {{- if (.passwordSecret | default dict).name }}
+      sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
+      {{- end }}
+      {{- end }}
       {{- end }}
       {{- end }}
       shutdown:
@@ -960,6 +1048,7 @@ data:
       backend_port: {{ .Values.components.jmapLogin.backend_port | default 0 }}
       director_tag: {{ .Values.components.jmapLogin.director_tag | quote }}
       websocket_ticket_key: "${JMAP_WEBSOCKET_TICKET_KEY}"
+      client_ip_header: {{ .Values.components.jmapLogin.client_ip_header | quote }}
     {{- end }}
 
     {{- if .Values.components.submissionLogin.enabled }}
@@ -1026,6 +1115,8 @@ data:
     locks_service:
       mode: remote
       listen: {{ .Values.components.locks.service.listen | default ":9104" | quote }}
+      socket_mode: {{ .Values.components.locks.service.socket_mode | quote }}
+      socket_group: {{ .Values.components.locks.service.socket_group | quote }}
       key_prefix: {{ .Values.components.locks.service.key_prefix | default "yarilo:locks:" | quote }}
       channel_prefix: {{ .Values.components.locks.service.channel_prefix | default "yarilo:events:" | quote }}
       {{- if .Values.redis.bundled }}
@@ -1035,6 +1126,16 @@ data:
       {{- end }}
       {{- if (.Values.redis.passwordSecret | default dict).name }}
       redis_password: "${YARILO_REDIS_PASSWORD}"
+      {{- end }}
+      {{- with $.Values.redis.sentinel }}
+      {{- if .addrs }}
+      sentinel_addrs: {{ toJson .addrs }}
+      sentinel_master: {{ .master | quote }}
+      sentinel_user: {{ .user | quote }}
+      {{- if (.passwordSecret | default dict).name }}
+      sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
+      {{- end }}
+      {{- end }}
       {{- end }}
       shutdown:
         session_grace_period: {{ .Values.components.locks.shutdown.session_grace_period | int64 }}
@@ -1058,6 +1159,8 @@ data:
     ## component reads dict_addr and names a dict (#1733).
     dict_service:
       dict_max_conns: {{ .Values.components.dict.max_conns | int64 }}
+      socket_mode: {{ .Values.components.dict.socket_mode | quote }}
+      socket_group: {{ .Values.components.dict.socket_group | quote }}
       {{- if .Values.components.dict.enabled }}
       dict_listen: {{ .Values.components.dict.listen | default ":9107" | quote }}
       dict_addr: {{ printf "%s-dict.%s.svc.cluster.local:%s" (include "yarilo.fullname" .) .Release.Namespace (include "yarilo.dictPort" .) | quote }}
@@ -1107,6 +1210,7 @@ data:
       director_domain_rebalance_percent: {{ .Values.components.director.director_domain_rebalance_percent }}
       director_domain_rebalance_interval: {{ .Values.components.director.director_domain_rebalance_interval }}
       director_domain_rebalance_cooldown: {{ .Values.components.director.director_domain_rebalance_cooldown }}
+      director_domain_rebalance_min_sessions: {{ .Values.components.director.director_domain_rebalance_min_sessions }}
       user_kick_delay: {{ .Values.components.director.user_kick_delay }}
       user_kill_timeout: {{ .Values.components.director.user_kill_timeout }}
       user_kill_confirm_grace: {{ .Values.components.director.user_kill_confirm_grace }}

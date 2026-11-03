@@ -21,7 +21,7 @@ func TestAnAddedBackendKeepsTheWeightItNames(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewWithOptions(testOptions(Options{}))
 			rec := httptest.NewRecorder()
-			s.apiBackendAdd(rec, httptest.NewRequest("POST", "/api/director/backends", strings.NewReader(tc.body)))
+			s.apiBackendAdd(rec, httptest.NewRequestWithContext(t.Context(), "POST", "/api/director/backends", strings.NewReader(tc.body)))
 			if rec.Code != 200 {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body)
 			}

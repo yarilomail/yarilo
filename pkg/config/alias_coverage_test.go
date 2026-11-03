@@ -21,13 +21,8 @@ func TestEveryAliasFieldHasAnAdopter(t *testing.T) {
 	// A config with every optional block present, so per-block alias sets
 	// (services.*.ssl) are built rather than skipped.
 	cfg := &Config{}
-	cfg.Services = ServicesConfig{
-		IMAP: &ServiceConfig{SSL: &SSLConfig{}}, IMAPS: &ServiceConfig{SSL: &SSLConfig{}},
-		Submission: &ServiceConfig{SSL: &SSLConfig{}}, Submissions: &ServiceConfig{SSL: &SSLConfig{}},
-		POP3: &ServiceConfig{SSL: &SSLConfig{}}, POP3S: &ServiceConfig{SSL: &SSLConfig{}},
-		LMTP: &ServiceConfig{SSL: &SSLConfig{}}, ManageSieve: &ServiceConfig{SSL: &SSLConfig{}},
-		ManageSieveBE: &ServiceConfig{SSL: &SSLConfig{}}, JMAP: &ServiceConfig{SSL: &SSLConfig{}},
-		JMAPBE: &ServiceConfig{SSL: &SSLConfig{}},
+	for _, e := range cfg.Services.Entries() {
+		*e.Svc = &ServiceConfig{SSL: &SSLConfig{}}
 	}
 	// One entry in each list-shaped section, so the per-entry alias sets are
 	// built rather than skipped: a chain nobody declared covers nothing.
@@ -134,7 +129,7 @@ func normaliseServicePath(path string) string {
 // chain the loader reads it under, which is what makes two same-named keys in
 // different sections distinguishable.
 func walkAliasPaths(t reflect.Type, goPath, koanfPath string, visit func(goPath, koanfPath string)) {
-	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {

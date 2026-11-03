@@ -165,6 +165,9 @@ type Options struct {
 	// DomainRebalancePercent is how far the busiest backend of a tag may rise
 	// above the quietest before one domain moves down; 0 never moves one.
 	DomainRebalancePercent int
+	// DomainRebalanceMinSessions is how many sessions the busiest backend of a
+	// tag must carry before a spread is worth a move; 0 judges any load (#2494).
+	DomainRebalanceMinSessions int
 
 	// DomainRebalanceInterval is how often that is judged, and
 	// DomainRebalanceCooldown how long a moved domain is left alone -- the
@@ -540,7 +543,7 @@ func (s *Server) Listen(addr string, tlsCfg *tls.Config) (net.Listener, error) {
 		}
 		return ln, nil
 	}
-	ln, err := net.Listen("tcp", addr)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("director: listen %s: %w", addr, err)
 	}
@@ -891,7 +894,7 @@ func (s *Server) commandGate(conn net.Conn) func(cmd string) bool {
 	if !ok {
 		return func(string) bool { return true }
 	}
-	_ = tc.Handshake()
+	_ = tc.HandshakeContext(context.Background())
 	role, ok := mtls.PeerRole(tc.ConnectionState())
 	if !ok {
 		return func(string) bool { return true }

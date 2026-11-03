@@ -1,0 +1,40 @@
+[Unit]
+Description=yarilo lock service
+Documentation=https://doc.yarilomail.org/
+PartOf=yarilo.target
+After=network.target
+
+[Service]
+Type=simple
+User=yarilo
+Group=yarilo
+Environment=TELEMETRY_LISTEN=127.0.0.1:18080
+ExecStart=/usr/libexec/yarilo/yarilo-locks
+ExecStartPost=/bin/sh -c 'i=0; until [ -S /run/yarilo/locks/locks.sock ]; do i=$$((i+1)); [ $$i -gt 50 ] && exit 1; sleep 0.2; done'
+Restart=on-failure
+RestartSec=2s
+KillMode=mixed
+TimeoutStopSec=60s
+CapabilityBoundingSet=
+ReadWritePaths=/run/yarilo/locks
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=yarilo.target

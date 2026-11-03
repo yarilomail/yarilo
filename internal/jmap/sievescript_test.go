@@ -367,7 +367,7 @@ func TestSieveScriptDownload(t *testing.T) {
 	ctx := context.Background()
 	s, home, st := sieveServer(t, sieve.Quota{})
 	_ = st.SaveScript(ctx, testUser, home, "dl", []byte(discardScript))
-	r := httptest.NewRequest(http.MethodGet, "/jmap/download/"+testAccount+"/"+scriptBlobID([]byte(discardScript))+"/dl.sieve", nil)
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/jmap/download/"+testAccount+"/"+scriptBlobID([]byte(discardScript))+"/dl.sieve", nil)
 	r.RemoteAddr = trustedPeer
 	r.Header.Set(hdrUser, testUser)
 	r.Header.Set(hdrSessionID, "deadbeefdeadbeef")

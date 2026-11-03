@@ -44,14 +44,14 @@ func startOAuthServer(t *testing.T, auth protocol.Authenticator, enabled bool) *
 		OAuth2Enabled: enabled,
 	}
 	srv := imapserver.New(opts)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,5 +148,36 @@ func TestIMAP_OAuthBearer_CapabilityAdvertised(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("OAUTHBEARER not advertised when enabled: %v", caps)
+	}
+}
+
+// xoauth2Client speaks XOAUTH2: the user and bearer token in one initial
+// response, and an empty reply to the server's error challenge.
+type xoauth2Client struct{ user, token string }
+
+func (c xoauth2Client) Start() (string, []byte, error) {
+	return "XOAUTH2", []byte("user=" + c.user + "\x01auth=Bearer " + c.token + "\x01\x01"), nil
+}
+func (xoauth2Client) Next([]byte) ([]byte, error) { return []byte{}, nil }
+
+// XOAUTH2 validates the token on the same path as OAUTHBEARER: the right one
+// logs in and selects, a wrong one is refused.
+func TestIMAP_XOAuth2(t *testing.T) {
+	auth := &oauthBearerAuth{user: "alice@example.com", token: "valid-token"}
+	for _, tc := range []struct {
+		token string
+		ok    bool
+	}{{"valid-token", true}, {"wrong", false}} {
+		c := startOAuthServer(t, auth, true)
+		err := c.Authenticate(xoauth2Client{user: "alice@example.com", token: tc.token})
+		if (err == nil) != tc.ok {
+			t.Errorf("token %q: %v, want ok=%v", tc.token, err, tc.ok)
+		}
+		if tc.ok {
+			if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+				t.Errorf("SELECT after XOAUTH2: %v", err)
+			}
+		}
+		c.Close() //nolint:errcheck
 	}
 }

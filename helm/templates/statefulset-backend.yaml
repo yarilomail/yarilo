@@ -18,13 +18,15 @@
        and, under OrderedReady, wedge the whole StatefulSet). The sidecar's
        readiness_protocols is derived from the SAME enabled set in the configmap,
        so a disabled protocol never silences the heartbeat. */ -}}
+{{- /* Each protocol's one listener comes from components.<vkey>.listeners.<listener>,
+       the same values the ConfigMap renders its services entry from (#2415). */ -}}
 {{- $allProtocols := list
-  (dict "name" "imap" "vkey" "imap" "component" "yarilo-imap" "telemetry" 8080 "ports" (list (dict "name" "imap" "port" 10143)))
-  (dict "name" "pop3" "vkey" "pop3" "component" "yarilo-pop3" "telemetry" 8081 "ports" (list (dict "name" "pop3" "port" 10110)))
-  (dict "name" "submission" "vkey" "submission" "component" "yarilo-submission" "telemetry" 8082 "ports" (list (dict "name" "submission" "port" 10587)))
-  (dict "name" "lmtp" "vkey" "lmtp" "component" "yarilo-lmtp" "telemetry" 8083 "ports" (list (dict "name" "lmtp" "port" 10024)))
-  (dict "name" "managesieve" "vkey" "manageSieve" "component" "yarilo-managesieve" "telemetry" 8084 "ports" (list (dict "name" "sieve" "port" 14190)))
-  (dict "name" "jmap" "vkey" "jmap" "component" "yarilo-jmap" "telemetry" 8087 "ports" (list (dict "name" "jmap" "port" 10443)))
+  (dict "name" "imap" "vkey" "imap" "listener" "imap" "portName" "imap" "component" "yarilo-imap" "telemetry" 8080)
+  (dict "name" "pop3" "vkey" "pop3" "listener" "pop3" "portName" "pop3" "component" "yarilo-pop3" "telemetry" 8081)
+  (dict "name" "submission" "vkey" "submission" "listener" "submission" "portName" "submission" "component" "yarilo-submission" "telemetry" 8082)
+  (dict "name" "lmtp" "vkey" "lmtp" "listener" "lmtp" "portName" "lmtp" "component" "yarilo-lmtp" "telemetry" 8083)
+  (dict "name" "managesieve" "vkey" "manageSieve" "listener" "managesieve" "portName" "sieve" "component" "yarilo-managesieve" "telemetry" 8084)
+  (dict "name" "jmap" "vkey" "jmap" "listener" "jmap" "portName" "jmap" "component" "yarilo-jmap" "telemetry" 8087)
 }}
 {{- /* Sidecar ports. Declared here, beside the protocol table, so the render-time
        assert below and the containers themselves read one source: a literal
@@ -37,8 +39,14 @@
 {{- $backendAPITelemetry := 8088 }}
 {{- $protocols := list }}
 {{- range $p := $allProtocols }}
-{{- if (index $root.Values.components $p.vkey | default dict).enabled }}
-{{- $protocols = append $protocols $p }}
+{{- $c := index $root.Values.components $p.vkey | default dict }}
+{{- if $c.enabled }}
+{{- $l := index ($c.listeners | default dict) $p.listener | default dict }}
+{{- $ports := list }}
+{{- if $l.enabled }}
+{{- $ports = list (dict "name" $p.portName "port" (int $l.containerPort)) }}
+{{- end }}
+{{- $protocols = append $protocols (merge (dict "ports" $ports) $p) }}
 {{- end }}
 {{- end }}
 {{- /* Every container in this pod shares one network namespace, so two of them

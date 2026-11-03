@@ -26,7 +26,7 @@ type authEvent struct {
 
 func startFakeAuth(t *testing.T) *fakeAuth {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func (fa *fakeAuth) handle(conn net.Conn) {
 func startProxy(t *testing.T, authAddr string, opts sasllogin.Options) string {
 	t.Helper()
 	opts.AuthAddr = authAddr
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func startProxy(t *testing.T, authAddr string, opts sasllogin.Options) string {
 // up to and including DONE.
 func dialProxy(t *testing.T, addr string) (net.Conn, []string) {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestProxy_TrustedNets_Reject(t *testing.T) {
 	})
 
 	// 127.0.0.1 is not in 192.168.0.0/24 - connection should be closed immediately.
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

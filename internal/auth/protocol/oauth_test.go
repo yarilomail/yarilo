@@ -29,14 +29,14 @@ func (p tokenPassdb) OAuth2Failure() (string, string) { return p.scope, p.openid
 // handshake's MECH names.
 func oauthServer(t *testing.T, chain ...Passdb) (net.Conn, *bufio.Reader, []string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go NewServer(chain).Serve(ctx, ln) //nolint:errcheck
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(ctx, "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}

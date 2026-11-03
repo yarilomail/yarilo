@@ -40,14 +40,14 @@ func startServerWith(t *testing.T, mb mailbox.MailboxBackend) *imapclient.Client
 	}
 	srv := imapserver.New(opts)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
 	go srv.Serve(ln) //nolint:errcheck
 	t.Cleanup(func() { ln.Close() })
 
-	conn, err := net.Dial("tcp", ln.Addr().String())
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("net.Dial: %v", err)
 	}
@@ -321,13 +321,13 @@ func TestIMAPBackends_DeleteReclaimsIndex(t *testing.T) {
 				AuthRelay: authtest.RelayTo(t, &stubPassdb{user: "user@test.com", pass: "testpass"}),
 			}
 			srv := imapserver.New(opts)
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatalf("net.Listen: %v", err)
 			}
 			go srv.Serve(ln) //nolint:errcheck
 			t.Cleanup(func() { ln.Close() })
-			conn, err := net.Dial("tcp", ln.Addr().String())
+			conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", ln.Addr().String())
 			if err != nil {
 				t.Fatalf("net.Dial: %v", err)
 			}

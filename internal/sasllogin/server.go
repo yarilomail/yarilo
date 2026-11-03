@@ -20,6 +20,7 @@ import (
 	proxyproto "github.com/pires/go-proxyproto"
 
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // Options configures a Server.
@@ -54,7 +55,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		timeout := s.opts.HAProxyTimeout
 		ln = &proxyproto.Listener{
 			Listener:          ln,
-			Policy:            haProxyPolicy(s.opts.HAProxyNets),
+			ConnPolicy:        haProxyPolicy(s.opts.HAProxyNets),
 			ReadHeaderTimeout: timeout,
 		}
 	}
@@ -99,11 +100,7 @@ func (s *Server) handle(client net.Conn) {
 
 	var authConn net.Conn
 	var err error
-	if s.opts.AuthTLS != nil {
-		authConn, err = tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", s.opts.AuthAddr, s.opts.AuthTLS)
-	} else {
-		authConn, err = net.DialTimeout("tcp", s.opts.AuthAddr, 5*time.Second)
-	}
+	authConn, err = sockaddr.DialTLS(context.Background(), &net.Dialer{Timeout: 5 * time.Second}, s.opts.AuthAddr, s.opts.AuthTLS)
 	if err != nil {
 		slog.Error("sasl-login: dial auth failed", "remote_ip", clientIP, "err", err)
 		return
@@ -230,8 +227,9 @@ func logServerLine(line, remoteIP string) {
 	}
 }
 
-func haProxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
-	return func(upstream net.Addr) (proxyproto.Policy, error) {
+func haProxyPolicy(nets []*net.IPNet) proxyproto.ConnPolicyFunc {
+	return func(o proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		upstream := o.Upstream
 		if len(nets) == 0 {
 			return proxyproto.IGNORE, nil
 		}

@@ -4,7 +4,8 @@
 ##   1. cert-manager + ClusterIssuer "letsencrypt-prod" in the cluster.
 ##   2. DNS A/AAAA for mail-sb.seconddns.com pointing at the LB IP.
 ##   3. MySQL (apply mysql-sandbox.yaml first - namespace: db).
-##   4. Redis (apply redis-sandbox.yaml first - namespace: redis).
+##   4. Valkey (seconddns/k8s_valkey, release valkey - namespace: redis), on
+##      trial; redis-sandbox.yaml stays until the decision.
 ##
 ## Install:
 ##   helm upgrade --install yarilo ./helm \
@@ -178,6 +179,9 @@ service:
 protocol:
   jmap:
     jmap_base_url: "https://mail-sb.seconddns.com"
+    ## A JMAP limit the smoketest's 429 row can reach; the general one stays
+    ## off for imaptest's load.
+    mail_max_userip_connections: 20
   imap:
     imap_idle_notify_interval: 120
     imap_max_line_length: 65536
@@ -285,9 +289,13 @@ dicts:
   acl_shared:
     driver: redis
     settings:
-      addr: redis.redis.svc.cluster.local:6379
+      addr: valkey.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
+      sentinel_addrs: [valkey-sentinel.redis.svc.cluster.local:26379]
+      sentinel_master: mymaster
+      sentinel_user: sentinel
+      sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
       prefix: "yarilo-sb:acl-shared:"
   ## Annotations go to a file in the user's home, the chart default: the
   ## session opens it itself and asks yarilo-dict nothing (#1733).
@@ -301,9 +309,13 @@ dicts:
   quota_clone_redis:
     driver: redis
     settings:
-      addr: redis.redis.svc.cluster.local:6379
+      addr: valkey.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
+      sentinel_addrs: [valkey-sentinel.redis.svc.cluster.local:26379]
+      sentinel_master: mymaster
+      sentinel_user: sentinel
+      sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
       prefix: "yarilo-sb:quota:"
   quota_clone_mysql:
     driver: sql
@@ -319,9 +331,13 @@ dicts:
   sieve_duplicate:
     driver: redis
     settings:
-      addr: redis.redis.svc.cluster.local:6379
+      addr: valkey.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
+      sentinel_addrs: [valkey-sentinel.redis.svc.cluster.local:26379]
+      sentinel_master: mymaster
+      sentinel_user: sentinel
+      sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
       prefix: "yarilo-sb:sieve:duplicate:"
 
 ## External MySQL - managed by mysql-sandbox.yaml; bundled StatefulSet disabled.
@@ -338,16 +354,30 @@ mysql:
 database:
   initAddr: "mysql.db.svc:3306"
 
-## External Redis - managed by redis-sandbox.yaml (namespace: redis); the chart's
-## in-namespace Redis StatefulSet is disabled. Consumers (locks state, dicts)
-## point at redis.redis.svc.cluster.local:6379.
+## External Redis protocol - Valkey with Sentinel from seconddns/k8s_valkey
+## (namespace: redis), on trial in place of redis-sandbox.yaml; the chart's
+## in-namespace Redis StatefulSet is disabled. Consumers (locks state, dicts,
+## auth tokens) ask the Sentinels for the master (redis.sentinel below), so the
+## host in the URLs is not dialled; it names the data Service for a client
+## without the Sentinel keys, which may reach a replica.
 redis:
   bundled: false
-  externalUrl: "redis://redis.redis.svc.cluster.local:6379/0"
+  externalUrl: "redis://valkey.redis.svc.cluster.local:6379/0"
   ## The password: Secret yarilo-redis-password, made outside git with the
   ## value of redis-password in the redis namespace.
   passwordSecret:
     name: yarilo-redis-password
+  ## Every Redis client finds the master through Valkey's Sentinels (#2505);
+  ## the URLs' host is then unused, their db and the password above still
+  ## count. Secret yarilo-redis-sentinel-password, made outside git with the
+  ## value of valkey-sentinel in the redis namespace.
+  sentinel:
+    addrs: [valkey-sentinel.redis.svc.cluster.local:26379]
+    master: mymaster
+    user: sentinel
+    passwordSecret:
+      name: yarilo-redis-sentinel-password
+      key: password
 
 ## DSN injected from the yarilo-mysql Secret made by hack/sandbox/secrets.sh.
 extraEnv:
@@ -411,7 +441,6 @@ components:
         ## would keep 500m.
         cpu: null
         memory: 256Mi
-    ring_secret: "sandbox-ring-secret-32charslong00"
     min_members: 3
     seed_poll_idle_interval: 5
     ## Domain affinity by load (#1943): the stand exercises ACL between users
@@ -514,6 +543,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
   ## JMAP login - HTTPS terminator on :8443, per-request proxy to the
   ## yarilo-jmap backend container (:10443). Until the backend PR lands,
@@ -537,6 +570,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
   ## POP3 login - TLS terminator on :995 (POP3S) / :110 (STLS).
   ## Reuses yarilo-tls Secret from imapLogin.
@@ -570,6 +607,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
   auth:
     ## Master users (#1301 window): impersonation via SASL authzid or the
@@ -641,7 +682,7 @@ components:
 
     token:
       backend: redis
-      redis_addr: "redis://redis.redis.svc.cluster.local:6379/0"
+      redis_addr: "redis://valkey.redis.svc.cluster.local:6379/0"
       # Sandbox shares one Redis; every component lives under the yarilo-sb: namespace.
       key_prefix: "yarilo-sb:authtoken:"
 
@@ -767,6 +808,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
   ## JMAP backend - one more container in the co-located pod, reached only by
   ## jmapLogin. internalTLS is on cluster-wide here, so the peer certificate is
@@ -803,6 +848,10 @@ components:
       annotations:
         metallb.universe.tf/loadBalancerIPs: "10.50.80.29"
         metallb.universe.tf/allow-shared-ip: "yarilo-mail"
+      ## One address for all five client Services: MetalLB shares it only
+      ## under Cluster. The stand's traffic comes from the runner, so the
+      ## client address is not needed here.
+      externalTrafficPolicy: Cluster
 
 ## NOTE (#878): there is deliberately NO top-level `resources:` block here.
 ## The chart has no `.Values.resources` - sizing is per-component only

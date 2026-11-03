@@ -18,8 +18,7 @@ var configMapKey = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
 func TestEveryRenderedConfigMapKeyIsOneTheAPIServerAccepts(t *testing.T) {
 	// The stand's own values, which define virtual_definitions: a key built from
 	// an operator's name is the only place an invalid one can come from.
-	out, err := exec.Command("helm", "template", "../../helm",
-		"-f", "../../helm_values/values-sandbox.yaml").Output()
+	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

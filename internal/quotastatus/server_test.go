@@ -29,7 +29,7 @@ func newMemDict(t *testing.T) dict.Dict {
 
 func startServer(t *testing.T, opts quotastatus.Options) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func startServer(t *testing.T, opts quotastatus.Options) string {
 
 func policyCheck(t *testing.T, addr string, attrs map[string]string) string {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestAliasResolution_NoAlias_FallsBackToDirect(t *testing.T) {
 
 func TestPolicyCheck_MultipleRequestsPerConn(t *testing.T) {
 	addr := startStorageServer(t, []string{"*:storage=10M"}, nil, 0, map[string]uint32{"bob@example.com": 0})
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

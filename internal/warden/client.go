@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/pkg/lineio"
+	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 )
 
 // Conn is a single TCP connection to yarilo-warden for one login session.
@@ -34,11 +35,7 @@ func DialContext(ctx context.Context, addr string, tlsCfg *tls.Config, timeout t
 	d := &net.Dialer{Timeout: timeout}
 	var raw net.Conn
 	var err error
-	if tlsCfg != nil {
-		raw, err = (&tls.Dialer{NetDialer: d, Config: tlsCfg}).DialContext(ctx, "tcp", addr)
-	} else {
-		raw, err = d.DialContext(ctx, "tcp", addr)
-	}
+	raw, err = sockaddr.DialTLS(ctx, d, addr, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("warden/client: dial %s: %w", addr, err)
 	}
@@ -83,7 +80,20 @@ func (c *Conn) readHandshake() error {
 // Connect sends CONNECT and returns nil on OK, ErrTooManyConns on FAIL, or a
 // transport error. id must be unique per request (e.g. session sequence number).
 func (c *Conn) Connect(id, user, ip, service string) error {
-	if _, err := fmt.Fprintf(c.conn, "CONNECT\t%s\t%s\t%s\t%s\n", id, user, ip, service); err != nil {
+	return c.ConnectLimits(id, user, ip, service, UserLimits{})
+}
+
+// ConnectLimits is Connect for a user whose userdb names limits of its own
+// (#2460).
+func (c *Conn) ConnectLimits(id, user, ip, service string, l UserLimits) error {
+	line := "CONNECT\t" + id + "\t" + user + "\t" + ip + "\t" + service
+	if l.UserIP != nil {
+		line += "\tlimit=" + strconv.Itoa(*l.UserIP)
+	}
+	if l.User != nil {
+		line += "\tuser_limit=" + strconv.Itoa(*l.User)
+	}
+	if _, err := fmt.Fprint(c.conn, line+"\n"); err != nil {
 		return fmt.Errorf("warden/client: write CONNECT: %w", err)
 	}
 	line, err := lineio.ReadLine(c.rd, lineio.MaxInternal)
@@ -206,7 +216,11 @@ func (c *Conn) Dump() (*StateDump, error) {
 			}
 			counter, _ := strconv.Atoi(fields[2])
 			live, _ := strconv.Atoi(fields[3])
-			d.Counters = append(d.Counters, CounterStat{UserIP: fields[1], Counter: counter, Live: live})
+			cs := CounterStat{UserIP: fields[1], Counter: counter, Live: live}
+			if len(fields) > 4 {
+				cs.Service = fields[4]
+			}
+			d.Counters = append(d.Counters, cs)
 		case "PEN":
 			if len(fields) < 4 {
 				continue

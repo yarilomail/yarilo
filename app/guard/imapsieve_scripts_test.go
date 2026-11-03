@@ -9,7 +9,7 @@ import (
 // The stand's values: the imapsieve scripts reach the imap container of the
 // co-located backend at imapsieve_script_dir, and no other container (#2292).
 func TestIMAPSieveScriptsReachTheBackendIMAP(t *testing.T) {
-	out, err := exec.Command("helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

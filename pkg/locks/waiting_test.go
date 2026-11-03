@@ -17,7 +17,7 @@ import (
 // that needs it, which is ordinary in a cluster (#1350).
 func refusingThenAccepting(t *testing.T, refuseFor time.Duration) (addr string, dialled *int32) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -27,7 +27,7 @@ func refusingThenAccepting(t *testing.T, refuseFor time.Duration) (addr string, 
 	var count int32
 	go func() {
 		time.Sleep(refuseFor)
-		l2, lerr := net.Listen("tcp", addr)
+		l2, lerr := new(net.ListenConfig).Listen(t.Context(), "tcp", addr)
 		if lerr != nil {
 			return
 		}
@@ -78,7 +78,7 @@ func TestClientWaitsForAServiceThatIsLate(t *testing.T) {
 // pod that looks healthy.
 func TestClientStillGivesUpOnAnEndpointThatNeverAnswers(t *testing.T) {
 	// A port nothing listens on.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestClientStillGivesUpOnAnEndpointThatNeverAnswers(t *testing.T) {
 
 // wait <= 0 is exactly NewClient, so a deployment can turn the behaviour off.
 func TestZeroWaitDoesNotRetry(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

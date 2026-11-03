@@ -100,7 +100,7 @@ func startStand(t *testing.T) *localStand {
 
 func (s *localStand) listen(t *testing.T) (net.Listener, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

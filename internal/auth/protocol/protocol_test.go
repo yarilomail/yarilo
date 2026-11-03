@@ -234,7 +234,7 @@ func (c *credPassdb) Authenticate(req *Request) (Result, error) {
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestListenAndServe_Handshake(t *testing.T) {
 	go srv.ListenAndServe(ctx, addr, nil) //nolint:errcheck
 	time.Sleep(20 * time.Millisecond)
 
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestListenAndServe_AuthOK(t *testing.T) {
 	go srv.ListenAndServe(ctx, addr, nil) //nolint:errcheck
 	time.Sleep(20 * time.Millisecond)
 
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestListenAndServe_AuthFail(t *testing.T) {
 	go srv.ListenAndServe(ctx, addr, nil) //nolint:errcheck
 	time.Sleep(20 * time.Millisecond)
 
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

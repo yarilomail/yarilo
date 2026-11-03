@@ -43,6 +43,21 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 app.kubernetes.io/part-of: yarilo
 {{- end }}
 
+{{/* Address families and client-address handling of a component's client
+Service. Call with the component's service values. externalTrafficPolicy is
+valid only off ClusterIP; Local keeps the client address for SPF, RBL and
+per-IP limits. */}}
+{{- define "yarilo.serviceTraffic" -}}
+ipFamilyPolicy: {{ .ipFamilyPolicy }}
+{{- with .ipFamilies }}
+ipFamilies:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- if ne .type "ClusterIP" }}
+externalTrafficPolicy: {{ .externalTrafficPolicy }}
+{{- end }}
+{{- end }}
+
 {{- define "yarilo.image" -}}
 {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
 {{- end }}
@@ -609,6 +624,13 @@ Redis client or a redis dict; the config names it as ${YARILO_REDIS_PASSWORD}.
       name: {{ . }}
       key: {{ $.Values.redis.passwordSecret.key | default "password" }}
 {{- end }}
+{{- with ((.Values.redis.sentinel | default dict).passwordSecret | default dict).name }}
+- name: YARILO_REDIS_SENTINEL_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $.Values.redis.sentinel.passwordSecret.key }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -771,3 +793,14 @@ ROOT and the container's role.
     name: {{ include "yarilo.fullname" . }}-imapsieve-scripts
 {{- end }}
 {{- end -}}
+
+{{/*
+A protocol's own mail_max_userip_connections, rendered only when the operator
+set it: left out, the protocol takes general.limits (#2457). 0 is rendered.
+Call with the protocol's values map.
+*/}}
+{{- define "yarilo.userIPLimit" -}}
+{{- if and (hasKey . "mail_max_userip_connections") (not (kindIs "invalid" (index . "mail_max_userip_connections"))) -}}
+mail_max_userip_connections: {{ index . "mail_max_userip_connections" | int64 }}
+{{- end -}}
+{{- end }}

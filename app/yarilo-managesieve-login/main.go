@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -38,8 +37,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := config.RequireListeners(cfg, "managesieve_login"); err != nil {
+		slog.Error("listener config", "err", err)
+		os.Exit(1)
+	}
 	svcs := cfg.Services
-	if !svcs.ManageSieve.Active() {
+	if !svcs.ManageSieveLogin.Active() {
 		slog.Error("no ManageSieve listener configured (managesieve must be enabled)")
 		os.Exit(1)
 	}
@@ -52,7 +55,7 @@ func main() {
 	)
 
 	// A listener that declares TLS without a certificate must not bind silently.
-	if warn, err := config.CheckListenerTLS("services.managesieve", cfg.Services.ManageSieve, cfg.General.SSL); err != nil {
+	if warn, err := config.CheckListenerTLS("services.managesieve_login", cfg.Services.ManageSieveLogin, cfg.General.SSL); err != nil {
 		slog.Error("listener TLS check failed", "err", err)
 		os.Exit(1)
 	} else if warn != "" {
@@ -101,8 +104,8 @@ func main() {
 	tel := startTelemetry(cfg.Telemetry)
 
 	// Port 4190 - STARTTLS (ManageSieve does not have an implicit-TLS variant).
-	addr := fmt.Sprintf(":%d", svcs.ManageSieve.Port)
-	ln, err := net.Listen("tcp", addr)
+	addr, from := svcs.ManageSieveLogin.ListenAddr(config.PublicHost)
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		slog.Error("managesieve-login: listen failed", "addr", addr, "err", err)
 		os.Exit(1)
@@ -121,7 +124,7 @@ func main() {
 		AuthAddr:            cfg.AuthService.ClientAddr(),
 		AuthTLS:             intTLS,
 		AuthMaxAttempts:     cfg.Auth.MaxAttempts,
-		DisablePlainAuth:    svcs.ManageSieve.PlainAuthDisabled(),
+		DisablePlainAuth:    svcs.ManageSieveLogin.PlainAuthDisabled(),
 		SieveExtensions:     sieveCapability(cfg.Sieve),
 		SieveMaxInvalidCmds: cfg.Protocol.ManageSieve.MaxInvalidCommands,
 		WardenAddr:          cfg.WardenService.ClientAddr(),
@@ -153,7 +156,7 @@ func main() {
 	if cfg.ManageSieveLoginService.DirectorAddr != "" {
 		go srv.Watch(ctx)
 	}
-	slog.Info("managesieve-login: listening", "addr", addr, "tls", "starttls")
+	slog.Info("managesieve-login: listening", "addr", ln.Addr().String(), "from", from, "tls", "starttls")
 
 	// Every configured port is bound and serving now, so the pod can accept
 	// clients. Reporting earlier would let Kubernetes route to a port that is not
@@ -202,11 +205,10 @@ func startTelemetry(cfg config.TelemetryConfig) *telemetry.Server {
 			MutexFraction: cfg.PprofMutexProfileFraction,
 		},
 	})
-	go func() {
-		if err := tel.ListenAndServe(context.Background()); err != nil {
-			slog.Error("telemetry server failed", "err", err)
-		}
-	}()
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("telemetry: listen failed", "err", err)
+		os.Exit(1)
+	}
 	return tel
 }
 

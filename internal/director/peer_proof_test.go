@@ -17,7 +17,7 @@ import (
 // from this connection's nonce.
 func dialPeerWith(t *testing.T, addr string, left Member, peerLine func(nonce string) string) net.Conn {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	conn, err := new(net.Dialer).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

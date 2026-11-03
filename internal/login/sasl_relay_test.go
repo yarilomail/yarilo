@@ -28,7 +28,7 @@ func relayService(t *testing.T, mechs []string) string {
 // the AUTH line rather than trust that the proxy filled it.
 func relayServiceRecording(t *testing.T, mechs []string) (string, *authLines) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestTheCommandLoopCompletesAScramLogin(t *testing.T) {
 // the proxy does with repeated failures.
 func refusingRelay(t *testing.T) relayDialer {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestTheRelayedAuthCarriesTheSessionID(t *testing.T) {
 // A verdict without a token is refused before the backend is dialled, so the
 // failure names the auth service rather than the backend that refused it.
 func TestALoginWithoutATokenIsRefusedBeforeTheBackend(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestALoginWithoutATokenIsRefusedBeforeTheBackend(t *testing.T) {
 	}()
 
 	dialled := make(chan struct{}, 1)
-	backend, berr := net.Listen("tcp", "127.0.0.1:0")
+	backend, berr := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if berr != nil {
 		t.Fatalf("listen backend: %v", berr)
 	}

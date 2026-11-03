@@ -56,3 +56,26 @@ func TestTheAuthSASLListenerKeyRefuses(t *testing.T) {
 		t.Fatalf("err %v; want a refusal naming the key and pointing at yarilo-sasl-login", err)
 	}
 }
+
+// The server's cipher preference has no switch in Go's TLS: a config setting it,
+// in general.ssl or in a listener's own ssl, under either name, is refused.
+func TestTheServerCipherPreferenceKeyRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		key  string
+		yaml string
+	}{
+		{"general.ssl.ssl_prefer_server_ciphers", "general:\n  ssl:\n    ssl_prefer_server_ciphers: true\n"},
+		{"general.ssl.prefer_server_ciphers", "general:\n  ssl:\n    prefer_server_ciphers: false\n"},
+		{"services.imaps_login.ssl.ssl_prefer_server_ciphers",
+			"services:\n  imaps_login:\n    enabled: true\n    port: 993\n    ssl:\n      ssl_prefer_server_ciphers: true\n"},
+	} {
+		path := filepath.Join(t.TempDir(), "yarilo.yaml")
+		if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(path)
+		if err == nil || !strings.Contains(err.Error(), tc.key) || !strings.Contains(err.Error(), "Go 1.17") {
+			t.Errorf("%s: Load gave %v, want a refusal naming the key and why", tc.key, err)
+		}
+	}
+}

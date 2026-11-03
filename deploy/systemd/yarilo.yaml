@@ -1,0 +1,236 @@
+## yarilo on a single Linux host: every process reads this file and takes its own
+## entries. yarilo.target starts each one as its user.
+##
+## Internal services talk over Unix sockets in /run/yarilo; the session
+## backends listen on 127.0.0.1 and trust only the login proxies' preamble.
+## Keys left out keep their defaults; the full list is in the documentation.
+
+general:
+  ssl:
+    ssl_server_cert_file: /etc/yarilo/tls/cert.pem
+    ssl_server_key_file: /etc/yarilo/tls/key.pem
+    ssl_min_protocol: TLS1.2
+  xclient:
+    trusted_nets: ["127.0.0.1/32"]
+
+## Client TLS ends at the login proxies; nothing internal leaves the host.
+internal_tls:
+  enabled: false
+
+services:
+  imap_login:
+    enabled: true
+    port: 143
+    ssl_mode: starttls
+  imaps_login:
+    enabled: true
+    port: 993
+    ssl_mode: ssl
+  pop3_login:
+    enabled: true
+    port: 110
+    ssl_mode: starttls
+  pop3s_login:
+    enabled: true
+    port: 995
+    ssl_mode: ssl
+  submission_login:
+    enabled: true
+    port: 587
+    ssl_mode: starttls
+    auth_allow_cleartext: false
+  submissions_login:
+    enabled: true
+    port: 465
+    ssl_mode: ssl
+    auth_allow_cleartext: false
+  ## Delivery from the local MTA, e.g. Postfix virtual_transport =
+  ## lmtp:inet:127.0.0.1:24.
+  lmtp_login:
+    enabled: true
+    port: 24
+    address: 127.0.0.1
+    ssl_mode: "no"
+  managesieve_login:
+    enabled: true
+    port: 4190
+    ssl_mode: starttls
+  jmap_login:
+    enabled: true
+    port: 8443
+    ssl_mode: ssl
+    auth_allow_cleartext: false
+
+  imap:
+    enabled: true
+    port: 10143
+    ssl_mode: "no"
+    xclient_protocol: true
+  pop3:
+    enabled: true
+    port: 10110
+    ssl_mode: "no"
+    xclient_protocol: true
+  submission:
+    enabled: true
+    port: 10587
+    ssl_mode: "no"
+    xclient_protocol: true
+  lmtp:
+    enabled: true
+    port: 10024
+    ssl_mode: "no"
+    xclient_protocol: true
+  managesieve:
+    enabled: true
+    port: 14190
+    ssl_mode: "no"
+    xclient_protocol: true
+  jmap:
+    enabled: true
+    port: 10443
+    ssl_mode: "no"
+    xclient_protocol: true
+
+imap_login_service:
+  backend_addr: 127.0.0.1:10143
+pop3_login_service:
+  backend_addr: 127.0.0.1:10110
+submission_login_service:
+  backend_addr: 127.0.0.1:10587
+lmtp_login_service:
+  backend_addr: 127.0.0.1:10024
+managesieve_login_service:
+  backend_addr: 127.0.0.1:14190
+## WebSocket push needs websocket_ticket_key, a secret of your own; without it
+## yarilo-jmap-login serves JMAP over HTTPS only and says so at start.
+jmap_login_service:
+  backend_addr: 127.0.0.1:10443
+jmap_service:
+  auth_master_addr: unix:/run/yarilo/auth/auth-master.sock
+
+auth_service:
+  listen: unix:/run/yarilo/auth/auth-client.sock
+  addr: unix:/run/yarilo/auth/auth-client.sock
+  master_listen: unix:/run/yarilo/auth/auth-master.sock
+  master_addr: unix:/run/yarilo/auth/auth-master.sock
+  socket_group: yarilo-auth
+  ## Userdb lookups and delivery sessions without a password: the backends and
+  ## yarilo-delivery reach it, and only yarilo-delivery may issue a session.
+  master_socket_group: yarilo-master
+  master_session_users: [yarilo-delivery]
+
+warden_service:
+  listen: unix:/run/yarilo/auth/warden.sock
+  addr: unix:/run/yarilo/auth/warden.sock
+  socket_group: yarilo-auth
+
+## One host: lock state in memory, shared over a socket only yarilo reaches.
+locks_service:
+  mode: embedded
+  socket: /run/yarilo/locks/locks.sock
+  socket_group: yarilo
+locks_client:
+  mode: embedded
+  socket: /run/yarilo/locks/locks.sock
+
+## yarilo-dict opens the dict databases; the sessions reach it over this socket.
+dict_service:
+  dict_listen: unix:/run/yarilo/dict/dict.sock
+  dict_addr: unix:/run/yarilo/dict/dict.sock
+  socket_group: yarilo
+
+## The users database: SQLite here, or MySQL or PostgreSQL on this host or
+## another. Only yarilo-auth opens it; a password goes in /etc/yarilo/auth.env
+## (YARILO_AUTH_DB_PASSWORD=..., mode 0600), which no other unit reads.
+auth:
+  passdb:
+    - driver: sqlite
+      dsn: /var/lib/yarilo/auth/users.db
+    # - driver: mysql
+    #   dsn: "yarilo:${YARILO_AUTH_DB_PASSWORD}@tcp(127.0.0.1:3306)/yarilo"
+    # - driver: postgres
+    #   dsn: "postgres://yarilo:${YARILO_AUTH_DB_PASSWORD}@127.0.0.1:5432/yarilo?sslmode=disable"
+
+storage:
+  mail_driver: maildir
+  maildir_root: /var/mail/vhosts
+  mail_home: "%d/%u"
+  index: fileindex
+
+protocol:
+  jmap:
+    ## The origin clients reach yarilo-jmap-login on; every URL in the session
+    ## resource starts with it.
+    jmap_base_url: "https://mail.example.org:8443"
+  submission:
+    relay:
+      submission_relay_host: 127.0.0.1
+      submission_relay_port: 25
+
+sieve:
+  sieve_enabled: true
+  sieve_scripts_driver: fs
+  sieve_submission_host: 127.0.0.1:25
+  ## The header your spam filter writes its score into, for spamtest.
+  sieve_spamtest_status_header: X-Spam-Score
+  sieve_spamtest_max_value: 10
+  ## vnd.yarilo.execute, .pipe and .filter run programs as the yarilo user;
+  ## add them only with sieve_pipe_bin_dir / sieve_filter_bin_dir you trust.
+  sieve_extensions:
+    - fileinto
+    - reject
+    - ereject
+    - envelope
+    - encoded-character
+    - variables
+    - relational
+    - subaddress
+    - body
+    - date
+    - index
+    - mailbox
+    - mailboxid
+    - mboxmetadata
+    - servermetadata
+    - imapsieve
+    - duplicate
+    - imap4flags
+    - redirect
+    - copy
+    - vacation
+    - enotify
+    - spamtest
+    - spamtestplus
+    - virustest
+    - comparator-i;ascii-numeric
+    - foreverypart
+    - mime
+    - extracttext
+    - replace
+    - enclose
+    - environment
+    - vnd.yarilo.environment
+    - vnd.yarilo.report
+    - vnd.yarilo.debug
+  sieve_pipe_bin_dir: /usr/libexec/yarilo/sieve-pipe
+  sieve_filter_bin_dir: /usr/libexec/yarilo/sieve-filter
+
+## IMAP METADATA and the Sieve mboxmetadata/servermetadata extensions, kept by
+## yarilo-dict: SQLite here, or MySQL or PostgreSQL. A password goes in
+## /etc/yarilo/dict.env (YARILO_DICT_DB_PASSWORD=..., mode 0600), read by
+## yarilo-dict alone.
+dicts:
+  metadata:
+    driver: sql
+    settings:
+      driver: sqlite
+      dsn: /var/lib/yarilo/state/metadata.db
+      namespace: metadata
+      # driver: mysql
+      # dsn: "yarilo:${YARILO_DICT_DB_PASSWORD}@tcp(127.0.0.1:3306)/yarilo"
+      # driver: postgres
+      # dsn: "postgres://yarilo:${YARILO_DICT_DB_PASSWORD}@127.0.0.1:5432/yarilo?sslmode=disable"
+
+log:
+  level: info

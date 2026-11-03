@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+systemd-sysusers /usr/lib/sysusers.d/yarilo.conf
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/yarilo.conf
+systemctl daemon-reload || true
+# Nothing is enabled or started: the operator runs "systemctl enable --now yarilo.target".
+if [ "$1" = configure ] && [ -n "$2" ] && systemctl is-active -q yarilo.target; then
+	systemctl try-restart 'yarilo-*.service' || true
+fi

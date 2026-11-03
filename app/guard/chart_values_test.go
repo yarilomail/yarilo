@@ -19,8 +19,7 @@ func renderWith(t *testing.T, extra string) ([]byte, error) {
 	if err := os.WriteFile(f, []byte(extra), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return exec.Command("helm", "template", "yarilo", "../../helm",
-		"--set", "internalTLS.enabled=false", "-f", f).CombinedOutput()
+	return exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "--set", "internalTLS.enabled=false", "-f", f).CombinedOutput()
 }
 
 // loadRendered loads the rendered ConfigMap the way a pod does.
@@ -367,5 +366,32 @@ protocol: {jmap: {jmap_websocket_timeout: 0}}
 		if r.off != 0 {
 			t.Errorf("%s with 0 in the values = %d, want 0", r.name, r.off)
 		}
+	}
+}
+
+// A protocol's own connection limit reaches the config when set, 0 included,
+// and is absent when not, so the protocol takes general.limits (#2457).
+func TestProtocolUserIPLimitsReachTheConfig(t *testing.T) {
+	out, err := renderWith(t, `
+protocol:
+  imap:
+    mail_max_userip_connections: 0
+  jmap:
+    mail_max_userip_connections: 4
+`)
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	cfg := loadRendered(t, out)
+	for _, tc := range []struct {
+		protocol string
+		want     int
+	}{{"imap", 0}, {"jmap", 4}, {"pop3", 10}, {"submission", 10}, {"lmtp", 10}, {"managesieve", 10}} {
+		if got := cfg.MaxUserIPConnections(tc.protocol); got != tc.want {
+			t.Errorf("%s = %d, want %d", tc.protocol, got, tc.want)
+		}
+	}
+	if cfg.Protocol.POP3.MailMaxUserIPConnections != nil {
+		t.Errorf("pop3 carries %d, which values.yaml never set", *cfg.Protocol.POP3.MailMaxUserIPConnections)
 	}
 }

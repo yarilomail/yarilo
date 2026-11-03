@@ -24,3 +24,6 @@ docs_internal/
 
 # Compiled test binaries (go test -c)
 *.test
+
+# hack/package/deb.sh output
+/dist/

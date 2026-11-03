@@ -152,7 +152,7 @@ func (s *Server) Serve(ln net.Listener) error {
 		timeout := s.opts.HAProxyTimeout
 		ln = &proxyproto.Listener{
 			Listener:          ln,
-			Policy:            haProxyPolicy(s.opts.HAProxyNets),
+			ConnPolicy:        haProxyPolicy(s.opts.HAProxyNets),
 			ReadHeaderTimeout: timeout,
 		}
 	}
@@ -601,13 +601,13 @@ func (s *session) directorLookupOnce(username, tag string) (proto.LookupResult, 
 // mTLS when tlsCfg is set.
 func dialBackend(addr string, timeout time.Duration, tlsCfg *tls.Config) (net.Conn, error) {
 	if tlsCfg != nil {
-		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, tlsCfg)
+		conn, err := (&tls.Dialer{NetDialer: &net.Dialer{Timeout: timeout}, Config: tlsCfg}).DialContext(context.Background(), "tcp", addr)
 		if err != nil {
 			return nil, fmt.Errorf("lmtplogin: mtls dial backend %s: %w", addr, err)
 		}
 		return conn, nil
 	}
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("lmtplogin: dial backend %s: %w", addr, err)
 	}
@@ -711,8 +711,9 @@ func (s *session) XClient(a goSmtp.XClientAttrs) {
 
 // haProxyPolicy trusts the PROXY header only from peers inside nets. Empty nets
 // = ignore every PROXY header. Mirrors internal/login.
-func haProxyPolicy(nets []*net.IPNet) func(net.Addr) (proxyproto.Policy, error) {
-	return func(upstream net.Addr) (proxyproto.Policy, error) {
+func haProxyPolicy(nets []*net.IPNet) proxyproto.ConnPolicyFunc {
+	return func(o proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+		upstream := o.Upstream
 		if len(nets) == 0 {
 			return proxyproto.IGNORE, nil
 		}

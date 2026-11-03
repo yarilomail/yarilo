@@ -292,7 +292,7 @@ func TestTheServiceAdvertisesWhatTheChainCanServe(t *testing.T) {
 			addr := freeAddr(t)
 			go srv.ListenAndServe(ctx, addr, nil) //nolint:errcheck
 			time.Sleep(20 * time.Millisecond)
-			conn, err := net.Dial("tcp", addr)
+			conn, err := new(net.Dialer).DialContext(ctx, "tcp", addr)
 			if err != nil {
 				t.Fatalf("dial: %v", err)
 			}

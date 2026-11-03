@@ -57,7 +57,7 @@ func TestAnUnsafeNameNeverReachesTheWire(t *testing.T) {
 
 // A reply for an id this client did not issue is dropped, not delivered.
 func TestAReplyForAnotherIDIsDropped(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

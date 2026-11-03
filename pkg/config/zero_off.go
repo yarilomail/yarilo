@@ -56,6 +56,7 @@ func offKeys(cfg *Config) []intKey {
 		{"director_service.user_kill_confirm_grace", &d.UserKillConfirmGrace},
 		{"director_service.director_domain_rebalance_percent", &d.DomainRebalancePercent},
 		{"director_service.director_domain_rebalance_cooldown", &d.DomainRebalanceCooldown},
+		{"director_service.director_domain_rebalance_min_sessions", &d.DomainRebalanceMinSessions},
 		{"general.limits.mail_max_userip_connections", &cfg.General.Limits.MaxUserIPConnections},
 		{"protocol.imap.imap_idle_notify_interval", &cfg.Protocol.IMAP.IdleNotifyInterval},
 		{"protocol.imap.imap_max_line_length", &cfg.Protocol.IMAP.MaxLineLength},
@@ -69,6 +70,7 @@ func offKeys(cfg *Config) []intKey {
 		{"protocol.jmap.jmap_push_poll", &cfg.Protocol.JMAP.PushPoll},
 		{"protocol.jmap.jmap_websocket_timeout", &cfg.Protocol.JMAP.WebSocketTimeout},
 		{"protocol.jmap.jmap_websocket_ticket_ttl", &cfg.Protocol.JMAP.WebSocketTicketTTL},
+		{"protocol.jmap.jmap_limit_retry_after", &cfg.Protocol.JMAP.LimitRetryAfter},
 		{"protocol.lmtp.lmtp_max_recipients", &cfg.Protocol.LMTP.MaxRecipients},
 		{"protocol.submission.submission_max_recipients", &cfg.Protocol.Submission.MaxRecipients},
 		{"protocol.managesieve.max_invalid_commands", &cfg.Protocol.ManageSieve.MaxInvalidCommands},
@@ -212,6 +214,11 @@ func checkNumbers(cfg *Config) error {
 					return fmt.Errorf("config: %s[%d].%s: %d is negative; 0 lifts the limit", list.path, i, name, *v)
 				}
 			}
+		}
+	}
+	for _, name := range UserIPProtocols {
+		if v := cfg.Protocol.userIPOverride(name); v != nil && *v < 0 {
+			return fmt.Errorf("config: protocol.%s.mail_max_userip_connections: %d is negative; 0 lifts the limit", name, *v)
 		}
 	}
 	// No size means no rotation by size, which an mdbox has no use for.
