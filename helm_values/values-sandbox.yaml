@@ -289,7 +289,7 @@ dicts:
   acl_shared:
     driver: redis
     settings:
-      addr: valkey-haproxy.redis.svc.cluster.local:6379
+      addr: valkey.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       sentinel_addrs: [valkey-sentinel.redis.svc.cluster.local:26379]
@@ -309,7 +309,7 @@ dicts:
   quota_clone_redis:
     driver: redis
     settings:
-      addr: valkey-haproxy.redis.svc.cluster.local:6379
+      addr: valkey.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       sentinel_addrs: [valkey-sentinel.redis.svc.cluster.local:26379]
@@ -331,7 +331,7 @@ dicts:
   sieve_duplicate:
     driver: redis
     settings:
-      addr: valkey-haproxy.redis.svc.cluster.local:6379
+      addr: valkey.redis.svc.cluster.local:6379
       password: "${YARILO_REDIS_PASSWORD}"
       db: 0
       sentinel_addrs: [valkey-sentinel.redis.svc.cluster.local:26379]
@@ -357,11 +357,12 @@ database:
 ## External Redis protocol - Valkey with Sentinel from seconddns/k8s_valkey
 ## (namespace: redis), on trial in place of redis-sandbox.yaml; the chart's
 ## in-namespace Redis StatefulSet is disabled. Consumers (locks state, dicts,
-## auth tokens) ask the Sentinels for the master (redis.sentinel below); the
-## URLs name valkey-haproxy, which serves them only without the Sentinel keys.
+## auth tokens) ask the Sentinels for the master (redis.sentinel below), so the
+## host in the URLs is not dialled; it names the data Service for a client
+## without the Sentinel keys, which may reach a replica.
 redis:
   bundled: false
-  externalUrl: "redis://valkey-haproxy.redis.svc.cluster.local:6379/0"
+  externalUrl: "redis://valkey.redis.svc.cluster.local:6379/0"
   ## The password: Secret yarilo-redis-password, made outside git with the
   ## value of redis-password in the redis namespace.
   passwordSecret:
@@ -681,7 +682,7 @@ components:
 
     token:
       backend: redis
-      redis_addr: "redis://valkey-haproxy.redis.svc.cluster.local:6379/0"
+      redis_addr: "redis://valkey.redis.svc.cluster.local:6379/0"
       # Sandbox shares one Redis; every component lives under the yarilo-sb: namespace.
       key_prefix: "yarilo-sb:authtoken:"
 
