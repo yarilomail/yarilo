@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 26
+config_schema_version: 27
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -2599,6 +2599,22 @@ redis:
   ##   rediss://master.cache.amazonaws.com:6379/0
   externalUrl: ""
 
+  ## Sentinel: every Redis client finds the master through these Sentinels
+  ## instead of the URL's host; the db and the password still come from the
+  ## URL and passwordSecret. Empty addrs keeps one address, which is also the
+  ## form for a proxy in front of Sentinel. The password reaches every Redis
+  ## client as YARILO_REDIS_SENTINEL_PASSWORD, never the ConfigMap; a redis
+  ## dict takes the same keys in its settings (sentinel_addrs, sentinel_master,
+  ## sentinel_user, sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}").
+  sentinel:
+    addrs: []
+    master: ""
+    ## Empty: the Sentinels' default user.
+    user: ""
+    passwordSecret:
+      name: ""
+      key: password
+
   resources:
     requests:
       cpu: 50m
@@ -3257,6 +3273,10 @@ dicts:
 #       addr: yarilo-redis.{{ .Release.Namespace }}.svc.cluster.local:6379
 #       db: 0
 #       prefix: "yarilo:quota:"
+#       # Through Sentinel instead (redis.sentinel); addr is then not used:
+#       # sentinel_addrs: [redis-sentinel.redis.svc:26379]
+#       # sentinel_master: mymaster
+#       # sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
 #     expire_secs: 86400
 #   # Optional: duplicate-test dedup (RFC 7352). driver=redis makes the dedup
 #   # window cross-pod; omit (or driver=memory) for per-process behaviour.

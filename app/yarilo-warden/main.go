@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/yarilomail/yarilo/v2/internal/drain"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/internal/warden"
@@ -81,7 +79,7 @@ func main() {
 			slog.Error("warden: invalid redis_addr", "addr", cfg.WardenService.RedisAddr, "err", perr)
 			os.Exit(1)
 		}
-		rdb := redis.NewClient(opt)
+		rdb := redisopt.Client(opt, cfg.WardenService.Sentinel())
 		prefix := cfg.WardenService.KeyPrefix
 		if prefix == "" {
 			prefix = "yarilo:warden:"

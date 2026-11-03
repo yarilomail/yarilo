@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
@@ -132,8 +131,8 @@ func buildBackend(lcfg config.LocksServiceConfig) (locks.Backend, func() bool, e
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse redis url: %w", err)
 		}
-		rdb := redis.NewClient(opts)
-		// No eager Ping: redis.NewClient is lazy, so the process comes up even when
+		rdb := redisopt.Client(opts, lcfg.Sentinel())
+		// No eager Ping: the client is lazy, so the process comes up even when
 		// Redis is not yet reachable rather than crash-looping. The startupProbe gates
 		// traffic and `ready` reports Redis health on /readyz. A bad URL or unknown
 		// mode still fails loudly below since no retry fixes those.

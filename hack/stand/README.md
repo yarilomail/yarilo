@@ -55,9 +55,8 @@ KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/accept.sh <image-tag> <out-dir>
 ```
 
 `ACCEPT_VALUES=<file>` adds one values file on top of `values-sandbox.yaml`,
-for a run that compares one stand setting with another, such as
-`helm_values/values-sandbox-valkey-direct.yaml`. The tooling line of the run
-names it.
+for a run that compares one stand setting with another. The tooling line of
+the run names it.
 
 What a rollout after a merge must pass, judged and written as `PASS`/`FAIL`/`SKIP`
 lines in `<out-dir>/verdict.txt`; the script exits 1 when any fails. `SKIP` is a

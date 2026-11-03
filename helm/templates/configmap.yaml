@@ -600,6 +600,16 @@ data:
         {{- if ($.Values.redis.passwordSecret | default dict).name }}
         redis_password: "${YARILO_REDIS_PASSWORD}"
         {{- end }}
+        {{- with $.Values.redis.sentinel }}
+        {{- if .addrs }}
+        sentinel_addrs: {{ toJson .addrs }}
+        sentinel_master: {{ .master | quote }}
+        sentinel_user: {{ .user | quote }}
+        {{- if (.passwordSecret | default dict).name }}
+        sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
+        {{- end }}
+        {{- end }}
+        {{- end }}
         {{- end }}
         key_prefix: {{ .Values.components.auth.token.key_prefix | default "yarilo:authtoken:" | quote }}
 
@@ -987,6 +997,16 @@ data:
       {{- if (.Values.redis.passwordSecret | default dict).name }}
       redis_password: "${YARILO_REDIS_PASSWORD}"
       {{- end }}
+      {{- with $.Values.redis.sentinel }}
+      {{- if .addrs }}
+      sentinel_addrs: {{ toJson .addrs }}
+      sentinel_master: {{ .master | quote }}
+      sentinel_user: {{ .user | quote }}
+      {{- if (.passwordSecret | default dict).name }}
+      sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
+      {{- end }}
+      {{- end }}
+      {{- end }}
       {{- end }}
       shutdown:
         session_grace_period: {{ .Values.components.warden.shutdown.session_grace_period | int64 }}
@@ -1104,6 +1124,16 @@ data:
       {{- end }}
       {{- if (.Values.redis.passwordSecret | default dict).name }}
       redis_password: "${YARILO_REDIS_PASSWORD}"
+      {{- end }}
+      {{- with $.Values.redis.sentinel }}
+      {{- if .addrs }}
+      sentinel_addrs: {{ toJson .addrs }}
+      sentinel_master: {{ .master | quote }}
+      sentinel_user: {{ .user | quote }}
+      {{- if (.passwordSecret | default dict).name }}
+      sentinel_password: "${YARILO_REDIS_SENTINEL_PASSWORD}"
+      {{- end }}
+      {{- end }}
       {{- end }}
       shutdown:
         session_grace_period: {{ .Values.components.locks.shutdown.session_grace_period | int64 }}

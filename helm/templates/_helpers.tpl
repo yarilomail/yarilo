@@ -624,6 +624,13 @@ Redis client or a redis dict; the config names it as ${YARILO_REDIS_PASSWORD}.
       name: {{ . }}
       key: {{ $.Values.redis.passwordSecret.key | default "password" }}
 {{- end }}
+{{- with ((.Values.redis.sentinel | default dict).passwordSecret | default dict).name }}
+- name: YARILO_REDIS_SENTINEL_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: {{ $.Values.redis.sentinel.passwordSecret.key }}
+{{- end }}
 {{- end }}
 
 {{/*

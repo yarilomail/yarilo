@@ -28,6 +28,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/yarilomail/yarilo/v2/pkg/dict"
+	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
 )
 
 func init() {
@@ -41,13 +42,20 @@ func init() {
 //	"db"       int            - logical database number; default 0
 //	"prefix"   string         - prepended to every dict key on the wire
 //	"dial_timeout" string     - Go duration; default 5s
+//	"sentinel_addrs", "sentinel_master", "sentinel_user", "sentinel_password"
+//	                          - find the master through Sentinel; "addr" is then
+//	                            not used, db and password still are
 //
 // "prefix" lets multiple dict configurations share one Redis instance without
 // colliding (e.g. "yarilo:metadata:%u:", "yarilo:quota:"). The caller must have
 // varexpand'd %u/%h/%n before Open.
 func New(cfg dict.Config) (dict.Dict, error) {
 	addr, _ := cfg.Settings["addr"].(string)
-	if addr == "" {
+	sentinel := redisopt.SentinelFromSettings(cfg.Settings)
+	if err := sentinel.Check(""); err != nil {
+		return nil, err
+	}
+	if addr == "" && len(sentinel.Addrs) == 0 {
 		return nil, errors.New("missing required setting \"addr\"")
 	}
 	opts := &redis.Options{Addr: addr}
@@ -72,12 +80,12 @@ func New(cfg dict.Config) (dict.Dict, error) {
 		opts.DialTimeout = d
 	}
 	prefix, _ := cfg.Settings["prefix"].(string)
-	return &Dict{client: redis.NewClient(opts), prefix: prefix, now: time.Now, rebuildDone: make(chan struct{})}, nil
+	return &Dict{client: redisopt.Client(opts, sentinel), prefix: prefix, now: time.Now, rebuildDone: make(chan struct{})}, nil
 }
 
 // Dict is the Redis driver.
 type Dict struct {
-	client *redis.Client
+	client redis.UniversalClient
 	prefix string
 	closed atomic.Bool
 	now    func() time.Time // test seam for the expiry index

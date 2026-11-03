@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/yarilomail/yarilo/v2/internal/auth/oauth2"
 	"github.com/yarilomail/yarilo/v2/internal/auth/passdbs"
 	"github.com/yarilomail/yarilo/v2/internal/auth/policy"
@@ -361,7 +359,7 @@ func buildTokenStore(cfg config.AuthTokenConfig, dialRetries int) (protocol.Toke
 			slog.Error("auth.token.redis_addr invalid", "err", err)
 			os.Exit(1)
 		}
-		rdb := redis.NewClient(opt)
+		rdb := redisopt.Client(opt, cfg.Sentinel())
 		if err := retry.Do(context.Background(), dialRetries, time.Second, func() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

@@ -20,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 	"github.com/yarilomail/yarilo/v2/pkg/quota"
+	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
 	"github.com/yarilomail/yarilo/v2/pkg/sockaddr"
 	"github.com/yarilomail/yarilo/v2/pkg/sqlvars"
 )
@@ -1179,6 +1180,12 @@ type WardenServiceConfig struct {
 	RedisAddr string `koanf:"redis_addr"`
 	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
 	RedisPassword string `koanf:"redis_password"`
+	// SentinelAddrs and SentinelMaster find the master through Sentinel; the
+	// db and password still come from RedisAddr, its host is not used (#2505).
+	SentinelAddrs    []string `koanf:"sentinel_addrs"`
+	SentinelMaster   string   `koanf:"sentinel_master"`
+	SentinelUser     string   `koanf:"sentinel_user"`
+	SentinelPassword string   `koanf:"sentinel_password"`
 	// KeyPrefix / ChannelPrefix namespace warden's Redis keys and Pub/Sub
 	// channels. Empty = defaults "yarilo:warden:" / "yarilo:warden:events:".
 	KeyPrefix     string `koanf:"key_prefix"`
@@ -1587,16 +1594,22 @@ type FTSConfig struct {
 // Mode "remote" runs a Redis-backed server on TCP+mTLS (backend deployment per tag).
 // Empty Mode disables the locks server in this process.
 type LocksServiceConfig struct {
-	Mode          string         `koanf:"mode"`           // embedded | remote | ""
-	Socket        string         `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
-	Listen        string         `koanf:"listen"`         // remote: ":9104"
-	SocketMode    string         `koanf:"socket_mode"`    // embedded: octal mode of the socket
-	SocketGroup   string         `koanf:"socket_group"`   // embedded: group name; empty keeps the process's
-	Redis         string         `koanf:"redis"`          // remote: "redis://host:6379/0"
-	RedisPassword string         `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
-	KeyPrefix     string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
-	ChannelPrefix string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
-	Shutdown      ShutdownConfig `koanf:"shutdown"`
+	Mode          string `koanf:"mode"`           // embedded | remote | ""
+	Socket        string `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
+	Listen        string `koanf:"listen"`         // remote: ":9104"
+	SocketMode    string `koanf:"socket_mode"`    // embedded: octal mode of the socket
+	SocketGroup   string `koanf:"socket_group"`   // embedded: group name; empty keeps the process's
+	Redis         string `koanf:"redis"`          // remote: "redis://host:6379/0"
+	RedisPassword string `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
+	// Sentinel: the master found through these; the db and password still
+	// come from Redis, its host is not used (#2505).
+	SentinelAddrs    []string       `koanf:"sentinel_addrs"`
+	SentinelMaster   string         `koanf:"sentinel_master"`
+	SentinelUser     string         `koanf:"sentinel_user"`
+	SentinelPassword string         `koanf:"sentinel_password"`
+	KeyPrefix        string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
+	ChannelPrefix    string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
+	Shutdown         ShutdownConfig `koanf:"shutdown"`
 }
 
 // SocketPerm is the permission the embedded mode's socket gets.
@@ -2221,6 +2234,12 @@ type AuthTokenConfig struct {
 	RedisAddr string `koanf:"redis_addr"`
 	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
 	RedisPassword string `koanf:"redis_password"`
+	// SentinelAddrs and SentinelMaster find the master through Sentinel; the
+	// db and password still come from RedisAddr, its host is not used (#2505).
+	SentinelAddrs    []string `koanf:"sentinel_addrs"`
+	SentinelMaster   string   `koanf:"sentinel_master"`
+	SentinelUser     string   `koanf:"sentinel_user"`
+	SentinelPassword string   `koanf:"sentinel_password"`
 	// KeyPrefix namespaces token keys in Redis (#939). The installation
 	// boundary: two installs sharing one Redis need distinct prefixes or their
 	// token keys collide. Empty keeps the default "yarilo:authtoken:".
@@ -3167,6 +3186,9 @@ func (cfg *Config) validate() error {
 	if err := validateDictPrefixes(cfg.Dicts); err != nil {
 		return err
 	}
+	if err := validateRedisSentinels(cfg); err != nil {
+		return err
+	}
 	for key, mode := range map[string]string{
 		"auth_service.socket_mode":        cfg.AuthService.SocketMode,
 		"auth_service.master_socket_mode": cfg.AuthService.MasterSocketMode,
@@ -3306,6 +3328,9 @@ func expandEnv(cfg *Config) {
 	cfg.Auth.Token.RedisPassword = expand(cfg.Auth.Token.RedisPassword)
 	cfg.WardenService.RedisPassword = expand(cfg.WardenService.RedisPassword)
 	cfg.LocksService.RedisPassword = expand(cfg.LocksService.RedisPassword)
+	cfg.Auth.Token.SentinelPassword = expand(cfg.Auth.Token.SentinelPassword)
+	cfg.WardenService.SentinelPassword = expand(cfg.WardenService.SentinelPassword)
+	cfg.LocksService.SentinelPassword = expand(cfg.LocksService.SentinelPassword)
 	cfg.Protocol.Submission.Relay.Password = expand(cfg.Protocol.Submission.Relay.Password)
 	for i := range cfg.Auth.Passdb {
 		cfg.Auth.Passdb[i].DSN = expand(cfg.Auth.Passdb[i].DSN)
@@ -3473,6 +3498,48 @@ func validateSharedNamespacesNeedACL(namespaces []NamespaceConfig, aclEnabled bo
 		}
 	}
 	return nil
+}
+
+// validateRedisSentinels refuses half a Sentinel configuration in any block
+// that opens a Redis client, naming the key that is missing.
+func validateRedisSentinels(cfg *Config) error {
+	checks := []struct {
+		prefix string
+		s      redisopt.Sentinel
+	}{
+		{"locks_service.", cfg.LocksService.Sentinel()},
+		{"auth.token.", cfg.Auth.Token.Sentinel()},
+		{"warden_service.", cfg.WardenService.Sentinel()},
+	}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Dicts)) {
+		if dc := cfg.Dicts[name]; dc.Driver == "redis" {
+			checks = append(checks, struct {
+				prefix string
+				s      redisopt.Sentinel
+			}{"dicts." + name + ".settings.", redisopt.SentinelFromSettings(dc.Settings)})
+		}
+	}
+	for _, c := range checks {
+		if err := c.s.Check(c.prefix); err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+	}
+	return nil
+}
+
+// Sentinel is the block's sentinel_* keys.
+func (c LocksServiceConfig) Sentinel() redisopt.Sentinel {
+	return redisopt.Sentinel{Addrs: c.SentinelAddrs, Master: c.SentinelMaster, User: c.SentinelUser, Password: c.SentinelPassword}
+}
+
+// Sentinel is the block's sentinel_* keys.
+func (c AuthTokenConfig) Sentinel() redisopt.Sentinel {
+	return redisopt.Sentinel{Addrs: c.SentinelAddrs, Master: c.SentinelMaster, User: c.SentinelUser, Password: c.SentinelPassword}
+}
+
+// Sentinel is the block's sentinel_* keys.
+func (c WardenServiceConfig) Sentinel() redisopt.Sentinel {
+	return redisopt.Sentinel{Addrs: c.SentinelAddrs, Master: c.SentinelMaster, User: c.SentinelUser, Password: c.SentinelPassword}
 }
 
 // validateDictPrefixes refuses a %-variable in a dict prefix: a dict opens once
@@ -3846,7 +3913,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 26
+const minConfigSchema = 27
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3888,6 +3955,9 @@ var schemaAdditions = map[int][]string{
 	24: {"protocol.jmap.jmap_limit_retry_after"},
 	25: {"warden_service.fail_open"},
 	26: {"director_service.director_domain_rebalance_min_sessions"},
+	27: {"locks_service.sentinel_addrs", "locks_service.sentinel_master", "locks_service.sentinel_user", "locks_service.sentinel_password",
+		"auth.token.sentinel_addrs", "auth.token.sentinel_master", "auth.token.sentinel_user", "auth.token.sentinel_password",
+		"warden_service.sentinel_addrs", "warden_service.sentinel_master", "warden_service.sentinel_user", "warden_service.sentinel_password"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
