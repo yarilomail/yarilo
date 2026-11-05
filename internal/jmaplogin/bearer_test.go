@@ -2,8 +2,12 @@ package jmaplogin
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/base64"
+	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -168,11 +172,42 @@ func (outage) AuthenticateToken(string, string, string, string, string) (Login, 
 }
 func (outage) OffersTokens() bool { return true }
 
-// With cleartext refused a token over plain HTTP is refused like a password.
-func TestABearerOverCleartextIsRefusedWhenPasswordsAre(t *testing.T) {
+// Basic and Bearer follow the login proxies' cleartext rule: refused only when
+// the listener has TLS and this request did not come over it.
+func TestCleartextCredentialsFollowTheListenerRule(t *testing.T) {
 	svc := authService(t, oauthChain(t)...)
-	base := startProxy(t, Options{Auth: svc, Tokens: svc, DisablePlainAuth: true})
-	if status, _ := bearerGet(t, base, "good-token"); status != http.StatusUnauthorized {
-		t.Errorf("a valid token over plain HTTP answered %d, want 401", status)
+	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("u1:pw"))
+	for _, tc := range []struct {
+		name          string
+		listenerTLS   bool
+		requestTLS    bool
+		allow         bool
+		authorization string
+		refused       bool
+	}{
+		{"basic, TLS listener, plain request", true, false, false, basic, true},
+		{"bearer, TLS listener, plain request", true, false, false, "Bearer good-token", true},
+		{"basic, TLS listener, TLS request", true, true, false, basic, false},
+		{"bearer, TLS listener, TLS request", true, true, false, "Bearer good-token", false},
+		{"basic, listener without TLS", false, false, false, basic, false},
+		{"bearer, listener without TLS", false, false, false, "Bearer good-token", false},
+		{"basic, cleartext allowed", true, false, true, basic, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := Options{Auth: fakeAuth{users: map[string]string{"u1": "pw"}}, Tokens: svc, DisablePlainAuth: !tc.allow}
+			if tc.listenerTLS {
+				opts.ExtTLS = &tls.Config{MinVersion: tls.VersionTLS12}
+			}
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/jmap/session", nil)
+			r.RemoteAddr = "192.0.2.1:40000"
+			if tc.requestTLS {
+				r.TLS = &tls.ConnectionState{}
+			}
+			r.Header.Set("Authorization", tc.authorization)
+			_, err := New(opts).authenticate(r, "192.0.2.1", "192.0.2.1", "sid")
+			if refused := errors.Is(err, errUnauthorized) || errors.Is(err, errBadToken); refused != tc.refused {
+				t.Errorf("refused = %v (err %v), want %v", refused, err, tc.refused)
+			}
+		})
 	}
 }

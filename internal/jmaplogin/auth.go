@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/yarilomail/yarilo/v2/internal/login"
 )
 
 // errUnauthorized is returned for every rejected credential. The cause is
@@ -33,7 +35,7 @@ func (s *Server) authenticate(r *http.Request, clientIP, peer, sessionID string)
 	switch strings.ToLower(scheme) {
 	case "bearer":
 		// A token is a password to whoever reads it: the cleartext rule is Basic's.
-		if s.opts.Tokens == nil || (s.opts.DisablePlainAuth && r.TLS == nil) {
+		if s.opts.Tokens == nil || s.cleartextRefused(r) {
 			return Login{}, errBadToken
 		}
 		login, err := s.opts.Tokens.AuthenticateToken(cred, service, clientIP, localIPOf(r), sessionID)
@@ -55,9 +57,7 @@ func (s *Server) authenticateBasic(r *http.Request, cred, clientIP, peer, sessio
 	if s.opts.Auth == nil {
 		return Login{}, errUnauthorized
 	}
-	// Plaintext credentials on a cleartext connection are refused outright
-	// rather than accepted and logged, matching the other protocols.
-	if s.opts.DisablePlainAuth && r.TLS == nil {
+	if s.cleartextRefused(r) {
 		return Login{}, errUnauthorized
 	}
 	raw, err := base64.StdEncoding.DecodeString(cred)
@@ -93,6 +93,18 @@ func parseAuthorization(h string) (scheme, cred string, ok bool) {
 }
 
 // localIPOf is the address the request arrived at, for a query's %l (#2227).
+// cleartextRefused applies the login proxies' cleartext rule to a request.
+func (s *Server) cleartextRefused(r *http.Request) bool {
+	if r.TLS != nil {
+		return false
+	}
+	var c net.Conn
+	if st, ok := r.Context().Value(ctxKey{}).(*connState); ok {
+		c = st.conn
+	}
+	return login.CleartextRefused(c, s.opts.ExtTLS != nil, !s.opts.DisablePlainAuth)
+}
+
 func localIPOf(r *http.Request) string {
 	if a, ok := r.Context().Value(http.LocalAddrContextKey).(*net.TCPAddr); ok {
 		return a.IP.String()

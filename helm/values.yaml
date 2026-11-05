@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 29
+config_schema_version: 30
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -1605,10 +1605,12 @@ components:
         enabled: true
         servicePort: 993
         containerPort: 10993
+        auth_allow_cleartext: false
       imap:
         enabled: false
         servicePort: 143
         containerPort: 10143
+        auth_allow_cleartext: false
 
     ## TLS cert presented to mail clients (IMAPS / STARTTLS for IMAP).
     tls:
@@ -1700,10 +1702,12 @@ components:
         enabled: true
         servicePort: 995
         containerPort: 10995
+        auth_allow_cleartext: false
       pop3:
         enabled: false
         servicePort: 110
         containerPort: 10110
+        auth_allow_cleartext: false
 
     tls:
       secretName: ""
@@ -1785,10 +1789,12 @@ components:
         enabled: true
         servicePort: 587
         containerPort: 10587
+        auth_allow_cleartext: false
       submissions:
         enabled: false
         servicePort: 465
         containerPort: 10465
+        auth_allow_cleartext: false
 
     tls:
       secretName: ""
@@ -1866,6 +1872,7 @@ components:
         enabled: true
         servicePort: 24
         containerPort: 10024
+        auth_allow_cleartext: false
 
     internalTLS:
       secretName: ""
@@ -1971,7 +1978,7 @@ components:
         enabled: true
         servicePort: 4190
         containerPort: 14190
-        disablePlainAuth: false
+        disablePlainAuth: true
 
     tls:
       secretName: ""
@@ -2097,7 +2104,6 @@ components:
         enabled: true
         servicePort: 443
         containerPort: 8443
-        ## Refuse Basic credentials on a non-TLS listener.
         disablePlainAuth: true
 
     ## TLS cert presented to JMAP clients. Required while the listener's

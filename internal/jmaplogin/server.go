@@ -40,7 +40,7 @@ type Options struct {
 
 	Auth   PasswordAuthenticator
 	Tokens TokenAuthenticator
-	// DisablePlainAuth refuses Basic over a connection that is not TLS-protected.
+	// DisablePlainAuth refuses Basic and Bearer where login.CleartextRefused says so.
 	DisablePlainAuth bool
 
 	// Router resolves a username to its backend address.
@@ -173,6 +173,10 @@ var serverTimeout = 60 * time.Second
 
 // Serve runs until ctx is cancelled, then drains in-flight requests.
 func (s *Server) Serve(ctx context.Context) error {
+	if s.opts.DisablePlainAuth && s.opts.ExtTLS == nil {
+		slog.Warn("jmap-login: auth_allow_cleartext is false but the listener has no TLS, so cleartext stays allowed",
+			"addr", s.opts.Addr)
+	}
 	var fresh sync.Map // connections that have sent no request yet
 	srv := &http.Server{
 		Addr:              s.opts.Addr,
