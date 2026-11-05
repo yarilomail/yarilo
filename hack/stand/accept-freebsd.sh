@@ -166,9 +166,12 @@ if [ "${ACCEPT_SKIP_BUILD:-0}" != 1 ]; then
   (cd "$PORT" && make BATCH=yes deinstall install) > "$OUT/logs/port-install.log" 2>&1 || rc=$?
   [ "$rc" = 0 ] && verdict "port installs" ok "deinstall install" || verdict "port installs" fail "rc=$rc (logs/port-install.log)"
 fi
-want_pkg="yarilo-$(echo "$VERSION" | tr -- '-' '.')"
+# The port names the package: it splits a version at letter/digit borders.
+port_ver=$(cd "$PORT" && make -V DISTVERSION)
+want_pkg=$(cd "$PORT" && make -V PKGNAME)
 got_pkg=$(pkg info -x '^yarilo-[0-9]' 2>/dev/null | head -1)
-[ "$got_pkg" = "$want_pkg" ] && verdict "installed version" ok "$got_pkg" || verdict "installed version" fail "installed '$got_pkg', want '$want_pkg'"
+[ "$port_ver" = "$VERSION" ] && [ "$got_pkg" = "$want_pkg" ] && verdict "installed version" ok "$got_pkg" ||
+  verdict "installed version" fail "port DISTVERSION '$port_ver' (want '$VERSION'), installed '$got_pkg', port names '$want_pkg'"
 install -o "$CLIENT" -m 755 "$SMOKE_SRC" "$SMOKE"
 
 echo "== restart on the installed binaries"
