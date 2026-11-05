@@ -1872,7 +1872,6 @@ components:
         enabled: true
         servicePort: 24
         containerPort: 10024
-        auth_allow_cleartext: false
 
     internalTLS:
       secretName: ""

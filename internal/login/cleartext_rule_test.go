@@ -111,6 +111,18 @@ var ruleProtos = []ruleProto{
 		},
 		login: []string{"USER alice", "PASS secret"}, refusal: "-ERR [AUTH] " + cleartextDisabledMsg,
 		hidden: []string{"\r\nUSER\r\n", "PLAIN LOGIN"}},
+	{name: "Submission",
+		run: func(c net.Conn, rd *bufio.Reader, x *tls.Config, o Options) (*preamble, error) {
+			p, _, _, err := extractSubmissionPreamble(c, rd, x, o, relayContext{})
+			return p, err
+		},
+		caps: func(t *testing.T, cli net.Conn, rd *bufio.Reader) string {
+			readLinesUntil(t, rd, func(string) bool { return true })
+			fmt.Fprintf(cli, "EHLO client\r\n")
+			return readLinesUntil(t, rd, func(l string) bool { return strings.HasPrefix(l, "250 ") })
+		},
+		login: []string{"AUTH PLAIN " + plainB64("alice", "secret")}, refusal: "523 5.7.10 " + cleartextDisabledMsg,
+		hidden: []string{"250-AUTH PLAIN LOGIN"}},
 	{name: "ManageSieve",
 		run: func(c net.Conn, rd *bufio.Reader, x *tls.Config, o Options) (*preamble, error) {
 			p, _, _, err := extractManageSievePreamble(c, rd, x, o, relayContext{})

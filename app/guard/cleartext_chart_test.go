@@ -21,9 +21,6 @@ components:
     listeners:
       submission: {auth_allow_cleartext: true}
       submissions: {auth_allow_cleartext: true}
-  lmtpLogin:
-    listeners:
-      lmtp: {auth_allow_cleartext: true}
   manageSieveLogin:
     enabled: true
     listeners:
@@ -43,7 +40,7 @@ const cleartextDefault = `components:
     backend_addr: "jmap:10443"
 `
 
-// All nine login blocks render auth_allow_cleartext explicitly: the chart's
+// Every login block that authenticates render auth_allow_cleartext explicitly: the chart's
 // value is the binary's default, and a value set in values reaches the config.
 func TestEveryLoginBlockRendersAuthAllowCleartext(t *testing.T) {
 	for _, tc := range []struct {
@@ -62,7 +59,7 @@ func TestEveryLoginBlockRendersAuthAllowCleartext(t *testing.T) {
 				{"imap_login", s.IMAPLogin}, {"imaps_login", s.IMAPSLogin},
 				{"pop3_login", s.POP3Login}, {"pop3s_login", s.POP3SLogin},
 				{"submission_login", s.SubmissionLogin}, {"submissions_login", s.SubmissionsLogin},
-				{"lmtp_login", s.LMTPLogin}, {"managesieve_login", s.ManageSieveLogin}, {"jmap_login", s.JMAPLogin},
+				{"managesieve_login", s.ManageSieveLogin}, {"jmap_login", s.JMAPLogin},
 			} {
 				switch {
 				case e.svc == nil:

@@ -534,6 +534,8 @@ components:
       imaps:
         enabled: true
       imap:
+        ## The stand drives 143/110 in cleartext (imaptest, loadtest, store-parallel).
+        auth_allow_cleartext: true
         enabled: true
     backend_addr: ""
     director_addr: "yarilo-director:9102"
@@ -598,6 +600,8 @@ components:
       pop3s:
         enabled: true
       pop3:
+        ## The stand drives 143/110 in cleartext (imaptest, loadtest, store-parallel).
+        auth_allow_cleartext: true
         enabled: true
     backend_addr: ""
     director_addr: "yarilo-director:9102"
