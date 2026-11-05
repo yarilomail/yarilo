@@ -502,8 +502,7 @@ type ServiceConfig struct {
 
 // CleartextAllowed reports whether this listener permits cleartext
 // authentication, resolving the two spellings in one place. Unset is
-// DefaultAllowCleartext; the login proxies still allow it on a listener
-// without TLS.
+// DefaultAllowCleartext.
 func (s *ServiceConfig) CleartextAllowed() bool {
 	if s == nil {
 		return DefaultAllowCleartext
