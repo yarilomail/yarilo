@@ -1607,6 +1607,8 @@ components:
         containerPort: 10993
         auth_allow_cleartext: false
       imap:
+        ## starttls, or required: no authentication before STARTTLS.
+        ssl_mode: starttls
         enabled: false
         servicePort: 143
         containerPort: 10143
@@ -1704,6 +1706,8 @@ components:
         containerPort: 10995
         auth_allow_cleartext: false
       pop3:
+        ## starttls, or required: no authentication before STARTTLS.
+        ssl_mode: starttls
         enabled: false
         servicePort: 110
         containerPort: 10110
@@ -1786,6 +1790,8 @@ components:
 
     listeners:
       submission:
+        ## starttls, or required: no authentication before STARTTLS.
+        ssl_mode: starttls
         enabled: true
         servicePort: 587
         containerPort: 10587
@@ -1974,6 +1980,8 @@ components:
 
     listeners:
       managesieve:
+        ## starttls, or required: no authentication before STARTTLS.
+        ssl_mode: starttls
         enabled: true
         servicePort: 4190
         containerPort: 14190
@@ -2001,9 +2009,9 @@ components:
     ## director_tag - see imapLogin's comment for the tag/pool-topology rule.
     director_tag: ""
 
-    haproxy_protocol: false
+    ## PROXY header: general.haproxy.enabled and haproxy_trusted_networks, as for
+    ## the other login listeners.
     haproxy_timeout: 3
-    haproxy_nets: []
 
     service:
       type: ClusterIP

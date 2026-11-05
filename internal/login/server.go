@@ -131,6 +131,8 @@ type Options struct {
 	// DisablePlainAuth refuses and hides cleartext mechanisms where
 	// CleartextRefused says so.
 	DisablePlainAuth bool
+	// SSLRequired is ssl_mode required: no authentication before TLS.
+	SSLRequired bool
 	// SieveExtensions is the space-joined list of supported Sieve extensions
 	// advertised in the ManageSieve SIEVE capability line.
 	SieveExtensions string

@@ -483,7 +483,7 @@ type ServiceConfig struct {
 	// the process binding it: BackendHost or PublicHost.
 	Address string     `koanf:"address"`
 	Port    int        `koanf:"port"`
-	SSLMode string     `koanf:"ssl_mode"` // no | ssl | starttls
+	SSLMode string     `koanf:"ssl_mode"` // no | ssl | starttls | required
 	SSL     *SSLConfig `koanf:"ssl"`      // overrides general.ssl
 	HAProxy bool       `koanf:"haproxy_protocol"`
 	// XClient enables native inbound client-IP forwarding on this listener
@@ -521,6 +521,11 @@ const DefaultAllowCleartext = false
 
 // PlainAuthDisabled is the same fact in the spelling the login servers use.
 func (s *ServiceConfig) PlainAuthDisabled() bool { return !s.CleartextAllowed() }
+
+// SSLRequired is ssl_mode required: STARTTLS, and no authentication before it.
+func (s *ServiceConfig) SSLRequired() bool {
+	return s != nil && strings.EqualFold(s.SSLMode, "required")
+}
 
 // Active returns true if the service is configured and enabled.
 func (s *ServiceConfig) Active() bool { return s != nil && s.Enabled }
@@ -1881,12 +1886,43 @@ type ManageSieveLoginServiceConfig struct {
 	DirectorAddr string `koanf:"director_addr"`
 	BackendPort  int    `koanf:"backend_port"`
 	DirectorTag  string `koanf:"director_tag"`
-	// HAProxy enables PROXY protocol v1/v2 header parsing.
+	// HAProxy is the pre-2.4.7 spelling of services.managesieve_login.haproxy_protocol.
 	HAProxy bool `koanf:"haproxy_protocol"`
 	// HAProxyTimeout is the read deadline for the PROXY header in seconds.
 	HAProxyTimeout int `koanf:"haproxy_timeout"`
-	// HAProxyNets lists CIDRs whose PROXY header is trusted.
+	// HAProxyNets is the pre-2.4.7 spelling of general.haproxy.haproxy_trusted_networks
+	// for this proxy; read through ManageSieveHAProxyNets.
 	HAProxyNets []string `koanf:"haproxy_trusted_nets"`
+	// ownNets is set at load when the file names HAProxyNets and not the general key.
+	ownNets bool
+}
+
+// ManageSieveHAProxyNets is the PROXY trusted networks of yarilo-managesieve-login:
+// the general key, or the proxy's own pre-2.4.7 key when the file sets only that.
+func (c *Config) ManageSieveHAProxyNets() []string {
+	if c.ManageSieveLoginService.ownNets {
+		return c.ManageSieveLoginService.HAProxyNets
+	}
+	return c.General.HAProxy.HAProxyTrustedNetworks
+}
+
+// resolveManageSieveHAProxyKeys names the proxy's own PROXY keys, kept only for
+// configs written before they joined the general ones, and picks the networks.
+func resolveManageSieveHAProxyKeys(k *koanf.Koanf, cfg *Config) {
+	m := &cfg.ManageSieveLoginService
+	if k.Exists("managesieve_login_service.haproxy_trusted_nets") {
+		slog.Warn("config: deprecated key accepted",
+			"key", "managesieve_login_service.haproxy_trusted_nets", "use", "general.haproxy.haproxy_trusted_networks")
+		if k.Exists("general.haproxy.haproxy_trusted_networks") || k.Exists("general.haproxy.trusted_nets") {
+			slog.Warn("config: managesieve_login_service.haproxy_trusted_nets and general.haproxy.haproxy_trusted_networks are both set; using the general one")
+		} else {
+			m.ownNets = true
+		}
+	}
+	if m.HAProxy {
+		slog.Warn("config: deprecated key accepted",
+			"key", "managesieve_login_service.haproxy_protocol", "use", "services.managesieve_login.haproxy_protocol")
+	}
 }
 
 // ValidateBackendOrDirector requires at least one of a login/proxy
@@ -3076,7 +3112,11 @@ func Load(path string) (*Config, error) {
 	warnChartSkew(cfg.ChartVersion)
 	warnConfigSchemaSkew(k, cfg.ConfigSchemaVersion, cfg.ChartVersion)
 	warnXClientUntrusted(cfg)
+	resolveManageSieveHAProxyKeys(k, cfg)
 	if err := refuseInvertedPairs(cfg); err != nil {
+		return nil, err
+	}
+	if err := checkSSLRequired(cfg); err != nil {
 		return nil, err
 	}
 	expandEnv(cfg)
@@ -3381,6 +3421,29 @@ func expand(s string) string {
 	return os.ExpandEnv(s)
 }
 
+// sslRequiredListeners are the STARTTLS login listeners ssl_mode required applies to.
+var sslRequiredListeners = map[string]bool{"imap_login": true, "pop3_login": true, "submission_login": true, "managesieve_login": true}
+
+// checkSSLRequired refuses ssl_mode required where it means nothing, and with
+// auth_allow_cleartext true, which it contradicts.
+func checkSSLRequired(cfg *Config) error {
+	for _, e := range cfg.Services.Entries() {
+		svc := *e.Svc
+		if !svc.SSLRequired() {
+			continue
+		}
+		if !sslRequiredListeners[e.Name] {
+			return fmt.Errorf("config: services.%s.ssl_mode: required applies to the STARTTLS login listeners only "+
+				"(imap_login, pop3_login, submission_login, managesieve_login)", e.Name)
+		}
+		if svc.CleartextAllowed() {
+			return fmt.Errorf("config: services.%s sets ssl_mode: required with auth_allow_cleartext: true; "+
+				"required refuses every login before TLS, so the two cannot hold together", e.Name)
+		}
+	}
+	return nil
+}
+
 // CheckListenerTLS compares what a listener declares against the certificate
 // configured for it. An implicit-TLS listener with none is an error: it would
 // serve its protocol in the clear on a port that is TLS by definition. A
@@ -3397,6 +3460,9 @@ func CheckListenerTLS(name string, svc *ServiceConfig, ssl SSLConfig) (warning s
 		return "", nil
 	}
 	switch strings.ToLower(svc.SSLMode) {
+	case "required":
+		return "", fmt.Errorf("config: %s declares ssl_mode: required but no certificate is configured "+
+			"(set general.ssl.tls_cert/tls_key, or %s.ssl); no client could ever log in", name, name)
 	case "ssl":
 		return "", fmt.Errorf("config: %s declares ssl_mode: ssl but no certificate is configured "+
 			"(set general.ssl.tls_cert/tls_key, or %s.ssl); refusing to serve this listener in the clear", name, name)
