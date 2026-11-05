@@ -122,6 +122,7 @@ failure; recorded in docs-internal `stand-runs.md` and on the issue.
 | imaptest 0 errors, 0 stalled lines, per type | the host's imaptest on 143, 50 clients, 90 s |
 | FTS short tokens | `xtok-T-7` finds -7 and -77, `-1` finds -1, `-77` finds -77 |
 | disk = index on maildir and sdbox, every mailbox | one command stream per user, every line CRLF, each under `timeout 30`: STATUS for every mailbox LIST returns, summed, against the message files on disk; raw replies in `<out-dir>/index-raw/` |
+| FTS off changes one line | the no-FTS part flips `enabled` inside the `fts:` block only; the config must differ from the start by that line |
 | no restart during either part | `yarilo-imap` start time at the start and the end of each part |
 | run config restored | the config and rc file from the start are back and every process runs |
 

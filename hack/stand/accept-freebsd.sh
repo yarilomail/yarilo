@@ -259,7 +259,12 @@ cmp -s "$OUT/imap-start.fts" "$OUT/imap-start.fts-end" && verdict "no restart du
   verdict "no restart during the FTS part" fail "yarilo-imap started $(cat "$OUT/imap-start.fts-end")"
 
 echo "== smoketest without FTS"
-sed 's/^  enabled: true$/  enabled: false/' "$OUT/yarilo.yaml.start" > "$CONF"
+# Only the fts block's own enabled line: any other section keeps its value.
+awk '/^[^[:space:]#]/ { in_fts = ($0 ~ /^fts:/) } in_fts && /^  enabled: true$/ { sub(/true$/, "false") } { print }' \
+  "$OUT/yarilo.yaml.start" > "$CONF"
+changed=$(diff "$OUT/yarilo.yaml.start" "$CONF" | grep -c '^[<>]' || true)
+[ "$changed" = 2 ] && verdict "FTS off changes one line" ok "fts.enabled false" ||
+  verdict "FTS off changes one line" fail "$changed changed lines, want 2 (one out, one in)"
 sed 's/ fts / /' "$OUT/rc.conf.start" > "$RCCONF"
 service yarilo stop fts > /dev/null 2>&1 || true
 service yarilo restart > /dev/null 2>&1 || true
