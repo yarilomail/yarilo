@@ -492,19 +492,8 @@ type ServiceConfig struct {
 	XClient bool `koanf:"xclient_protocol"`
 
 	// AllowCleartext is the reference spelling of this listener's cleartext
-	// policy, and it means the OPPOSITE of what our key meant:
-	// auth_allow_cleartext=false is disable_plaintext_auth=true.
-	//
-	// Because the sense is inverted, this pair is not an ordinary alias and
-	// must never be adopted like one: an alias layer that copied the value
-	// across would flip an operator's security setting on a config nobody
-	// edited. Both spellings are accepted, and BOTH SET AT ONCE is refused --
-	// even when they agree, since an operator carrying both is one edit away
-	// from meaning the opposite of what they wrote (#1286, package 4).
-	//
-	// Defaults to true (cleartext allowed) so an unset key keeps the old
-	// unset behaviour of disable_plaintext_auth=false; the loader sets it from
-	// whichever spelling was given.
+	// policy; auth_allow_cleartext=false is disable_plaintext_auth=true, so the
+	// pair is never aliased and both at once is refused (#1286). Unset is false.
 	AllowCleartext *bool `koanf:"auth_allow_cleartext"`
 	// DisablePlainAuth is the pre-beta spelling, inverted. Read by the loader
 	// only -- every consumer reads CleartextAllowed().
@@ -512,12 +501,11 @@ type ServiceConfig struct {
 }
 
 // CleartextAllowed reports whether this listener permits cleartext
-// authentication, resolving the two spellings in ONE place: the inversion
-// exists here and nowhere else, so no consumer can get the direction wrong.
-// Unset means allowed, which is what an unset disable_plaintext_auth meant.
+// authentication, resolving the two spellings in one place. Unset is
+// DefaultAllowCleartext.
 func (s *ServiceConfig) CleartextAllowed() bool {
 	if s == nil {
-		return true
+		return DefaultAllowCleartext
 	}
 	if s.AllowCleartext != nil {
 		return *s.AllowCleartext
@@ -525,8 +513,11 @@ func (s *ServiceConfig) CleartextAllowed() bool {
 	if s.DisablePlainAuth != nil {
 		return !*s.DisablePlainAuth
 	}
-	return true
+	return DefaultAllowCleartext
 }
+
+// DefaultAllowCleartext is auth_allow_cleartext for a listener that leaves it out.
+const DefaultAllowCleartext = false
 
 // PlainAuthDisabled is the same fact in the spelling the login servers use.
 func (s *ServiceConfig) PlainAuthDisabled() bool { return !s.CleartextAllowed() }
@@ -3927,7 +3918,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 29
+const minConfigSchema = 30
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3974,6 +3965,8 @@ var schemaAdditions = map[int][]string{
 		"warden_service.sentinel_addrs", "warden_service.sentinel_master", "warden_service.sentinel_user", "warden_service.sentinel_password"},
 	28: {"auth.auth_username_format"},
 	29: {"jmap_login_service.client_ip_header"},
+	30: {"services.imap_login.auth_allow_cleartext", "services.pop3_login.auth_allow_cleartext",
+		"services.managesieve_login.auth_allow_cleartext", "services.jmap_login.auth_allow_cleartext"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

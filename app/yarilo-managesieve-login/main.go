@@ -125,6 +125,7 @@ func main() {
 		AuthTLS:             intTLS,
 		AuthMaxAttempts:     cfg.Auth.MaxAttempts,
 		DisablePlainAuth:    svcs.ManageSieveLogin.PlainAuthDisabled(),
+		XClientNets:         parseCIDRs(cfg.General.XClient.TrustedNets),
 		SieveExtensions:     sieveCapability(cfg.Sieve),
 		SieveMaxInvalidCmds: cfg.Protocol.ManageSieve.MaxInvalidCommands,
 		WardenAddr:          cfg.WardenService.ClientAddr(),

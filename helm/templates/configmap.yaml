@@ -57,6 +57,7 @@ data:
         port: {{ .Values.components.imapLogin.listeners.imaps.containerPort }}
         address: "0.0.0.0"
         ssl_mode: ssl
+        auth_allow_cleartext: {{ .Values.components.imapLogin.listeners.imaps.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       imap_login:
@@ -64,6 +65,7 @@ data:
         port: {{ .Values.components.imapLogin.listeners.imap.containerPort }}
         address: "0.0.0.0"
         ssl_mode: starttls
+        auth_allow_cleartext: {{ .Values.components.imapLogin.listeners.imap.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       pop3s_login:
@@ -71,6 +73,7 @@ data:
         port: {{ .Values.components.pop3Login.listeners.pop3s.containerPort }}
         address: "0.0.0.0"
         ssl_mode: ssl
+        auth_allow_cleartext: {{ .Values.components.pop3Login.listeners.pop3s.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       pop3_login:
@@ -78,6 +81,7 @@ data:
         port: {{ .Values.components.pop3Login.listeners.pop3.containerPort }}
         address: "0.0.0.0"
         ssl_mode: starttls
+        auth_allow_cleartext: {{ .Values.components.pop3Login.listeners.pop3.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       submission_login:
@@ -85,7 +89,7 @@ data:
         port: {{ .Values.components.submissionLogin.listeners.submission.containerPort }}
         address: "0.0.0.0"
         ssl_mode: starttls
-        auth_allow_cleartext: false
+        auth_allow_cleartext: {{ .Values.components.submissionLogin.listeners.submission.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       submissions_login:
@@ -93,7 +97,7 @@ data:
         port: {{ .Values.components.submissionLogin.listeners.submissions.containerPort }}
         address: "0.0.0.0"
         ssl_mode: ssl
-        auth_allow_cleartext: false
+        auth_allow_cleartext: {{ .Values.components.submissionLogin.listeners.submissions.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       lmtp_login:
@@ -109,7 +113,7 @@ data:
         port: {{ $msLoginL.containerPort | default 4190 }}
         address: "0.0.0.0"
         ssl_mode: starttls
-        auth_allow_cleartext: {{ not ($msLoginL.disablePlainAuth | default false) }}
+        auth_allow_cleartext: {{ $msLoginL.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
       {{- $jmapL := (((.Values.components.jmapLogin | default dict).listeners | default dict).jmap | default dict) }}
       jmap_login:
@@ -118,7 +122,7 @@ data:
         address: "0.0.0.0"
         ssl_mode: ssl
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
-        auth_allow_cleartext: {{ not ($jmapL.disablePlainAuth | default false) }}
+        auth_allow_cleartext: {{ $jmapL.auth_allow_cleartext }}
       imap:
         enabled: {{ .Values.components.imap.listeners.imap.enabled }}
         port: {{ .Values.components.imap.listeners.imap.containerPort }}

@@ -40,7 +40,7 @@ type Options struct {
 
 	Auth   PasswordAuthenticator
 	Tokens TokenAuthenticator
-	// DisablePlainAuth refuses Basic over a connection that is not TLS-protected.
+	// DisablePlainAuth refuses Basic and Bearer where login.CleartextRefused says so.
 	DisablePlainAuth bool
 
 	// Router resolves a username to its backend address.
@@ -56,7 +56,9 @@ type Options struct {
 
 	ProxyProtocol      bool
 	HAProxyTrustedNets []*net.IPNet
-	HAProxyTimeout     time.Duration
+	// TrustedNets are peers whose connections count as secured for cleartext auth.
+	TrustedNets    []*net.IPNet
+	HAProxyTimeout time.Duration
 	// ClientIPHeader names the header a peer in HAProxyTrustedNets puts the
 	// client address in; empty reads none.
 	ClientIPHeader string
@@ -464,6 +466,9 @@ type trackedConn struct {
 	once    sync.Once
 	onClose atomic.Pointer[func()]
 }
+
+// NetConn exposes the connection under the accounting wrapper.
+func (c *trackedConn) NetConn() net.Conn { return c.Conn }
 
 func (c *trackedConn) Close() error {
 	err := c.Conn.Close()

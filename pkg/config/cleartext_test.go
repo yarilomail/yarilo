@@ -39,11 +39,9 @@ func TestBothSpellingsProduceTheSamePolicy(t *testing.T) {
 			wantCleartext: true,
 		},
 		{
-			// Unset means what an unset disable_plaintext_auth meant, or the
-			// rename would change behaviour for every config that never set it.
-			name:          "neither spelling keeps the old unset behaviour",
+			name:          "neither spelling is the reference default, cleartext off",
 			body:          "services:\n  imap:\n    listen: \":143\"\n",
-			wantCleartext: true,
+			wantCleartext: false,
 		},
 	}
 

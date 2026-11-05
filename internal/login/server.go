@@ -128,8 +128,8 @@ type Options struct {
 
 	// IMAPIDRetain keeps the client's ID pairs for the auth service (client_id).
 	IMAPIDRetain bool
-	// DisablePlainAuth refuses PLAIN and LOGIN, and hides them, on a connection
-	// that is not TLS, not proxied and not local.
+	// DisablePlainAuth refuses and hides cleartext mechanisms where
+	// CleartextRefused says so.
 	DisablePlainAuth bool
 	// SieveExtensions is the space-joined list of supported Sieve extensions
 	// advertised in the ManageSieve SIEVE capability line.
