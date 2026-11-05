@@ -15,12 +15,11 @@ import (
 
 // manageSieveGreeting sends the pre-auth capability block to the client.
 func manageSieveGreeting(conn net.Conn, extTLS *tls.Config, opts Options, rc relayContext) error {
-	cleartextOK := !cleartextRefused(conn, opts)
 	var list []string
-	if cleartextOK {
+	if !cleartextRefused(conn, opts) {
 		list = []string{"PLAIN", "LOGIN"}
 	}
-	mechs := strings.Join(append(list, advertisedRelay(rc, conn, cleartextOK)...), " ")
+	mechs := strings.Join(append(list, offeredRelay(conn, opts, rc)...), " ")
 	if _, err := fmt.Fprintf(conn, "%q %q\r\n", "IMPLEMENTATION", "yarilo ManageSieve"); err != nil {
 		return err
 	}
@@ -78,7 +77,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 				return nil, conn, rd, err
 			}
 		case "AUTHENTICATE":
-			pre, err := msHandleAuthenticate(conn, rd, cleartextRefused(conn, opts), rc)
+			pre, err := msHandleAuthenticate(conn, rd, cleartextRefused(conn, opts), sslRefused(conn, opts), rc)
 			if err != nil {
 				return nil, conn, rd, err
 			}
@@ -124,7 +123,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 
 // msHandleAuthenticate processes AUTHENTICATE mechanism [initial-response].
 // Returns a non-nil *preamble on success; nil on auth failure (caller retries).
-func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool, rc relayContext) (*preamble, error) {
+func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff, sslOff bool, rc relayContext) (*preamble, error) {
 	mechBytes, err := msReadString(rd, conn)
 	if err != nil {
 		if errors.Is(err, errMSLiteralTooLarge) {
@@ -135,6 +134,12 @@ func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool, rc
 		return nil, nil
 	}
 	mech := strings.ToUpper(string(mechBytes))
+	if sslOff {
+		msSkipLine(rd)
+		logSSLRefused(conn, rc.sessionID)
+		fmt.Fprintf(conn, "NO (ENCRYPT-NEEDED) %q\r\n", sslRequiredMsg) //nolint:errcheck
+		return nil, nil
+	}
 	if cleartextOff && isCleartextMech(mech) {
 		msSkipLine(rd)
 		logCleartextRefused(conn, rc.sessionID)

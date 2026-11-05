@@ -90,7 +90,7 @@ func main() {
 		}
 	}
 
-	haproxyNets := parseCIDRs(cfg.ManageSieveLoginService.HAProxyNets)
+	haproxyNets := parseCIDRs(cfg.ManageSieveHAProxyNets())
 	haproxyTimeout := time.Duration(cfg.ManageSieveLoginService.HAProxyTimeout) * time.Second
 	localIP := os.Getenv("POD_IP")
 	// #735: managesieve-login never wired DirectorAddr at all (BackendAddr
@@ -125,6 +125,7 @@ func main() {
 		AuthTLS:             intTLS,
 		AuthMaxAttempts:     cfg.Auth.MaxAttempts,
 		DisablePlainAuth:    svcs.ManageSieveLogin.PlainAuthDisabled(),
+		SSLRequired:         svcs.ManageSieveLogin.SSLRequired(),
 		XClientNets:         parseCIDRs(cfg.General.XClient.TrustedNets),
 		SieveExtensions:     sieveCapability(cfg.Sieve),
 		SieveMaxInvalidCmds: cfg.Protocol.ManageSieve.MaxInvalidCommands,
@@ -139,7 +140,7 @@ func main() {
 		TransientReloginCap: cfg.Login.TransientReloginCap,
 		ProxyTimeout:        time.Duration(cfg.Login.LoginProxyTimeout) * time.Second,
 		LookupHoldBackoff:   time.Duration(cfg.Login.LookupHoldBackoffMs) * time.Millisecond,
-		HAProxy:             cfg.ManageSieveLoginService.HAProxy,
+		HAProxy:             cfg.Services.ManageSieveLogin.HAProxy || cfg.ManageSieveLoginService.HAProxy,
 		HAProxyTimeout:      haproxyTimeout,
 		HAProxyNets:         haproxyNets,
 	})

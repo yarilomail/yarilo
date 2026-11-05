@@ -64,7 +64,7 @@ data:
         enabled: {{ .Values.components.imapLogin.listeners.imap.enabled }}
         port: {{ .Values.components.imapLogin.listeners.imap.containerPort }}
         address: "0.0.0.0"
-        ssl_mode: starttls
+        ssl_mode: {{ .Values.components.imapLogin.listeners.imap.ssl_mode }}
         auth_allow_cleartext: {{ .Values.components.imapLogin.listeners.imap.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
@@ -80,7 +80,7 @@ data:
         enabled: {{ .Values.components.pop3Login.listeners.pop3.enabled }}
         port: {{ .Values.components.pop3Login.listeners.pop3.containerPort }}
         address: "0.0.0.0"
-        ssl_mode: starttls
+        ssl_mode: {{ .Values.components.pop3Login.listeners.pop3.ssl_mode }}
         auth_allow_cleartext: {{ .Values.components.pop3Login.listeners.pop3.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
@@ -88,7 +88,7 @@ data:
         enabled: {{ .Values.components.submissionLogin.listeners.submission.enabled }}
         port: {{ .Values.components.submissionLogin.listeners.submission.containerPort }}
         address: "0.0.0.0"
-        ssl_mode: starttls
+        ssl_mode: {{ .Values.components.submissionLogin.listeners.submission.ssl_mode }}
         auth_allow_cleartext: {{ .Values.components.submissionLogin.listeners.submission.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
@@ -112,7 +112,7 @@ data:
         enabled: {{ $msLoginL.enabled | default false }}
         port: {{ $msLoginL.containerPort | default 4190 }}
         address: "0.0.0.0"
-        ssl_mode: starttls
+        ssl_mode: {{ $msLoginL.ssl_mode }}
         auth_allow_cleartext: {{ $msLoginL.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
       {{- $jmapL := (((.Values.components.jmapLogin | default dict).listeners | default dict).jmap | default dict) }}
@@ -1085,15 +1085,6 @@ data:
       director_addr: {{ .Values.components.manageSieveLogin.director_addr | quote }}
       backend_port: {{ .Values.components.manageSieveLogin.backend_port | default 0 }}
       director_tag: {{ .Values.components.manageSieveLogin.director_tag | quote }}
-      {{- if .Values.components.manageSieveLogin.haproxy_protocol }}
-      haproxy_protocol: true
-      {{- with .Values.components.manageSieveLogin.haproxy_nets }}
-      haproxy_trusted_nets:
-        {{- range . }}
-        - {{ . | quote }}
-        {{- end }}
-      {{- end }}
-      {{- end }}
       {{- end }}
 
     {{- if .Values.components.backendAPI.enabled }}
