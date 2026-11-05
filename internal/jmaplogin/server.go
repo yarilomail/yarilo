@@ -56,7 +56,9 @@ type Options struct {
 
 	ProxyProtocol      bool
 	HAProxyTrustedNets []*net.IPNet
-	HAProxyTimeout     time.Duration
+	// TrustedNets are peers whose connections count as secured for cleartext auth.
+	TrustedNets    []*net.IPNet
+	HAProxyTimeout time.Duration
 	// ClientIPHeader names the header a peer in HAProxyTrustedNets puts the
 	// client address in; empty reads none.
 	ClientIPHeader string
@@ -173,10 +175,6 @@ var serverTimeout = 60 * time.Second
 
 // Serve runs until ctx is cancelled, then drains in-flight requests.
 func (s *Server) Serve(ctx context.Context) error {
-	if s.opts.DisablePlainAuth && s.opts.ExtTLS == nil {
-		slog.Warn("jmap-login: auth_allow_cleartext is false but the listener has no TLS, so cleartext stays allowed",
-			"addr", s.opts.Addr)
-	}
 	var fresh sync.Map // connections that have sent no request yet
 	srv := &http.Server{
 		Addr:              s.opts.Addr,
@@ -468,6 +466,9 @@ type trackedConn struct {
 	once    sync.Once
 	onClose atomic.Pointer[func()]
 }
+
+// NetConn exposes the connection under the accounting wrapper.
+func (c *trackedConn) NetConn() net.Conn { return c.Conn }
 
 func (c *trackedConn) Close() error {
 	err := c.Conn.Close()

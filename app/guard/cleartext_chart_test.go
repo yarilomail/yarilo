@@ -24,12 +24,12 @@ components:
   manageSieveLogin:
     enabled: true
     listeners:
-      managesieve: {disablePlainAuth: false}
+      managesieve: {auth_allow_cleartext: true}
   jmapLogin:
     enabled: true
     backend_addr: "jmap:10443"
     listeners:
-      jmap: {disablePlainAuth: false}
+      jmap: {auth_allow_cleartext: true}
 `
 
 const cleartextDefault = `components:

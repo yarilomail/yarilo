@@ -1977,7 +1977,7 @@ components:
         enabled: true
         servicePort: 4190
         containerPort: 14190
-        disablePlainAuth: true
+        auth_allow_cleartext: false
 
     tls:
       secretName: ""
@@ -2103,7 +2103,7 @@ components:
         enabled: true
         servicePort: 443
         containerPort: 8443
-        disablePlainAuth: true
+        auth_allow_cleartext: false
 
     ## TLS cert presented to JMAP clients. Required while the listener's
     ## ssl_mode is ssl: the proxy refuses to start without one rather than

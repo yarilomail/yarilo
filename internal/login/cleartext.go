@@ -2,59 +2,59 @@ package login
 
 import (
 	"crypto/tls"
+	"log/slog"
 	"net"
 
 	proxyproto "github.com/pires/go-proxyproto"
-	"github.com/pires/go-proxyproto/tlvparse"
 )
 
+// cleartextExposedMsg is the IMAP alert sent when the secret is already on the line.
+const cleartextExposedMsg = "cleartext authentication not allowed without SSL/TLS, but your client did it anyway. " +
+	"If anyone was listening, the password was exposed."
+
 // CleartextRefused reports whether a cleartext mechanism (PLAIN, LOGIN,
-// OAUTHBEARER, XOAUTH2, USER/PASS, HTTP Basic) must be refused on conn.
-// listenerTLS is whether the listener can upgrade the line (STARTTLS/STLS) or
-// serves TLS; a listener without TLS keeps cleartext, there is nothing better.
-func CleartextRefused(conn net.Conn, listenerTLS, allowCleartext bool) bool {
-	return !allowCleartext && listenerTLS && !connSecured(conn)
+// OAUTHBEARER, XOAUTH2, USER/PASS, HTTP Basic and Bearer) must be refused on
+// conn: auth_allow_cleartext is off and the connection is not secured.
+func CleartextRefused(conn net.Conn, allowCleartext bool, trustedNets []*net.IPNet) bool {
+	return !allowCleartext && !connSecured(conn, trustedNets)
 }
 
-// connSecured: TLS here, a local peer, or a PROXY v2 header whose PP2_TYPE_SSL
-// TLV says the client used TLS to the proxy. Trusting the proxy is not enough.
-func connSecured(conn net.Conn) bool {
-	if conn == nil {
+// connSecured: TLS, a PROXY header the listener accepted (only trusted peers
+// get one read), or a socket peer that is local or in trustedNets.
+func connSecured(conn net.Conn, trustedNets []*net.IPNet) bool {
+	sock := conn
+	for sock != nil {
+		if _, ok := sock.(*tls.Conn); ok {
+			return true
+		}
+		if pc, ok := sock.(*proxyproto.Conn); ok {
+			if pc.ProxyHeader() != nil {
+				return true
+			}
+			sock = pc.Raw()
+			continue
+		}
+		inner, ok := sock.(interface{ NetConn() net.Conn })
+		if !ok {
+			break
+		}
+		sock = inner.NetConn()
+	}
+	if sock == nil {
 		return false
 	}
-	if localPeer(conn) {
+	r, ok := sock.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	if l, ok := sock.LocalAddr().(*net.TCPAddr); ok && r.IP.Equal(l.IP) {
 		return true
 	}
-	for c := conn; c != nil; {
-		switch v := c.(type) {
-		case *tls.Conn:
-			return true
-		case *proxyproto.Conn:
-			return proxyClientSSL(v)
-		case interface{ NetConn() net.Conn }:
-			c = v.NetConn()
-		default:
-			return false
-		}
-	}
-	return false
+	return ipInNets(r.IP.String(), trustedNets)
 }
 
-func localPeer(conn net.Conn) bool {
-	r, rok := conn.RemoteAddr().(*net.TCPAddr)
-	l, lok := conn.LocalAddr().(*net.TCPAddr)
-	return rok && lok && r.IP.Equal(l.IP)
-}
-
-func proxyClientSSL(c *proxyproto.Conn) bool {
-	h := c.ProxyHeader()
-	if h == nil {
-		return false
-	}
-	tlvs, err := h.TLVs()
-	if err != nil {
-		return false
-	}
-	ssl, ok := tlvparse.FindSSL(tlvs)
-	return ok && ssl.ClientSSL()
+// logCleartextRefused is the log line of every refused cleartext attempt.
+func logCleartextRefused(conn net.Conn, sessionID string) {
+	ip, _ := hostPort(conn.RemoteAddr())
+	slog.Info("login: Login failed: Cleartext authentication disabled", "sid", sessionID, "remote_ip", ip)
 }

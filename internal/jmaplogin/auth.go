@@ -102,7 +102,11 @@ func (s *Server) cleartextRefused(r *http.Request) bool {
 	if st, ok := r.Context().Value(ctxKey{}).(*connState); ok {
 		c = st.conn
 	}
-	return login.CleartextRefused(c, s.opts.ExtTLS != nil, !s.opts.DisablePlainAuth)
+	if !login.CleartextRefused(c, !s.opts.DisablePlainAuth, s.opts.TrustedNets) {
+		return false
+	}
+	slog.Info("jmap-login: Login failed: Cleartext authentication disabled", "ip", hostOnly(r.RemoteAddr))
+	return true
 }
 
 func localIPOf(r *http.Request) string {

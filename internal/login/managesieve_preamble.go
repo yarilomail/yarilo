@@ -15,7 +15,7 @@ import (
 
 // manageSieveGreeting sends the pre-auth capability block to the client.
 func manageSieveGreeting(conn net.Conn, extTLS *tls.Config, opts Options, rc relayContext) error {
-	cleartextOK := !cleartextRefused(conn, extTLS, opts)
+	cleartextOK := !cleartextRefused(conn, opts)
 	var list []string
 	if cleartextOK {
 		list = []string{"PLAIN", "LOGIN"}
@@ -78,7 +78,7 @@ func manageSieveCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config,
 				return nil, conn, rd, err
 			}
 		case "AUTHENTICATE":
-			pre, err := msHandleAuthenticate(conn, rd, cleartextRefused(conn, extTLS, opts), rc)
+			pre, err := msHandleAuthenticate(conn, rd, cleartextRefused(conn, opts), rc)
 			if err != nil {
 				return nil, conn, rd, err
 			}
@@ -137,6 +137,7 @@ func msHandleAuthenticate(conn net.Conn, rd *bufio.Reader, cleartextOff bool, rc
 	mech := strings.ToUpper(string(mechBytes))
 	if cleartextOff && isCleartextMech(mech) {
 		msSkipLine(rd)
+		logCleartextRefused(conn, rc.sessionID)
 		fmt.Fprintf(conn, "NO %q\r\n", cleartextDisabledMsg) //nolint:errcheck
 		return nil, nil
 	}

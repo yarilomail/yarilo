@@ -113,7 +113,7 @@ data:
         port: {{ $msLoginL.containerPort | default 4190 }}
         address: "0.0.0.0"
         ssl_mode: starttls
-        auth_allow_cleartext: {{ not $msLoginL.disablePlainAuth }}
+        auth_allow_cleartext: {{ $msLoginL.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
       {{- $jmapL := (((.Values.components.jmapLogin | default dict).listeners | default dict).jmap | default dict) }}
       jmap_login:
@@ -122,7 +122,7 @@ data:
         address: "0.0.0.0"
         ssl_mode: ssl
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
-        auth_allow_cleartext: {{ not $jmapL.disablePlainAuth }}
+        auth_allow_cleartext: {{ $jmapL.auth_allow_cleartext }}
       imap:
         enabled: {{ .Values.components.imap.listeners.imap.enabled }}
         port: {{ .Values.components.imap.listeners.imap.containerPort }}

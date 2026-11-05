@@ -453,10 +453,6 @@ func New(opts Options) *Server {
 
 // Serve accepts connections on ln until the listener is closed.
 func (s *Server) Serve(ln net.Listener) error {
-	if s.opts.DisablePlainAuth && s.opts.ExtTLS == nil && s.opts.StarttlsTLS == nil {
-		slog.Warn("login: auth_allow_cleartext is false but the listener has no TLS, so cleartext stays allowed",
-			"proto", string(s.opts.Protocol), "addr", ln.Addr().String())
-	}
 	if s.opts.HAProxy {
 		timeout := s.opts.HAProxyTimeout
 		ln = &proxyproto.Listener{

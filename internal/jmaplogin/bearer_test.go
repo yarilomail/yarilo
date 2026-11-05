@@ -172,34 +172,48 @@ func (outage) AuthenticateToken(string, string, string, string, string) (Login, 
 }
 func (outage) OffersTokens() bool { return true }
 
-// Basic and Bearer follow the login proxies' cleartext rule: refused only when
-// the listener has TLS and this request did not come over it.
-func TestCleartextCredentialsFollowTheListenerRule(t *testing.T) {
+// peerConn is a connection from a fixed remote address.
+type peerConn struct {
+	net.Conn
+	ip string
+}
+
+func (c peerConn) RemoteAddr() net.Addr { return &net.TCPAddr{IP: net.ParseIP(c.ip), Port: 40000} }
+func (peerConn) LocalAddr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("198.51.100.1"), Port: 8443}
+}
+
+// Basic and Bearer follow the login proxies' cleartext rule: refused when the
+// switch is off and the request is neither over TLS nor from a trusted peer.
+func TestCleartextCredentialsFollowTheLoginRule(t *testing.T) {
 	svc := authService(t, oauthChain(t)...)
+	_, trusted, _ := net.ParseCIDR("10.0.0.0/8")
 	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("u1:pw"))
 	for _, tc := range []struct {
 		name          string
-		listenerTLS   bool
 		requestTLS    bool
+		peer          string // "" leaves the request without a tracked connection
 		allow         bool
 		authorization string
 		refused       bool
 	}{
-		{"basic, TLS listener, plain request", true, false, false, basic, true},
-		{"bearer, TLS listener, plain request", true, false, false, "Bearer good-token", true},
-		{"basic, TLS listener, TLS request", true, true, false, basic, false},
-		{"bearer, TLS listener, TLS request", true, true, false, "Bearer good-token", false},
-		{"basic, listener without TLS", false, false, false, basic, false},
-		{"bearer, listener without TLS", false, false, false, "Bearer good-token", false},
-		{"basic, cleartext allowed", true, false, true, basic, false},
+		{"basic, plain request", false, "", false, basic, true},
+		{"bearer, plain request", false, "", false, "Bearer good-token", true},
+		{"basic, untrusted peer", false, "192.0.2.1", false, basic, true},
+		{"basic, TLS request", true, "", false, basic, false},
+		{"bearer, TLS request", true, "", false, "Bearer good-token", false},
+		{"basic, trusted peer", false, "10.1.2.3", false, basic, false},
+		{"bearer, trusted peer", false, "10.1.2.3", false, "Bearer good-token", false},
+		{"basic, cleartext allowed", false, "", true, basic, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := Options{Auth: fakeAuth{users: map[string]string{"u1": "pw"}}, Tokens: svc, DisablePlainAuth: !tc.allow}
-			if tc.listenerTLS {
-				opts.ExtTLS = &tls.Config{MinVersion: tls.VersionTLS12}
-			}
+			opts := Options{Auth: fakeAuth{users: map[string]string{"u1": "pw"}}, Tokens: svc,
+				DisablePlainAuth: !tc.allow, TrustedNets: []*net.IPNet{trusted}}
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/jmap/session", nil)
 			r.RemoteAddr = "192.0.2.1:40000"
+			if tc.peer != "" {
+				r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, &connState{conn: peerConn{ip: tc.peer}}))
+			}
 			if tc.requestTLS {
 				r.TLS = &tls.ConnectionState{}
 			}
