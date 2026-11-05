@@ -91,6 +91,40 @@ pods are replaced (#2183).
 
 The runner's disk is pruned by the `Prune runner disk` job of `ci-develop.yml` after every develop build: images, containers and build cache older than 48 h go, and the build cache is capped at 10 GB. The same job drops Go build cache entries unused for 48 h (`go/pkg/mod` is left alone). That cache is shared with the seconddns runners on the host, so their first build after a prune is a little longer.
 
+## The FreeBSD acceptance run
+
+The single-host layout is a release target too, and the stand covers k8s only.
+Before a release window the `mail/yarilo` port is rebuilt from the develop
+under test and judged on the FreeBSD host, as root:
+
+```
+go list -m github.com/yarilomail/yarilo/v2@<commit>   # the module version
+GOOS=freebsd GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o smoketest ./app/smoketest
+bash hack/stand/accept-freebsd.sh <module-version> <smoketest> <out-dir>
+```
+
+The smoketest binary is built from the same commit. `<out-dir>` must not exist:
+a run never writes over another run's evidence. `ACCEPT_SKIP_BUILD=1` judges the
+package already installed, which must be that version. The run config, the rc
+file and the paths default to the host's own and are named `ACCEPT_*` in the
+script. Same `PASS`/`FAIL`/`SKIP` lines in `<out-dir>/verdict.txt`, exit 1 on any
+failure; recorded in docs-internal `stand-runs.md` and on the issue.
+
+| Criterion | How |
+|:---|:---|
+| clock in sync | ntpd offset under `ACCEPT_CLOCK_MAX_MS` (1000) |
+| port builds, check-plist clean, only the libxapian stage-qa note, port installs | `make BATCH=yes clean makesum build stage check-plist stage-qa`, then `deinstall install`, with `DISTVERSION` set and the module fetched from the Go proxy |
+| installed version | `pkg info` names the module version |
+| processes running | `service yarilo status` after a restart on the installed binaries: `ACCEPT_PROCS` (17) |
+| smoketest with FTS and without, on mdbox, maildir, sdbox | 0 failed, and skipped exactly the rows the host cannot run (`HOST_SKIPS`), plus the two full-text rows without FTS (`NOFTS_SKIPS`); any other skip fails |
+| mail between mailboxes | u1→u51, u51→u101, u101→u1, u1→u101 over SMTP 587, each in INBOX, none keeps its Bcc |
+| METADATA round trip | `SETMETADATA` and `GETMETADATA` through yarilo-dict, `DEPTH infinity` included |
+| imaptest 0 errors, 0 stalled lines, per type | the host's imaptest on 143, 50 clients, 90 s |
+| FTS short tokens | `xtok-T-7` finds -7 and -77, `-1` finds -1, `-77` finds -77 |
+| disk = index on maildir and sdbox, every mailbox | one command stream per user, every line CRLF, each under `timeout 30`: STATUS for every mailbox LIST returns, summed, against the message files on disk; raw replies in `<out-dir>/index-raw/` |
+| no restart during either part | `yarilo-imap` start time at the start and the end of each part |
+| run config restored | the config and rc file from the start are back and every process runs |
+
 ## The quick arm
 
 A question about one storage type does not need the other two: a maildir
