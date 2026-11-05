@@ -136,6 +136,10 @@ type SieveConfig struct {
 	SubmissionHost string `koanf:"sieve_submission_host"`
 	// SubmissionSSL controls transport security: no | smtps | starttls. Default: no.
 	SubmissionSSL string `koanf:"sieve_submission_ssl"`
+	// SubmissionSSLVerify checks the MTA's certificate and name. Default: true.
+	SubmissionSSLVerify bool `koanf:"sieve_submission_ssl_verify"`
+	// SubmissionSSLCA is a PEM file the MTA is verified against; empty = system roots.
+	SubmissionSSLCA string `koanf:"sieve_submission_ssl_ca"`
 	// SubmissionTimeout is the connect and command timeout in seconds. Default: 30.
 	SubmissionTimeout int `koanf:"sieve_submission_timeout"`
 	// SubmissionAuthSecret names the Kubernetes Secret with SMTP AUTH
@@ -2931,6 +2935,7 @@ func Defaults() *Config {
 			VacationCheckRecipient: true,
 			ReportUserAgent:        "yarilo",
 			SubmissionSSL:          "no",
+			SubmissionSSLVerify:    true,
 			PipeBinDir:             "/usr/lib/yarilo/sieve-pipe",
 			PipeSocketDir:          "sieve-pipe",
 			PipeInputEOL:           "crlf",
@@ -3984,7 +3989,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 30
+const minConfigSchema = 31
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -4033,6 +4038,7 @@ var schemaAdditions = map[int][]string{
 	29: {"jmap_login_service.client_ip_header"},
 	30: {"services.imap_login.auth_allow_cleartext", "services.pop3_login.auth_allow_cleartext",
 		"services.managesieve_login.auth_allow_cleartext", "services.jmap_login.auth_allow_cleartext"},
+	31: {"sieve.sieve_submission_ssl_verify", "sieve.sieve_submission_ssl_ca"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
