@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -72,11 +73,18 @@ func (s *Sender) dial(ctx context.Context) (*goSmtp.Client, error) {
 	nd := &net.Dialer{Timeout: s.connectTimeout()}
 
 	var c *goSmtp.Client
-	switch strings.ToLower(s.cfg.SubmissionSSL) {
+	mode := strings.ToLower(s.cfg.SubmissionSSL)
+	var tc *tls.Config
+	if mode != "no" && mode != "" {
+		if tc, err = s.tlsConfig(host); err != nil {
+			return nil, err
+		}
+	}
+	switch mode {
 	case "smtps", "submissions":
 		d := &tls.Dialer{
 			NetDialer: nd,
-			Config:    &tls.Config{ServerName: host}, //nolint:gosec
+			Config:    tc,
 		}
 		conn, err := d.DialContext(ctx, "tcp", addr)
 		if err != nil {
@@ -88,7 +96,7 @@ func (s *Sender) dial(ctx context.Context) (*goSmtp.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		c, err = goSmtp.NewClientStartTLS(conn, &tls.Config{ServerName: host}) //nolint:gosec
+		c, err = goSmtp.NewClientStartTLS(conn, tc)
 		if err != nil {
 			conn.Close()
 			return nil, err
@@ -105,6 +113,27 @@ func (s *Sender) dial(ctx context.Context) (*goSmtp.Client, error) {
 	c.CommandTimeout = cmd
 	c.SubmissionTimeout = cmd + 2*time.Minute
 	return c, nil
+}
+
+// tlsConfig verifies the MTA against sieve_submission_ssl_ca when set, the
+// system roots otherwise.
+func (s *Sender) tlsConfig(host string) (*tls.Config, error) {
+	tc := &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: !s.cfg.SubmissionSSLVerify, //nolint:gosec
+	}
+	if s.cfg.SubmissionSSLCA == "" {
+		return tc, nil
+	}
+	pem, err := os.ReadFile(s.cfg.SubmissionSSLCA)
+	if err != nil {
+		return nil, fmt.Errorf("sieve/sender: MTA CA: %w", err)
+	}
+	tc.RootCAs = x509.NewCertPool()
+	if !tc.RootCAs.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("sieve/sender: MTA CA %s holds no certificate", s.cfg.SubmissionSSLCA)
+	}
+	return tc, nil
 }
 
 func (s *Sender) connectTimeout() time.Duration {

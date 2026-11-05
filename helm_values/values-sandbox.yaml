@@ -236,8 +236,11 @@ sieve:
   sieve_duplicate_driver: redis
   sieve_vacation_enabled: true
   sieve_vacation_use_original_recipient: true
-  sieve_submission_host: "relay-fwd.yarilo-relay.svc.cluster.local:25"
-  sieve_submission_ssl: "no"
+  ## relay-fwd:587, verified against the internal CA that issues its certificate.
+  sieve_submission_host: "relay-fwd.yarilo-relay.svc.cluster.local:587"
+  sieve_submission_ssl: "starttls"
+  sieve_submission_ssl_verify: true
+  sieve_submission_ssl_ca: "/etc/yarilo/internal-tls/ca.crt"
   sieve_submission_auth_secret: "sieve-smtp-auth"
   sieve_global_before: []
   sieve_global_after: []

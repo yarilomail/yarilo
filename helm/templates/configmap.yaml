@@ -340,6 +340,8 @@ data:
       sieve_report_user_agent: {{ $sieve.sieve_report_user_agent | default "yarilo" | quote }}
       sieve_submission_host: {{ $sieve.sieve_submission_host | default "" | quote }}
       sieve_submission_ssl: {{ $sieve.sieve_submission_ssl | default "no" | quote }}
+      sieve_submission_ssl_verify: {{ $sieve.sieve_submission_ssl_verify }}
+      sieve_submission_ssl_ca: {{ $sieve.sieve_submission_ssl_ca | quote }}
       sieve_submission_timeout: {{ $sieve.sieve_submission_timeout }}
       sieve_submission_auth_secret: {{ $sieve.sieve_submission_auth_secret | default "" | quote }}
       {{- with $sieve.sieve_extensions }}

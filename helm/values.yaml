@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 30
+config_schema_version: 31
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -2459,7 +2459,13 @@ sieve:
   ## Outbound MTA for redirect / vacation actions.
   sieve_submission_host: ""
   sieve_submission_ssl: "no"
+  ## The MTA's certificate is checked against sieve_submission_ssl_ca, the
+  ## system roots when empty.
+  sieve_submission_ssl_verify: true
+  sieve_submission_ssl_ca: ""
   sieve_submission_timeout: 30
+  ## Secret with keys user and password: the Sieve sender logs in with them
+  ## (YARILO_SIEVE_SUBMISSION_USER/PASSWORD in yarilo-lmtp and yarilo-imap).
   sieve_submission_auth_secret: ""
   ## sieve_global_before / sieve_global_after: ordered lists of absolute paths to
   ## .sieve files executed before / after each user's active script. Admin-defined.
