@@ -663,6 +663,7 @@ components:
                   FROM alias a
                   WHERE a.active = 1 AND a.address <> mailbox.username
                     AND a.address NOT LIKE '@%'
+                    AND SUBSTRING_INDEX(a.address, '@', -1) = SUBSTRING_INDEX(mailbox.username, '@', -1)
                     AND FIND_IN_SET(mailbox.username, REPLACE(a.goto, ' ', '')) > 0) AS identity_aliases
           FROM mailbox
           WHERE username = %u
