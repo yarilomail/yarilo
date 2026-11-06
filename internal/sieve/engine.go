@@ -12,6 +12,7 @@ import (
 	"net/textproto"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -157,35 +158,9 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		globalDir:       e.cfg.Global,
 	}
 
-	// One implicit keep for the message, settled after the sequence: a script
-	// that cancels it, or a user script that cannot run, ends the sequence.
-	var merged FilterResult
-	keep := Delivery{Folder: "INBOX", Implicit: true, FromKeep: true}
-	kept, active := true, true
-	run := func(script *gosieve.Script) (*FilterResult, error) {
-		r, err := e.runScript(ctx, script, opts, hdr, pol)
-		if err != nil || r.Reject != nil {
-			return r, err
-		}
-		kept = false
-		for _, d := range r.Deliveries {
-			if d.Implicit {
-				keep, kept = d, true
-				continue
-			}
-			merged.Deliveries = append(merged.Deliveries, d)
-		}
-		r.Deliveries = nil
-		merged.absorb(r)
-		active = kept
-		return nil, nil
-	}
-
+	seq := e.newSequence(ctx, opts, hdr, pol, "INBOX")
 	for _, script := range e.globalBefore {
-		if !active {
-			break
-		}
-		if r, err := run(script); err != nil || r != nil {
+		if r, err := seq.run(script); err != nil || r != nil {
 			return r, err
 		}
 	}
@@ -197,7 +172,7 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 	if src == nil && len(e.globalBefore) == 0 && len(e.globalAfter) == 0 {
 		return nil, nil
 	}
-	if src != nil && active {
+	if src != nil && seq.active {
 		sieveOpts := CompileOptions(UserExtensions(e.cfg))
 		sieveOpts.Interp.MaxActions = e.cfg.MaxActions
 		sieveOpts.Interp.DebugLog = makeDebugLogger(opts.HomeDir)
@@ -206,35 +181,85 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		case err != nil:
 			slog.Error("sieve: script compile error, skipping user script",
 				"user", opts.Username, "err", err)
-			active = false
+			seq.active = false
 		case CheckExtensions(script, UserExtensions(e.cfg)) != nil:
 			slog.Warn("sieve: script uses forbidden extension, skipping",
 				"user", opts.Username, "err", CheckExtensions(script, UserExtensions(e.cfg)))
-			active = false
+			seq.active = false
 		case CheckRedirects(src, e.cfg.MaxRedirects) != nil:
 			slog.Warn("sieve: script refused, skipping", "user", opts.Username,
 				"err", CheckRedirects(src, e.cfg.MaxRedirects))
-			active = false
+			seq.active = false
 		default:
-			if r, err := run(script); err != nil || r != nil {
+			if r, err := seq.run(script); err != nil || r != nil {
 				return r, err
 			}
 		}
 	}
 
 	for _, script := range e.globalAfter {
-		if !active {
-			break
-		}
-		if r, err := run(script); err != nil || r != nil {
+		if r, err := seq.run(script); err != nil || r != nil {
 			return r, err
 		}
 	}
+	return seq.result(), nil
+}
 
-	if kept {
-		merged.Deliveries = append(merged.Deliveries, keep)
+// sequence carries one implicit keep over the scripts that run on a message,
+// as the reference's multiscript run does (#2530).
+type sequence struct {
+	e          *Engine
+	ctx        context.Context
+	opts       FilterOptions
+	hdr        textproto.MIMEHeader
+	pol        *policy
+	keepFolder string
+
+	merged FilterResult
+	keep   Delivery
+	// kept: the keep stands; active: the next script runs; ran: one did.
+	kept, active, ran bool
+}
+
+func (e *Engine) newSequence(ctx context.Context, opts FilterOptions, hdr textproto.MIMEHeader, pol *policy, keepFolder string) *sequence {
+	return &sequence{e: e, ctx: ctx, opts: opts, hdr: hdr, pol: pol, keepFolder: keepFolder,
+		keep: Delivery{Folder: "INBOX", Implicit: true, FromKeep: true}, kept: true, active: true}
+}
+
+// run executes one script unless the sequence has ended. A keep, explicit or
+// implicit, is deferred to the end; without one the sequence ends. A reject
+// or an error is returned to end the event.
+func (q *sequence) run(script *gosieve.Script) (*FilterResult, error) {
+	if !q.active {
+		return nil, nil
 	}
-	return &merged, nil
+	r, err := q.e.runScript(q.ctx, script, q.opts, q.hdr, q.pol)
+	if err != nil || r.Reject != nil {
+		return r, err
+	}
+	q.ran, q.kept = true, false
+	for _, d := range r.Deliveries {
+		if d.FromKeep {
+			q.keep, q.kept = d, true
+			continue
+		}
+		q.merged.Deliveries = append(q.merged.Deliveries, d)
+	}
+	r.Deliveries = nil
+	q.merged.absorb(r)
+	q.active = q.kept
+	return nil, nil
+}
+
+// result settles the keep once: a store into the keep's folder already
+// done stands for it.
+func (q *sequence) result() *FilterResult {
+	if q.kept && !slices.ContainsFunc(q.merged.Deliveries, func(d Delivery) bool {
+		return d.Folder == q.keepFolder || (strings.EqualFold(d.Folder, "INBOX") && strings.EqualFold(q.keepFolder, "INBOX"))
+	}) {
+		q.merged.Deliveries = append(q.merged.Deliveries, q.keep)
+	}
+	return &q.merged
 }
 
 func (e *Engine) runScript(ctx context.Context, script *gosieve.Script, opts FilterOptions, hdr textproto.MIMEHeader, pol *policy) (*FilterResult, error) {

@@ -29,6 +29,9 @@ func TestSkippedUserScriptKeeps(t *testing.T) {
 		{"before without a match, user files it", `require "fileinto"; fileinto "User";`, `require "fileinto"; if false { fileinto "Spam"; }`, "", []string{"User"}},
 		{"before files it, user does not run", `require "fileinto"; fileinto "User";`, `require "fileinto"; fileinto "Spam";`, "", []string{"Spam"}},
 		{"skipped user ends the sequence before after", `this is not sieve`, "", `require "fileinto"; fileinto "After";`, []string{"INBOX"}},
+		{"explicit keep in before is deferred", `require "fileinto"; fileinto "User";`, `keep;`, "", []string{"User"}},
+		{"explicit keep and fileinto in before go on", `require "fileinto"; fileinto "User";`, `require "fileinto"; keep; fileinto "Spam";`, "", []string{"Spam", "User"}},
+		{"fileinto INBOX stands for the keep", `require "fileinto"; fileinto "INBOX";`, `keep;`, `keep;`, []string{"INBOX"}},
 		{"user without a match, after files it", `require "fileinto"; if false { fileinto "User"; }`, "", `require "fileinto"; fileinto "After";`, []string{"After"}},
 	}
 	for _, c := range cases {
