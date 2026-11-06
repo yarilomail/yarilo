@@ -21,6 +21,10 @@ rows=$(kubectl -n db --request-timeout=30s exec mysql-0 -- sh -c \
   echo "@ IN SOA ns.test. hostmaster.test. ( $(date -u +%Y%m%d%H) 3600 600 86400 300 )"
   echo '@ IN NS ns.test.'
   while IFS=$'\t' read -r domain selector key; do
+    case "$domain" in
+      ?*.test) ;;
+      *) echo "dns-zone: skipping $selector._domainkey.$domain: not under test." >&2; continue ;;
+    esac
     # A raw 32-byte key is Ed25519 (44 base64 characters); anything else is an RSA SPKI.
     if [ "${#key}" -eq 44 ]; then kt=ed25519; else kt=rsa; fi
     record="v=DKIM1; k=$kt; p=$key"
