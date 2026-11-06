@@ -658,7 +658,12 @@ components:
                  CONCAT(mbtype, ':~/', maildir,
                         ':INDEX=~/index',
                         ':VOLATILEDIR=/tmp/yarilo-volatile/%2.256Nu/%u') AS mail,
-                 CONCAT('*:bytes=', quota_bytes, ':messages=', quota_messages) AS quota_rule
+                 CONCAT('*:bytes=', quota_bytes, ':messages=', quota_messages) AS quota_rule,
+                 (SELECT GROUP_CONCAT(a.address ORDER BY a.address)
+                  FROM alias a
+                  WHERE a.active = 1 AND a.address <> mailbox.username
+                    AND a.address NOT LIKE '@%'
+                    AND FIND_IN_SET(mailbox.username, REPLACE(a.goto, ' ', '')) > 0) AS identity_aliases
           FROM mailbox
           WHERE username = %u
             AND CASE %s WHEN 'lmtp' THEN lmtp_enabled ELSE 1 END = 1
