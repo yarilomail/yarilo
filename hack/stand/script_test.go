@@ -533,3 +533,28 @@ func TestAKickedAppendIsLeftOut(t *testing.T) {
 		})
 	}
 }
+
+// The SRS domain must be dkim-milter-fwd's sign_domain; either missing fails.
+func TestSRSDomainIsTheSignDomain(t *testing.T) {
+	fn := regexp.MustCompile(`(?ms)^srs_judge\(\) \{.*?^\}`).FindString(acceptSource(t))
+	if fn == "" {
+		t.Fatal("accept.sh lost srs_judge")
+	}
+	for _, tc := range []struct {
+		srs, sign, want string
+	}{
+		{"fwd.d00001.test", "fwd.d00001.test", "ok fwd.d00001.test"},
+		{"fwd.d00001.test", "fwd.d00002.test", "fail SRS domain 'fwd.d00001.test', sign_domain 'fwd.d00002.test'"},
+		{"mail-sb.seconddns.com", "fwd.d00001.test", "fail SRS domain 'mail-sb.seconddns.com', sign_domain 'fwd.d00001.test'"},
+		{"fwd.d00001.test", "", "fail SRS domain 'fwd.d00001.test', sign_domain 'none'"},
+		{"", "", "fail SRS domain 'none', sign_domain 'none'"},
+	} {
+		out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\nsrs_judge \"$1\" \"$2\"", "-", tc.srs, tc.sign).CombinedOutput()
+		if err != nil {
+			t.Fatalf("srs_judge: %v\n%s", err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != tc.want {
+			t.Errorf("srs_judge %q %q = %q, want %q", tc.srs, tc.sign, got, tc.want)
+		}
+	}
+}

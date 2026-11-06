@@ -71,6 +71,16 @@ verdict() {
   esac
 }
 
+# srs_judge compares the SRS domain with dkim-milter-fwd's sign_domain: a bounce
+# goes back through the one, the forwarded copy is signed with the other.
+srs_judge() {
+  if [ -n "$1" ] && [ "$1" = "$2" ]; then
+    echo "ok $1"
+  else
+    echo "fail SRS domain '${1:-none}', sign_domain '${2:-none}'"
+  fi
+}
+
 # pod_state lists every pod with its uid and each container's restart count: a
 # replaced pod shows as a new uid, a restarted container as a higher count.
 pod_state() {
@@ -431,6 +441,20 @@ else
     verdict "mail between mailboxes reaches the relay as its sender" fail "${CROSS_BAD:-only $CROSS_OK of 8 sent}"
 fi
 unset MASTER_PW
+
+if ! kubectl -n "$RELAY_NS" --request-timeout=60s get deploy relay-fwd-out >/dev/null 2>&1; then
+  verdict "SRS domain is the forwarder's sign domain" skip "no relay-fwd-out in $RELAY_NS"
+else
+  srs=$(kubectl -n "$RELAY_NS" --request-timeout=60s get deploy relay-postsrsd \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SRS_DOMAIN")].value}' 2>/dev/null || true)
+  sign=$(kubectl -n "$RELAY_NS" --request-timeout=60s logs deploy/dkim-milter-fwd --tail=-1 2>/dev/null |
+    grep -ao '"sign_domain":"[^"]*"' | tail -1 | sed 's/.*:"//; s/"$//' || true)
+  judged=$(srs_judge "$srs" "$sign")
+  case "$judged" in
+    ok*) verdict "SRS domain is the forwarder's sign domain" ok "${judged#ok }" ;;
+    *) verdict "SRS domain is the forwarder's sign domain" fail "${judged#fail }" ;;
+  esac
+fi
 
 echo "== imaptest, one type at a time"
 for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do
