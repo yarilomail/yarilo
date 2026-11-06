@@ -108,3 +108,25 @@ func TestCheckRedirects(t *testing.T) {
 		})
 	}
 }
+
+// At delivery a stored script with redirect is skipped under 0: implicit keep.
+func TestFilterSkipsRedirectScriptAtZero(t *testing.T) {
+	e := New(config.SieveConfig{Enabled: true, MaxRedirects: 0, MaxScriptSize: 65536,
+		DefaultName: FallbackDefaultName}, nil, nil, nil)
+	store := newTestStore()
+	home := t.TempDir()
+	ctx := context.Background()
+	if err := store.SaveScript(ctx, "u1", home, "test", []byte(`redirect "a@example.org"; discard;`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetActive(ctx, "u1", home, "test"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.Filter(ctx, baseOpts("u1", home))
+	if err != nil {
+		t.Fatalf("filter: %v", err)
+	}
+	if result == nil || len(result.Redirects) != 0 || len(result.Deliveries) != 1 || result.Deliveries[0].Folder != "INBOX" {
+		t.Fatalf("result %+v, want implicit keep only", result)
+	}
+}

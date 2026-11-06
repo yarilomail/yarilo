@@ -182,6 +182,7 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		sieveOpts.Interp.MaxActions = e.cfg.MaxActions
 		sieveOpts.Interp.DebugLog = makeDebugLogger(opts.HomeDir)
 		script, err := gosieve.Load(bytes.NewReader(src), sieveOpts)
+		skipped := true
 		if err != nil {
 			slog.Error("sieve: script compile error, skipping user script",
 				"user", opts.Username, "err", err)
@@ -191,6 +192,7 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		} else if rErr := CheckRedirects(src, e.cfg.MaxRedirects); rErr != nil {
 			slog.Warn("sieve: script refused, skipping", "user", opts.Username, "err", rErr)
 		} else {
+			skipped = false
 			r, err := e.runScript(ctx, script, opts, hdr, pol)
 			if err != nil {
 				return nil, err
@@ -199,6 +201,11 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 				return r, nil
 			}
 			merged.absorb(r)
+		}
+		// A script that did not run keeps the message; a global-before script
+		// has already kept or cancelled it (#2530).
+		if skipped && len(e.globalBefore) == 0 {
+			merged.absorb(&FilterResult{Deliveries: []Delivery{{Folder: "INBOX", Implicit: true, FromKeep: true}}})
 		}
 	}
 
