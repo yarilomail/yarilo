@@ -36,10 +36,11 @@ func TestGlobalExtensionsAtDelivery(t *testing.T) {
 			exts: []string{"ihave"}, global: []string{"fileinto"},
 			before:  `require ["ihave", "fileinto"]; if ihave "editheader" { fileinto "Wide"; } fileinto "Site";`,
 			folders: []string{"Site"}},
+		// Skipped, so implicit keep (#2530).
 		{name: "a user's script may not have it",
 			exts: []string{"fileinto"}, global: []string{"fileinto"},
 			scripts: map[string]string{"main": `require "fileinto"; fileinto "User";`},
-			folders: nil},
+			folders: []string{"INBOX"}},
 		{name: "ihave in a user's script is false",
 			exts: []string{"ihave"}, global: []string{"fileinto"},
 			scripts: map[string]string{"main": `require "ihave"; if ihave "fileinto" { fileinto "User"; }`},

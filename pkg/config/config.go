@@ -90,7 +90,7 @@ type SieveConfig struct {
 	Enabled bool `koanf:"sieve_enabled"`
 	// MaxScriptSize is the maximum compiled script size in bytes. Default: 65536.
 	MaxScriptSize int `koanf:"sieve_max_script_size"`
-	// MaxRedirects is the maximum number of redirect actions per message. Default: 32.
+	// MaxRedirects caps a message's redirects, :copy and :list included; 0 forbids redirect. Default: 32.
 	MaxRedirects int `koanf:"sieve_max_redirects"`
 	// MaxScripts caps a user's stored scripts; replacing one adds none. 0 = unlimited.
 	MaxScripts int `koanf:"sieve_max_num_scripts"`

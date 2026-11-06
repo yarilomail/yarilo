@@ -63,42 +63,39 @@ func (e *Engine) RunIMAPEvent(ctx context.Context, opts IMAPEventOptions) (*Filt
 		},
 	}
 
-	var merged FilterResult
-	ran := false
-	run := func(script *gosieve.Script) error {
-		r, err := e.runScript(ctx, script, fopts, hdr, pol)
-		if err != nil {
-			return err
-		}
-		ran = true
-		merged.absorb(r)
-		return nil
-	}
-
+	seq := e.newSequence(ctx, fopts, hdr, pol, opts.Mailbox)
 	for _, s := range e.imapGlobalBefore {
-		if err := run(s); err != nil {
+		if r, err := seq.run(s); err != nil {
 			return nil, err
+		} else if r != nil {
+			return r, nil
 		}
 	}
-	if opts.ScriptName != "" {
+	if opts.ScriptName != "" && seq.active {
 		bound, err := e.loadImapScript(opts.ScriptName)
 		if err != nil {
+			// A bound script that cannot load ends the sequence, keep standing.
 			slog.Warn("imapsieve: load bound script", "name", opts.ScriptName, "err", err)
+			seq.active = false
 		} else if bound != nil {
-			if err := run(bound); err != nil {
+			if r, err := seq.run(bound); err != nil {
 				return nil, err
+			} else if r != nil {
+				return r, nil
 			}
 		}
 	}
 	for _, s := range e.imapGlobalAfter {
-		if err := run(s); err != nil {
+		if r, err := seq.run(s); err != nil {
 			return nil, err
+		} else if r != nil {
+			return r, nil
 		}
 	}
-	if !ran {
+	if !seq.ran {
 		return nil, nil
 	}
-	return &merged, nil
+	return seq.result(), nil
 }
 
 // ImapSieveEnabled reports whether imapsieve is active.
@@ -139,6 +136,9 @@ func (e *Engine) loadImapScript(name string) (*gosieve.Script, error) {
 	}
 	if extErr := CheckExtensions(script, AdminExtensions(e.cfg)); extErr != nil {
 		return nil, fmt.Errorf("imapsieve: %w", extErr)
+	}
+	if rErr := CheckRedirects(src, e.cfg.MaxRedirects); rErr != nil {
+		return nil, fmt.Errorf("imapsieve: %s: %w", name, rErr)
 	}
 	return script, nil
 }

@@ -227,13 +227,18 @@ func writeContinue(w *bufio.Writer) error {
 }
 
 // writeCapabilities writes the ManageSieve capability block (no trailing OK).
-func writeCapabilities(w *bufio.Writer, exts []string) error {
+// MAXREDIRECTS (RFC 5804 §1.7) is left out when redirect is not limited
+// above 0, as the reference does.
+func writeCapabilities(w *bufio.Writer, exts []string, maxRedirects int) error {
 	type kv struct{ k, v string }
 	caps := []kv{
 		{"IMPLEMENTATION", "yarilo ManageSieve"},
 		{"SIEVE", strings.Join(exts, " ")},
-		{"VERSION", "1.0"},
 	}
+	if maxRedirects > 0 {
+		caps = append(caps, kv{"MAXREDIRECTS", strconv.Itoa(maxRedirects)})
+	}
+	caps = append(caps, kv{"VERSION", "1.0"})
 	for _, c := range caps {
 		if _, err := fmt.Fprintf(w, "%s %s\r\n", quoteStr(c.k), quoteStr(c.v)); err != nil {
 			return err
