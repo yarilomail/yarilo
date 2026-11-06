@@ -157,71 +157,82 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		globalDir:       e.cfg.Global,
 	}
 
+	// One implicit keep for the message, settled after the sequence: a script
+	// that cancels it, or a user script that cannot run, ends the sequence.
 	var merged FilterResult
-	anyScriptRan := len(e.globalBefore) > 0 || len(e.globalAfter) > 0
+	keep := Delivery{Folder: "INBOX", Implicit: true, FromKeep: true}
+	kept, active := true, true
+	run := func(script *gosieve.Script) (*FilterResult, error) {
+		r, err := e.runScript(ctx, script, opts, hdr, pol)
+		if err != nil || r.Reject != nil {
+			return r, err
+		}
+		kept = false
+		for _, d := range r.Deliveries {
+			if d.Implicit {
+				keep, kept = d, true
+				continue
+			}
+			merged.Deliveries = append(merged.Deliveries, d)
+		}
+		r.Deliveries = nil
+		merged.absorb(r)
+		active = kept
+		return nil, nil
+	}
 
 	for _, script := range e.globalBefore {
-		r, err := e.runScript(ctx, script, opts, hdr, pol)
-		if err != nil {
-			return nil, err
+		if !active {
+			break
 		}
-		if r.Reject != nil {
-			return r, nil
+		if r, err := run(script); err != nil || r != nil {
+			return r, err
 		}
-		merged.absorb(r)
 	}
 
 	src, _, err := e.store.LoadActiveScript(ctx, opts.Username, opts.HomeDir)
 	if err != nil {
 		return nil, fmt.Errorf("sieve/engine: load script: %w", err)
 	}
-	if src != nil {
-		anyScriptRan = true
+	if src == nil && len(e.globalBefore) == 0 && len(e.globalAfter) == 0 {
+		return nil, nil
+	}
+	if src != nil && active {
 		sieveOpts := CompileOptions(UserExtensions(e.cfg))
-		sieveOpts.Interp.MaxRedirects = e.cfg.MaxRedirects
 		sieveOpts.Interp.MaxActions = e.cfg.MaxActions
 		sieveOpts.Interp.DebugLog = makeDebugLogger(opts.HomeDir)
 		script, err := gosieve.Load(bytes.NewReader(src), sieveOpts)
-		skipped := true
-		if err != nil {
+		switch {
+		case err != nil:
 			slog.Error("sieve: script compile error, skipping user script",
 				"user", opts.Username, "err", err)
-		} else if extErr := CheckExtensions(script, UserExtensions(e.cfg)); extErr != nil {
+			active = false
+		case CheckExtensions(script, UserExtensions(e.cfg)) != nil:
 			slog.Warn("sieve: script uses forbidden extension, skipping",
-				"user", opts.Username, "err", extErr)
-		} else if rErr := CheckRedirects(src, e.cfg.MaxRedirects); rErr != nil {
-			slog.Warn("sieve: script refused, skipping", "user", opts.Username, "err", rErr)
-		} else {
-			skipped = false
-			r, err := e.runScript(ctx, script, opts, hdr, pol)
-			if err != nil {
-				return nil, err
+				"user", opts.Username, "err", CheckExtensions(script, UserExtensions(e.cfg)))
+			active = false
+		case CheckRedirects(src, e.cfg.MaxRedirects) != nil:
+			slog.Warn("sieve: script refused, skipping", "user", opts.Username,
+				"err", CheckRedirects(src, e.cfg.MaxRedirects))
+			active = false
+		default:
+			if r, err := run(script); err != nil || r != nil {
+				return r, err
 			}
-			if r.Reject != nil {
-				return r, nil
-			}
-			merged.absorb(r)
-		}
-		// A script that did not run keeps the message; a global-before script
-		// has already kept or cancelled it (#2530).
-		if skipped && len(e.globalBefore) == 0 {
-			merged.absorb(&FilterResult{Deliveries: []Delivery{{Folder: "INBOX", Implicit: true, FromKeep: true}}})
 		}
 	}
 
 	for _, script := range e.globalAfter {
-		r, err := e.runScript(ctx, script, opts, hdr, pol)
-		if err != nil {
-			return nil, err
+		if !active {
+			break
 		}
-		if r.Reject != nil {
-			return r, nil
+		if r, err := run(script); err != nil || r != nil {
+			return r, err
 		}
-		merged.absorb(r)
 	}
 
-	if !anyScriptRan {
-		return nil, nil
+	if kept {
+		merged.Deliveries = append(merged.Deliveries, keep)
 	}
 	return &merged, nil
 }

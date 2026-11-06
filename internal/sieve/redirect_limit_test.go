@@ -68,7 +68,7 @@ func TestRedirectLimit(t *testing.T) {
 // The limit is per message, over every script that runs on it.
 func TestRedirectLimitSpansScripts(t *testing.T) {
 	before := filepath.Join(t.TempDir(), "before.sieve")
-	if err := os.WriteFile(before, []byte(`redirect "a@example.org";`), 0o600); err != nil {
+	if err := os.WriteFile(before, []byte(`require "copy"; redirect :copy "a@example.org";`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	e := New(config.SieveConfig{Enabled: true, MaxRedirects: 1, MaxScriptSize: 65536,
