@@ -509,6 +509,7 @@ func New(cfg *config.Config) (*Server, error) {
 			MasterPool:      masterPool,
 			MasterTLS:       authTLS,
 			SieveExtensions: sieve.UserExtensions(cfg.Sieve),
+			MaxRedirects:    cfg.Sieve.MaxRedirects,
 			ScriptsDriver:   cfg.Sieve.ScriptsDriver,
 			ScriptsDict:     sieveDict,
 		})

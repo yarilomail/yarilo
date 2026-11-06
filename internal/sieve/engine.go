@@ -59,18 +59,18 @@ func New(cfg config.SieveConfig, locker locks.Locker, d dict.Dict, dupDict dict.
 		locker:  locker,
 	}
 	admin := AdminExtensions(cfg)
-	e.globalBefore = loadGlobalScripts(cfg.GlobalBefore, admin)
-	e.globalAfter = loadGlobalScripts(cfg.GlobalAfter, admin)
+	e.globalBefore = loadGlobalScripts(cfg.GlobalBefore, admin, cfg.MaxRedirects)
+	e.globalAfter = loadGlobalScripts(cfg.GlobalAfter, admin, cfg.MaxRedirects)
 	if cfg.ImapSieveEnabled {
-		e.imapGlobalBefore = loadGlobalScripts(cfg.ImapSieveGlobalBefore, admin)
-		e.imapGlobalAfter = loadGlobalScripts(cfg.ImapSieveGlobalAfter, admin)
+		e.imapGlobalBefore = loadGlobalScripts(cfg.ImapSieveGlobalBefore, admin, cfg.MaxRedirects)
+		e.imapGlobalAfter = loadGlobalScripts(cfg.ImapSieveGlobalAfter, admin, cfg.MaxRedirects)
 	}
 	return e
 }
 
 // loadGlobalScripts compiles the administrator's before/after scripts, held to
 // the administrator's set; one that uses more is logged and left out (#2290).
-func loadGlobalScripts(paths []string, admin ExtensionSet) []*gosieve.Script {
+func loadGlobalScripts(paths []string, admin ExtensionSet, maxRedirects int) []*gosieve.Script {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -89,6 +89,10 @@ func loadGlobalScripts(paths []string, admin ExtensionSet) []*gosieve.Script {
 		}
 		if err := CheckExtensions(script, admin); err != nil {
 			slog.Error("sieve: global script uses a forbidden extension, skipping", "path", p, "err", err)
+			continue
+		}
+		if err := CheckRedirects(src, maxRedirects); err != nil {
+			slog.Error("sieve: global script refused, skipping", "path", p, "err", err)
 			continue
 		}
 		scripts = append(scripts, script)
@@ -184,6 +188,8 @@ func (e *Engine) Filter(ctx context.Context, opts FilterOptions) (*FilterResult,
 		} else if extErr := CheckExtensions(script, UserExtensions(e.cfg)); extErr != nil {
 			slog.Warn("sieve: script uses forbidden extension, skipping",
 				"user", opts.Username, "err", extErr)
+		} else if rErr := CheckRedirects(src, e.cfg.MaxRedirects); rErr != nil {
+			slog.Warn("sieve: script refused, skipping", "user", opts.Username, "err", rErr)
 		} else {
 			r, err := e.runScript(ctx, script, opts, hdr, pol)
 			if err != nil {
@@ -334,7 +340,10 @@ func parseHeaders(raw []byte) textproto.MIMEHeader {
 var _ interp.SpamVirusChecker = (*policy)(nil)
 
 type policy struct {
-	maxRedirects    int
+	maxRedirects int
+	// redirected holds the targets one message has been redirected to, over
+	// every script that runs on it.
+	redirected      []string
 	folderExists    func(ctx context.Context, folder string) (bool, error)
 	mailboxByID     func(ctx context.Context, id string) (string, bool)
 	mailboxMetadata func(ctx context.Context, mailbox, annotation string) (string, bool, error)
@@ -408,6 +417,9 @@ func (p *policy) checkedInclude(name string, src []byte, x ExtensionSet) (io.Rea
 	if err := CheckExtensions(script, x); err != nil {
 		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
 	}
+	if err := CheckRedirects(src, p.maxRedirects); err != nil {
+		return nil, fmt.Errorf("sieve/engine: included script %q: %w", name, err)
+	}
 	return io.NopCloser(bytes.NewReader(src)), nil
 }
 
@@ -476,14 +488,20 @@ func parseLeadingFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s[:end], 64)
 }
 
-func (p *policy) RedirectAllowed(_ context.Context, d *interp.RuntimeData, _ string) (bool, error) {
-	count := 0
-	for _, a := range d.AppliedActions {
-		if r, ok := a.(interp.ActionRedirect); ok && !r.Copy {
-			count++
+// RedirectAllowed counts every redirect of the message, :copy and :list
+// included; a repeat of a target already redirected to is not counted.
+func (p *policy) RedirectAllowed(_ context.Context, _ *interp.RuntimeData, target string) (bool, error) {
+	for _, t := range p.redirected {
+		if sameRedirectTarget(t, target) {
+			return true, nil
 		}
 	}
-	return count < p.maxRedirects, nil
+	if len(p.redirected) >= p.maxRedirects {
+		return false, fmt.Errorf("sieve/policy: number of redirect actions exceeds policy limit (%d > %d)",
+			len(p.redirected)+1, p.maxRedirects)
+	}
+	p.redirected = append(p.redirected, target)
+	return true, nil
 }
 
 func (p *policy) MailboxExists(ctx context.Context, folder string) (bool, error) {
@@ -548,10 +566,7 @@ func buildResult(d *interp.RuntimeData) *FilterResult {
 			if a.ListName != "" {
 				continue
 			}
-			result.Redirects = append(result.Redirects, Redirect{
-				Address: a.Address,
-				Copy:    a.Copy,
-			})
+			result.addRedirect(Redirect{Address: a.Address, Copy: a.Copy})
 		case interp.ActionNotify:
 			result.Notifications = append(result.Notifications, a)
 		case interp.ActionReport:
@@ -576,7 +591,9 @@ func (r *FilterResult) absorb(other *FilterResult) {
 		return
 	}
 	r.Deliveries = append(r.Deliveries, other.Deliveries...)
-	r.Redirects = append(r.Redirects, other.Redirects...)
+	for _, rd := range other.Redirects {
+		r.addRedirect(rd)
+	}
 	r.Pipes = append(r.Pipes, other.Pipes...)
 	r.VacationReplies = append(r.VacationReplies, other.VacationReplies...)
 	r.Notifications = append(r.Notifications, other.Notifications...)

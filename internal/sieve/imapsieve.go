@@ -140,5 +140,8 @@ func (e *Engine) loadImapScript(name string) (*gosieve.Script, error) {
 	if extErr := CheckExtensions(script, AdminExtensions(e.cfg)); extErr != nil {
 		return nil, fmt.Errorf("imapsieve: %w", extErr)
 	}
+	if rErr := CheckRedirects(src, e.cfg.MaxRedirects); rErr != nil {
+		return nil, fmt.Errorf("imapsieve: %s: %w", name, rErr)
+	}
 	return script, nil
 }

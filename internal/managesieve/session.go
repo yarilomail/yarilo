@@ -33,6 +33,7 @@ type session struct {
 	maxLine           int64
 	closing           bool
 	allowedExtensions sieve.ExtensionSet
+	maxRedirects      int
 	// sid is the warden session correlation ID from the login-proxy preamble
 	// (loginproto.PreambleConn.SessionID) - included on every command
 	// dispatch and error line so a session's activity greps as one thread.
@@ -44,7 +45,7 @@ func (s *session) serve(ctx context.Context) {
 	// Every lock this session takes announces the session (#1672).
 	ctx = locks.WithID(ctx, s.sid)
 
-	if err := writeCapabilities(s.w, sieve.EffectiveExtensions(s.allowedExtensions)); err != nil {
+	if err := writeCapabilities(s.w, sieve.EffectiveExtensions(s.allowedExtensions), s.maxRedirects); err != nil {
 		return
 	}
 	if err := writeOK(s.w, "ManageSieve ready."); err != nil {
@@ -139,7 +140,7 @@ func (s *session) argError(err error, msg string) {
 }
 
 func (s *session) handleCapability() {
-	if err := writeCapabilities(s.w, sieve.EffectiveExtensions(s.allowedExtensions)); err != nil {
+	if err := writeCapabilities(s.w, sieve.EffectiveExtensions(s.allowedExtensions), s.maxRedirects); err != nil {
 		return
 	}
 	_ = writeOK(s.w, "CAPABILITY completed.")
@@ -205,6 +206,10 @@ func (s *session) handlePutScript(ctx context.Context) {
 	}
 	if extErr := sieve.CheckExtensions(compiled, s.allowedExtensions); extErr != nil {
 		_ = writeNO(s.w, "FORBIDDEN", ucFirst(extErr.Error())+".")
+		return
+	}
+	if rErr := sieve.CheckRedirects(src, s.maxRedirects); rErr != nil {
+		_ = writeNO(s.w, "", "Script error: "+rErr.Error()+".")
 		return
 	}
 
@@ -357,6 +362,10 @@ func (s *session) handleCheckScript() {
 	}
 	if extErr := sieve.CheckExtensions(compiled, s.allowedExtensions); extErr != nil {
 		_ = writeNO(s.w, "FORBIDDEN", ucFirst(extErr.Error())+".")
+		return
+	}
+	if rErr := sieve.CheckRedirects(src, s.maxRedirects); rErr != nil {
+		_ = writeNO(s.w, "", "Script error: "+rErr.Error()+".")
 		return
 	}
 	_ = writeOK(s.w, "CHECKSCRIPT completed.")
