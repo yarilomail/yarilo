@@ -227,8 +227,7 @@ sieve:
       require ["imapsieve", "environment", "fileinto", "mailbox"];
       if environment :is "imap.cause" "APPEND" { fileinto :create "ImapSieveArchive"; }
   sieve_max_script_size: 65536
-  # The stand bounds a message to four redirects.
-  sieve_max_redirects: 4
+  sieve_max_redirects: 32
   sieve_max_num_scripts: 0
   sieve_max_storage: 0
   sieve_max_actions: 32
