@@ -3,7 +3,7 @@
 ## Pinned to the patch go.mod names: the scan reads go.mod, the image ships the
 ## base, and a floating base makes them disagree silently (#1497). Dependabot
 ## moves it.
-FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
+FROM golang:1.27.3-alpine3.24@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS builder
 
 ## A newer go.mod must fail the build, not fetch a toolchain.
 ENV GOTOOLCHAIN=local
@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 ## --- yarilo-fts: the only cgo binary (libxapian). Built in its own stage so
 ## every other binary stays CGO_ENABLED=0 static; ships in the single image.
-FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS fts-builder
+FROM golang:1.27.3-alpine3.24@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS fts-builder
 ENV GOTOOLCHAIN=local
 # hadolint ignore=DL3018
 RUN apk add --no-cache build-base xapian-core-dev
@@ -76,7 +76,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 # fts-bench is a stand tool, not a service, so the production image does not
 # carry it (#2431): docker build --target fts-bench builds it alone.
-FROM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS fts-bench-builder
+FROM golang:1.27.3-alpine3.24@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS fts-bench-builder
 ENV GOTOOLCHAIN=local
 # hadolint ignore=DL3018
 RUN apk add --no-cache build-base xapian-core-dev
