@@ -1722,11 +1722,18 @@ func (s *session) listNamespace(w *imapserver.ListWriter, h *nsHandle, ref strin
 		if !listMatch(full, refPatterns(ref, patterns), byte(h.spec.Separator)) {
 			continue
 		}
-		// SELECT SUBSCRIBED drops folders the user has not subscribed to.
-		// RECURSIVEMATCH refinement is not implemented.
+		// SELECT SUBSCRIBED drops folders the user has not subscribed to; with
+		// RECURSIVEMATCH one with a subscribed descendant the patterns do not
+		// reach stays, carrying CHILDINFO (RFC 5258 §3.5), which LSUB answers
+		// as \Noselect.
+		var childInfo *imaplib.ListDataChildInfo
 		if opts != nil && opts.SelectSubscribed {
 			if _, ok := subs[subsKeyPrefix+name]; !ok {
-				continue
+				if !opts.SelectRecursiveMatch ||
+					!subscribedDescendantUnlisted(subs, subsKeyPrefix, name, h, ref, patterns) {
+					continue
+				}
+				childInfo = &imaplib.ListDataChildInfo{Subscribed: true}
 			}
 		}
 		attrs := mailboxAttrs(name, names, sep, s.srv.opts.ClientWorkarounds)
@@ -1748,7 +1755,7 @@ func (s *session) listNamespace(w *imapserver.ListWriter, h *nsHandle, ref strin
 		if attr := specialUse[name]; attr != "" {
 			attrs = append(attrs, attr)
 		}
-		data := &imaplib.ListData{Mailbox: full, Delim: h.spec.Separator, Attrs: attrs}
+		data := &imaplib.ListData{Mailbox: full, Delim: h.spec.Separator, Attrs: attrs, ChildInfo: childInfo}
 		// RETURN STATUS (RFC 5819): skip on failure rather than abort the
 		// whole LIST.
 		if opts != nil && opts.ReturnStatus != nil {
@@ -1774,6 +1781,22 @@ func (s *session) listNamespace(w *imapserver.ListWriter, h *nsHandle, ref strin
 		}
 	}
 	return nil
+}
+
+// subscribedDescendantUnlisted reports whether a subscription lies under name
+// and the patterns do not match it, so only the parent can stand for it.
+func subscribedDescendantUnlisted(subs map[string]struct{}, keyPrefix, name string, h *nsHandle, ref string, patterns []string) bool {
+	under := keyPrefix + name + string(h.spec.Separator)
+	for key := range subs {
+		rel, ok := strings.CutPrefix(key, under)
+		if !ok || rel == "" {
+			continue
+		}
+		if !listMatch(h.fullName(name+string(h.spec.Separator)+rel), refPatterns(ref, patterns), byte(h.spec.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // orphanAttrs renders a subscribed name whose mailbox does not exist, per
@@ -1842,6 +1865,53 @@ func (s *session) listNamespaceOrphans(w *imapserver.ListWriter, h *nsHandle, ex
 	sort.Strings(orphans)
 	for _, full := range orphans {
 		if err := w.WriteList(&imaplib.ListData{Mailbox: full, Delim: h.spec.Separator, Attrs: orphanAttrs(opts)}); err != nil {
+			return err
+		}
+	}
+	if opts.SelectRecursiveMatch {
+		return s.listAbsentParents(w, h, existing, subs, subsKeyPrefix, ref, patterns, opts)
+	}
+	return nil
+}
+
+// listAbsentParents answers RECURSIVEMATCH for a parent that is no mailbox at
+// all (p of a subscribed p/c that was created alone): the row stands for its
+// subscribed descendants the patterns do not reach (RFC 5258 §3.5).
+func (s *session) listAbsentParents(w *imapserver.ListWriter, h *nsHandle, existing map[string]bool, subs map[string]struct{}, subsKeyPrefix, ref string, patterns []string, opts *imaplib.ListOptions) error {
+	sep := string(h.spec.Separator)
+	seen := make(map[string]bool)
+	var parents []string
+	for key := range subs {
+		rel, ok := strings.CutPrefix(key, subsKeyPrefix)
+		if !ok || rel == "" || (h == s.primary && !s.namesPrimaryFolder(rel)) {
+			continue
+		}
+		parts := strings.Split(rel, sep)
+		for i := 1; i < len(parts); i++ {
+			parent := strings.Join(parts[:i], sep)
+			if seen[parent] || existing[parent] {
+				continue
+			}
+			seen[parent] = true
+			if _, sub := subs[subsKeyPrefix+parent]; sub {
+				continue
+			}
+			if !listMatch(h.fullName(parent), refPatterns(ref, patterns), byte(h.spec.Separator)) ||
+				!subscribedDescendantUnlisted(subs, subsKeyPrefix, parent, h, ref, patterns) {
+				continue
+			}
+			parents = append(parents, parent)
+		}
+	}
+	sort.Strings(parents)
+	for _, parent := range parents {
+		var attrs []imaplib.MailboxAttr
+		if !opts.Lsub {
+			attrs = []imaplib.MailboxAttr{imaplib.MailboxAttrNonExistent}
+		}
+		data := &imaplib.ListData{Mailbox: h.fullName(parent), Delim: h.spec.Separator, Attrs: attrs,
+			ChildInfo: &imaplib.ListDataChildInfo{Subscribed: true}}
+		if err := w.WriteList(data); err != nil {
 			return err
 		}
 	}
