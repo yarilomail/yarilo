@@ -77,8 +77,8 @@ func TestSieveGlobalScriptsReachLMTPAndIMAP(t *testing.T) {
 		t.Fatalf("helm template: %v", err)
 	}
 	keys, mounts, volume := scriptsShape(t, out, "sieve-global")
-	if !slices.Equal(keys, []string{"site-keep.sieve"}) || !volume {
-		t.Errorf("ConfigMap keys %v, volume %v; want the sandbox's site-keep.sieve and a volume", keys, volume)
+	if !slices.Equal(keys, []string{"spam-junk.sieve"}) || !volume {
+		t.Errorf("ConfigMap keys %v, volume %v; want the sandbox's spam-junk.sieve and a volume", keys, volume)
 	}
 	want := map[string]string{"yarilo-imap": "/etc/yarilo/sieve-global", "yarilo-lmtp": "/etc/yarilo/sieve-global"}
 	if len(mounts) != len(want) || mounts["yarilo-imap"] != want["yarilo-imap"] || mounts["yarilo-lmtp"] != want["yarilo-lmtp"] {
