@@ -71,9 +71,10 @@ func TestOrphanSubscription_FlagsPerCommandForm(t *testing.T) {
 		t.Fatal("subscribe to a not-yet-created mailbox must succeed")
 	}
 
+	// The SUBSCRIBED selection implies RETURN (SUBSCRIBED) (RFC 5258 §3.1).
 	ext := a.cmd(`LIST (SUBSCRIBED) "" "*"`)
-	if !strings.Contains(ext, `\NonExistent) "/" "Ghost"`) {
-		t.Errorf("extended LIST should flag the orphan \\NonExistent, got:\n%s", ext)
+	if !strings.Contains(ext, `\NonExistent \Subscribed) "/" "Ghost"`) {
+		t.Errorf("extended LIST should flag the orphan \\NonExistent \\Subscribed, got:\n%s", ext)
 	}
 
 	ret := a.cmd(`LIST (SUBSCRIBED) "" "*" RETURN (SUBSCRIBED)`)
@@ -179,7 +180,7 @@ func TestOrphanSubscription_DeletedMailboxBecomesOrphan(t *testing.T) {
 		t.Fatal("delete failed")
 	}
 	after := a.cmd(`LIST (SUBSCRIBED) "" "Doomed"`)
-	if !strings.Contains(after, `\NonExistent) "/" "Doomed"`) {
+	if !strings.Contains(after, `\NonExistent \Subscribed) "/" "Doomed"`) {
 		t.Errorf("deleted mailbox's subscription should list as \\NonExistent, got:\n%s", after)
 	}
 }
