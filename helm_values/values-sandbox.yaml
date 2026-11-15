@@ -218,8 +218,15 @@ sieve:
   sieve_default_name: "yarilo"
   sieve_global: "/etc/yarilo/sieve-global"
   sieve_global_scripts:
-    site-keep: |
-      keep;
+    ## Mail the relay marked as spam (X-Spam: Yes, rspamd's add_header score)
+    ## goes to Junk before the user's script; filing it ends the run, so the
+    ## user's rules and vacation do not see it.
+    spam-junk: |
+      require ["fileinto", "mailbox"];
+      if header :is "X-Spam" "Yes" {
+        fileinto :create "Junk";
+        stop;
+      }
   imapsieve_enabled: true
   imapsieve_script_dir: "/etc/yarilo/imapsieve"
   imapsieve_scripts:
@@ -242,7 +249,9 @@ sieve:
   sieve_submission_ssl_verify: true
   sieve_submission_ssl_ca: "/etc/yarilo/internal-tls/ca.crt"
   sieve_submission_auth_secret: "sieve-smtp-auth"
-  sieve_global_before: []
+  ## The chart's spam-junk script (sieve_global_scripts), before every user's.
+  sieve_global_before:
+    - /etc/yarilo/sieve-global/spam-junk.sieve
   sieve_global_after: []
   sieve_extensions:
     - fileinto

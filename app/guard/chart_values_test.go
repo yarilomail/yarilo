@@ -152,6 +152,28 @@ func TestSieveGlobalReachesTheConfig(t *testing.T) {
 	}
 }
 
+// sieve_global_before and sieve_global_after reach the config as written, in
+// order, and their defaults are none: the chart once dropped both.
+func TestSieveGlobalBeforeAfterReachTheConfig(t *testing.T) {
+	for _, c := range []struct{ extra, before, after string }{
+		{"", "[]", "[]"},
+		{"sieve:\n  sieve_global_before: [/g/a.sieve, /g/b.sieve]\n  sieve_global_after: [/g/z.sieve]\n",
+			"[/g/a.sieve /g/b.sieve]", "[/g/z.sieve]"},
+	} {
+		out, err := renderWith(t, c.extra)
+		if err != nil {
+			t.Fatalf("helm template: %v\n%s", err, out)
+		}
+		cfg := loadRendered(t, out).Sieve
+		if got := fmt.Sprint(cfg.GlobalBefore); got != c.before {
+			t.Errorf("sieve_global_before = %s, want %s", got, c.before)
+		}
+		if got := fmt.Sprint(cfg.GlobalAfter); got != c.after {
+			t.Errorf("sieve_global_after = %s, want %s", got, c.after)
+		}
+	}
+}
+
 // sieve_global_extensions reaches the config as written, and its default is
 // none (#2290).
 func TestSieveGlobalExtensionsReachTheConfig(t *testing.T) {

@@ -323,6 +323,14 @@ data:
       sieve_duplicate_driver: {{ $sieve.sieve_duplicate_driver | default "file" | quote }}
       sieve_duplicate_file: {{ $sieve.sieve_duplicate_file | default ".yarilo.sieve-duplicate" | quote }}
       sieve_global: {{ $sieve.sieve_global | quote }}
+      {{- with $sieve.sieve_global_before }}
+      sieve_global_before:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $sieve.sieve_global_after }}
+      sieve_global_after:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       sieve_vacation_enabled: {{ $sieve.sieve_vacation_enabled }}
       sieve_vacation_min_period: {{ $sieve.sieve_vacation_min_period | int64 }}
       sieve_vacation_max_period: {{ $sieve.sieve_vacation_max_period | int64 }}
