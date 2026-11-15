@@ -979,10 +979,13 @@ func checkSMTPProxyProtocol() error {
 
 	// The banner alone says the header was tolerated, not that the address in
 	// it was taken: the stamp on the delivered message is what says that.
-	received, err := waitForReceivedHeaders(*flagIMAPUser, *flagIMAPPass, marker)
+	received, folder, err := waitForReceivedHeaders(*flagIMAPUser, *flagIMAPPass, marker)
 	if err != nil {
 		return fmt.Errorf("PROXY: %w", err)
 	}
+	// Where the probe lands is spam policy, not transport: the probe claims the
+	// recipient's own domain from an address outside its SPF.
+	slog.Info("smoke: PROXY probe delivered", "folder", folder, "marker", marker)
 	if !strings.Contains(received, claimed) {
 		return fmt.Errorf("PROXY: the delivered message records no %s in Received: %s", claimed, received)
 	}
@@ -1282,27 +1285,57 @@ func readLine(r io.Reader) (string, error) {
 	return strings.TrimRight(string(buf), "\r"), nil
 }
 
+// probeFolders are where a delivered probe may land: spam policy can file a
+// probe into Junk, and the check is about the delivery, not the folder.
+var probeFolders = []string{"INBOX", "Junk"}
+
 // waitForReceivedHeaders returns the Received headers of the probe, which is
-// where the server writes the address it took the connection to be from.
-func waitForReceivedHeaders(user, pass, marker string) (string, error) {
+// where the server writes the address it took the connection to be from, and
+// the folder it was found in.
+func waitForReceivedHeaders(user, pass, marker string) (string, string, error) {
 	c, err := imapDial()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer c.close()
 	if err := c.login(user, pass); err != nil {
-		return "", fmt.Errorf("login %q: %w", user, err)
+		return "", "", fmt.Errorf("login %q: %w", user, err)
 	}
-	if _, err := c.selectFolder("INBOX"); err != nil {
-		return "", fmt.Errorf("select INBOX: %w", err)
+	return findProbe(c, marker)
+}
+
+// findProbe looks for the one message carrying marker in each of probeFolders
+// until the budget runs out.
+func findProbe(c *imapClient, marker string) (string, string, error) {
+	deadline := time.Now().Add(*flagTimeout * 3)
+	for {
+		for _, folder := range probeFolders {
+			if _, err := c.selectFolder(folder); err != nil {
+				// An account without Junk holds no probe there; INBOX always
+				// exists, so failing to open it is its own fault.
+				if folder == "INBOX" {
+					return "", "", fmt.Errorf("select INBOX: %w", err)
+				}
+				continue
+			}
+			uids, err := c.uidSearch("HEADER SUBJECT " + marker)
+			if err != nil {
+				return "", "", fmt.Errorf("uid search %s: %w", folder, err)
+			}
+			if len(uids) > 1 {
+				return "", "", fmt.Errorf("%d messages in %s carry the marker %s; the probe is not identifiable", len(uids), folder, marker)
+			}
+			if len(uids) == 1 {
+				lines, err := c.cmd(fmt.Sprintf("UID FETCH %s (BODY.PEEK[HEADER.FIELDS (RECEIVED)])", uids[0]))
+				if err != nil {
+					return "", "", fmt.Errorf("uid fetch received: %w", err)
+				}
+				return strings.Join(lines, " "), folder, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return "", "", fmt.Errorf("the probe never became visible over imap in %s (marker %s)", strings.Join(probeFolders, " or "), marker)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	uid, err := waitForIMAPProbe(c, marker)
-	if err != nil {
-		return "", err
-	}
-	lines, err := c.cmd(fmt.Sprintf("UID FETCH %s (BODY.PEEK[HEADER.FIELDS (RECEIVED)])", uid))
-	if err != nil {
-		return "", fmt.Errorf("uid fetch received: %w", err)
-	}
-	return strings.Join(lines, " "), nil
 }
