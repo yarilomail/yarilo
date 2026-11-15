@@ -24,7 +24,7 @@ var throughAnOperatorBlock = []string{
 	"jwks_url", "log_only", "mail_inbox_path", "maildir_sync_on_select", "max_idle_conns",
 	"max_message_size", "max_open_conns", "max_recipients", "negative_ttl_seconds", "passwd_file", "password",
 	"password_query", "per_recipient_burst", "per_recipient_window_seconds", "quota_grace", "quota_warning_name", "reject_on_fail",
-	"report_after", "save_to_detail_mailbox", "scopes", "sieve_global_after", "sieve_global_before", "ssl_verify",
+	"report_after", "save_to_detail_mailbox", "scopes", "ssl_verify",
 	"trusted", "type", "user", "user_concurrency_limit", "user_query", "username_attribute",
 	"username_validation_format", "verbose_replies",
 }
