@@ -456,6 +456,33 @@ else
   esac
 fi
 
+echo "== spam into Junk"
+# The stand's spam-junk global script runs before every user's: a message the
+# relay marked X-Spam: Yes is filed into Junk, a clean one stays in INBOX.
+SPAM_USER="${SPAM_USER:-u2@d00001.test}"
+# One token each, no shared prefix: SEARCH is answered by fts, which splits on
+# "-" and matches prefixes, so "x-spam" and "x-clean" would find each other.
+SPAM_SUBJ="spamjunk$(date +%s)s" CLEAN_SUBJ="spamjunk$(date +%s)c"
+lmtp_deliver() { # <extra header lines> <subject>
+  kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$SPAM_USER>\r\nDATA\r\n$1Subject: $2\r\n\r\nx\r\n.\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" |
+    tr -d '\r' | grep -c '^250 2\.0\.0' || true
+}
+# in_folder prints how many messages in folder carry subject, and expunges them.
+in_folder() { # <folder> <subject>
+  imap_session "a LOGIN $SPAM_USER $PASSWORD\r\nb SELECT $1\r\nc UID SEARCH RETURN (SAVE ALL) HEADER SUBJECT $2\r\nd UID SEARCH RETURN (COUNT) HEADER SUBJECT $2\r\ne UID STORE \$ +FLAGS.SILENT (\\\\Deleted)\r\nf UID EXPUNGE \$\r\ng LOGOUT\r\n" |
+    sed -n 's/.*ESEARCH (TAG "d") UID COUNT \([0-9]*\).*/\1/p' | head -1
+}
+spam_ok=$(lmtp_deliver 'X-Spam: Yes\r\n' "$SPAM_SUBJ")
+clean_ok=$(lmtp_deliver '' "$CLEAN_SUBJ")
+spam_junk=$(in_folder Junk "$SPAM_SUBJ"); spam_inbox=$(in_folder INBOX "$SPAM_SUBJ")
+clean_inbox=$(in_folder INBOX "$CLEAN_SUBJ"); clean_junk=$(in_folder Junk "$CLEAN_SUBJ")
+if [ "$spam_ok" = 1 ] && [ "$clean_ok" = 1 ] && [ "${spam_junk:-0}" = 1 ] && [ "${spam_inbox:-0}" = 0 ] &&
+  [ "${clean_inbox:-0}" = 1 ] && [ "${clean_junk:-0}" = 0 ]; then
+  verdict "spam into Junk, clean mail into INBOX" ok "$SPAM_USER: X-Spam: Yes in Junk, unmarked in INBOX"
+else
+  verdict "spam into Junk, clean mail into INBOX" fail "$SPAM_USER: delivered spam=$spam_ok clean=$clean_ok; spam Junk=${spam_junk:-?} INBOX=${spam_inbox:-?}; clean INBOX=${clean_inbox:-?} Junk=${clean_junk:-?}"
+fi
+
 echo "== imaptest, one type at a time"
 for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do
   dom=${spec%%:*}
