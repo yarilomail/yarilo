@@ -533,6 +533,10 @@ type session struct {
 
 	limitIP string
 	folder  *mailbox.Folder
+	// readOnly: the folder was opened by EXAMINE, so nothing may change its
+	// state (RFC 9051 §6.3.3). A folder the ACL makes read-only keeps the
+	// per-command rights checks, which answer with NOPERM.
+	readOnly bool
 
 	// markedCorrupt records folders this session already flagged FSCKD so a
 	// FETCH over many corrupt messages marks once, not per message. Keyed
@@ -1163,6 +1167,7 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	}
 	s.folder = f
 	s.folderNS = h
+	s.readOnly = opts != nil && opts.ReadOnly
 	s.backingOf = nil // another selection, another set of backing folders
 	// A selection starts $ empty (RFC 5182 §2.1).
 	s.savedSearchUIDs = nil
@@ -1237,10 +1242,20 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 	return data, nil
 }
 
+// refuseReadOnly answers a command that would change the selected folder when
+// that folder is read-only.
+func (s *session) refuseReadOnly() error {
+	if !s.readOnly {
+		return nil
+	}
+	return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "Mailbox is read-only"}
+}
+
 func (s *session) Unselect() error {
 	slog.Debug("imap: command", "sid", s.sid, "cmd", "Unselect")
 	s.folder = nil
 	s.folderNS = nil
+	s.readOnly = false
 	s.knownMsgs = nil
 	s.syncModSeq = 0
 	s.hasPendingExpunge = false
@@ -2622,6 +2637,9 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imaplib.UIDSet) err
 	if s.folder == nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
 	}
+	if err := s.refuseReadOnly(); err != nil {
+		return err
+	}
 	if err := s.requireRightOnSelected(mailbox.RightExpunge); err != nil {
 		return err
 	}
@@ -3074,7 +3092,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 
 	// Once per command: it is a property of the request, not of each message.
 	// \Seen takes the s right; without it the body is served, the flag kept.
-	markSeen := setsSeen(opts) && s.requireRightOnSelected(mailbox.RightWriteSeen) == nil
+	markSeen := !s.readOnly && setsSeen(opts) && s.requireRightOnSelected(mailbox.RightWriteSeen) == nil
 	// ENVELOPE and BODYSTRUCTURE from the index cache, once per FETCH (#1030);
 	// a nil handle answers every call as a miss, so a fault only costs a parse.
 	var envCache mailbox.EnvelopeCache = (*msgcache.Handle)(nil)
@@ -3422,6 +3440,9 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	numSet = s.resolveSearchRes(numSet)
 	if s.folder == nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
+	}
+	if err := s.refuseReadOnly(); err != nil {
+		return err
 	}
 	if storeFlags != nil {
 		if err := refuseRecent(storeFlags.Flags); err != nil {
@@ -4043,6 +4064,10 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imaplib.NumSet, dest str
 	numSet = s.resolveSearchRes(numSet)
 	if s.folder == nil {
 		return &imaplib.Error{Type: imaplib.StatusResponseTypeNo, Text: "No mailbox selected"}
+	}
+	// MOVE expunges the source.
+	if err := s.refuseReadOnly(); err != nil {
+		return err
 	}
 	// Resolved before anything is touched: a refusal leaves the source whole.
 	target, redirected, err := s.virtualSaveTarget(dest)
