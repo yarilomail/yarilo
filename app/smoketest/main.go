@@ -303,6 +303,9 @@ func register() []check {
 	want("imap", *flagIMAPUser != "", "imap login", "needs -imap-user", func() error {
 		return checkIMAPLogin(*flagIMAPUser, *flagIMAPPass)
 	})
+	want("imap", *flagIMAPUser != "", "imap EXAMINE is read-only (STORE, EXPUNGE refused; CLOSE expunges nothing)", "needs -imap-user", func() error {
+		return checkExamineReadOnly(*flagIMAPUser, *flagIMAPPass)
+	})
 	want("imap", *flagIMAPUser != "", "imap login with the name in capitals reaches the same mailbox", "needs -imap-user", func() error {
 		return checkIMAPLoginCase(*flagIMAPUser, *flagIMAPPass)
 	})
