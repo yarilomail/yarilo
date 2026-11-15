@@ -1311,7 +1311,11 @@ func findProbe(c *imapClient, marker string) (string, string, error) {
 	for {
 		for _, folder := range probeFolders {
 			if _, err := c.selectFolder(folder); err != nil {
-				// A folder the account lacks holds no probe.
+				// An account without Junk holds no probe there; INBOX always
+				// exists, so failing to open it is its own fault.
+				if folder == "INBOX" {
+					return "", "", fmt.Errorf("select INBOX: %w", err)
+				}
 				continue
 			}
 			uids, err := c.uidSearch("HEADER SUBJECT " + marker)

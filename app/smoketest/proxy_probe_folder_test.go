@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 
 // folderServer answers SELECT and UID SEARCH/FETCH from a fixed map: the probe
 // is in the folders it names, as many times as given.
-func folderServer(t *testing.T, probes map[string]int) *imapClient {
+func folderServer(t *testing.T, probes map[string]int, refuse ...string) *imapClient {
 	t.Helper()
 	clientSide, serverSide := net.Pipe()
 	t.Cleanup(func() { clientSide.Close(); serverSide.Close() })
@@ -28,6 +29,10 @@ func folderServer(t *testing.T, probes map[string]int) *imapClient {
 			switch strings.ToUpper(verb) {
 			case "SELECT":
 				selected = strings.Trim(args, `"`)
+				if slices.Contains(refuse, selected) {
+					fmt.Fprintf(serverSide, "%s NO no such mailbox\r\n", tag) //nolint:errcheck
+					continue
+				}
 				fmt.Fprintf(serverSide, "* 0 EXISTS\r\n") //nolint:errcheck
 			case "UID":
 				if strings.HasPrefix(strings.ToUpper(args), "SEARCH") {
@@ -57,16 +62,19 @@ func TestFindProbeLooksInInboxAndJunk(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		probes  map[string]int
+		refuse  []string
 		folder  string
 		wantErr string
 	}{
-		{"in INBOX", map[string]int{"INBOX": 1}, "INBOX", ""},
-		{"filed into Junk", map[string]int{"Junk": 1}, "Junk", ""},
-		{"nowhere", map[string]int{}, "", "never became visible"},
-		{"twice in Junk", map[string]int{"Junk": 2}, "", "not identifiable"},
+		{"in INBOX", map[string]int{"INBOX": 1}, nil, "INBOX", ""},
+		{"filed into Junk", map[string]int{"Junk": 1}, nil, "Junk", ""},
+		{"no Junk folder", map[string]int{"INBOX": 1}, []string{"Junk"}, "INBOX", ""},
+		{"INBOX refused", map[string]int{"Junk": 1}, []string{"INBOX"}, "", "select INBOX"},
+		{"nowhere", map[string]int{}, nil, "", "never became visible"},
+		{"twice in Junk", map[string]int{"Junk": 2}, nil, "", "not identifiable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			received, folder, err := findProbe(folderServer(t, tc.probes), "xproxy-1")
+			received, folder, err := findProbe(folderServer(t, tc.probes, tc.refuse...), "xproxy-1")
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
