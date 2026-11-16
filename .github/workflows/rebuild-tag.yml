@@ -80,6 +80,9 @@ jobs:
           file: docker/Dockerfile
           push: true
           platforms: linux/amd64
+          # A rebuild exists to take the base's current packages: nothing
+          # from the layer cache.
+          no-cache: true
           tags: |
             ${{ env.IMAGE }}:${{ steps.tag.outputs.version }}-rebuild
             ${{ env.DOCKERHUB_IMAGE }}:${{ steps.tag.outputs.version }}-rebuild

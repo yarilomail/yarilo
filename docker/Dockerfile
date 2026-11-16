@@ -96,7 +96,9 @@ RUN apk upgrade --no-cache && apk add --no-cache xapian-core libstdc++
 COPY --from=fts-bench-builder /out/fts-bench /usr/local/bin/fts-bench
 ENTRYPOINT ["/usr/local/bin/fts-bench"]
 
-FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+# Named so CI can rebuild it without its layer cache: a cached apk upgrade
+# keeps the packages of its first build until the base digest moves.
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS runtime
 # tini is PID 1 (see ENTRYPOINT): the components that run external programs --
 # the director's flush hook, sieve pipe/filter/execute, the quota-warning
 # script -- leave orphaned grandchildren behind when one is killed, and Go
