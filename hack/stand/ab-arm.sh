@@ -20,9 +20,29 @@ YARILO_PASSWORD="$(sandbox_password)"
 YARILO_DB_PASSWORD="$(sandbox_db_password)"
 export YARILO_PASSWORD YARILO_DB_PASSWORD
 
+# snapshot keeps the stand as the failure left it, before anything else runs:
+# "pods did not settle" alone named no pod, and the namespace events had
+# expired by the time anyone looked (winrel247).
+snapshot() {
+  local d="$OUT/snap-$ARM" po
+  mkdir -p "$d" || return 0
+  kube get pods -o wide > "$d/pods.txt" 2>&1 || true
+  kube get sts,deploy,job -o wide > "$d/workloads.txt" 2>&1 || true
+  kube get events --sort-by=.lastTimestamp > "$d/events.txt" 2>&1 || true
+  helm --kubeconfig="$KCFG" status yarilo -n "$NS" > "$d/helm-status.txt" 2>&1 || true
+  # Every pod not ready, by its READY column, Completed jobs aside.
+  for po in $(kube get pods --no-headers 2>/dev/null | awk '{split($2, r, "/"); if (r[1] != r[2] && $3 != "Completed") print $1}'); do
+    kube describe pod "$po" > "$d/describe-$po.txt" 2>&1 || true
+    kube logs "$po" --all-containers --timestamps > "$d/logs-$po.txt" 2>&1 || true
+    kube logs "$po" --all-containers --timestamps --previous > "$d/logs-previous-$po.txt" 2>&1 || true
+  done
+  echo "ab-arm: the stand as this arm left it is in $d" >&2
+}
+
 # An arm that ends anywhere but its own last line says so: three runs died
-# inside the fill leaving only the line before it (#1875).
-trap 'rc=$?; [ "$rc" = 0 ] || echo "ab-arm: arm ${ARM:-?} ended during ${STEP:-?} with status $rc" >&2' EXIT
+# inside the fill leaving only the line before it (#1875). Past the checkout
+# the stand is the arm's, so its state is kept too.
+trap 'rc=$?; if [ "$rc" != 0 ]; then echo "ab-arm: arm ${ARM:-?} ended during ${STEP:-?} with status $rc" >&2; case "${STEP:-starting}" in starting|checkout) ;; *) snapshot ;; esac; fi' EXIT
 
 ARM="${1:?arm label}"
 TAG="${2:?image tag}"
