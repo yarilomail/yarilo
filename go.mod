@@ -6,7 +6,7 @@ require (
 	git.sr.ht/~rockorager/go-jmap v0.5.3
 	github.com/0kaba0hub/go-xapian v0.2.1
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
-	github.com/MicahParks/keyfunc/v3 v3.9.1
+	github.com/MicahParks/keyfunc/v3 v3.9.2
 	github.com/abadojack/whatlanggo v1.0.1
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/blevesearch/snowballstem v0.9.0
@@ -20,7 +20,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/pprof v0.0.0-20261105003125-4bf881d7fb0b
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/v2 v2.4.1
@@ -29,7 +29,7 @@ require (
 	github.com/prometheus/client_model v0.6.3
 	github.com/redis/go-redis/v9 v9.23.0
 	go.yaml.in/yaml/v3 v3.0.6
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/text v0.44.0

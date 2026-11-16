@@ -1,6 +1,3 @@
-# golang.org/x/crypto/openpgp is deprecated as unsafe by design (GO-2026-5932).
-# Trivy flags the whole x/crypto module, but nothing here imports openpgp, so
-# no binary contains it. The fix is an untagged x/crypto commit; drop this line
-# once Dependabot raises x/crypto to a tagged release that has it. The expiry
-# makes the finding come back on its own if that is missed.
-GO-2026-5932 exp:2026-12-31
+# Findings Trivy may skip, one ID per line with an expiry (`ID exp:YYYY-MM-DD`)
+# and the reason above it, so a missed clean-up brings the finding back on its
+# own. Empty: GO-2026-5932 left with x/crypto v0.59.0, which carries its fix.
