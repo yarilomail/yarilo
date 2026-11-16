@@ -16,6 +16,12 @@ KUBECONFIG=~/.kube/sbox.yaml \
   bash hack/stand/ab-arm.sh <arm-label> <image-tag> <out-dir>
 ```
 
+An arm that fails past its checkout leaves `<out-dir>/snap-<arm>/`: pods and
+workloads wide, the namespace events by time, `helm status`, and `describe`,
+`logs` and `logs --previous` of every pod that is not ready. It is taken in the
+exit trap, before anything else touches the stand; a window script that stops
+on a failed arm keeps the stand as the snapshot shows it.
+
 | knob | default | what it changes |
 |:---|:---|:---|
 | `YARILO_ARM_FILL` | 200 | messages per account before the runs; 0 measures the login path on empty mailboxes |
