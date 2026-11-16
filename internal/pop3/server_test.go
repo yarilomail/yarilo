@@ -848,3 +848,30 @@ func TestARefusedProxiedSessionSpeaksFirst(t *testing.T) {
 		t.Errorf("the backend's first line is %q; the proxy answers the client with it", got)
 	}
 }
+
+// A backend session on a plain listener takes the login proxy's preamble
+// whatever the cleartext switch says: the client's credentials never reach it.
+func TestAPreambleSessionIgnoresTheCleartextSwitch(t *testing.T) {
+	for _, disable := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disable=%v", disable), func(t *testing.T) {
+			home := t.TempDir()
+			opts := newTestOpts(t, &mockAuth{users: map[string]string{"u@x": "p"}, home: home},
+				&mockMailbox{}, &mockIndex{})
+			opts.DisablePlainAuth = disable
+			c, s := net.Pipe()
+			t.Cleanup(func() { c.Close() }) //nolint:errcheck
+			deadline := time.Now().Add(5 * time.Second)
+			c.SetDeadline(deadline) //nolint:errcheck
+			s.SetDeadline(deadline) //nolint:errcheck
+			go New(opts).newSession(loginproto.NewPreambleConn(s, "u@x", home, "sid")).serve()
+			rd := bufio.NewReader(c)
+			if got := readline(t, rd); !strings.HasPrefix(got, "+OK") {
+				t.Fatalf("first line of a preamble session: %q", got)
+			}
+			send(t, c, "STAT")
+			if got := readline(t, rd); !strings.HasPrefix(got, "+OK") {
+				t.Fatalf("STAT on a preamble session: %q", got)
+			}
+		})
+	}
+}

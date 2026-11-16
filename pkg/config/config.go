@@ -90,7 +90,7 @@ type SieveConfig struct {
 	Enabled bool `koanf:"sieve_enabled"`
 	// MaxScriptSize is the maximum compiled script size in bytes. Default: 65536.
 	MaxScriptSize int `koanf:"sieve_max_script_size"`
-	// MaxRedirects is the maximum number of redirect actions per message. Default: 32.
+	// MaxRedirects caps a message's redirects, :copy and :list included; 0 forbids redirect. Default: 32.
 	MaxRedirects int `koanf:"sieve_max_redirects"`
 	// MaxScripts caps a user's stored scripts; replacing one adds none. 0 = unlimited.
 	MaxScripts int `koanf:"sieve_max_num_scripts"`
@@ -136,6 +136,10 @@ type SieveConfig struct {
 	SubmissionHost string `koanf:"sieve_submission_host"`
 	// SubmissionSSL controls transport security: no | smtps | starttls. Default: no.
 	SubmissionSSL string `koanf:"sieve_submission_ssl"`
+	// SubmissionSSLVerify checks the MTA's certificate and name. Default: true.
+	SubmissionSSLVerify bool `koanf:"sieve_submission_ssl_verify"`
+	// SubmissionSSLCA is a PEM file the MTA is verified against; empty = system roots.
+	SubmissionSSLCA string `koanf:"sieve_submission_ssl_ca"`
 	// SubmissionTimeout is the connect and command timeout in seconds. Default: 30.
 	SubmissionTimeout int `koanf:"sieve_submission_timeout"`
 	// SubmissionAuthSecret names the Kubernetes Secret with SMTP AUTH
@@ -483,7 +487,7 @@ type ServiceConfig struct {
 	// the process binding it: BackendHost or PublicHost.
 	Address string     `koanf:"address"`
 	Port    int        `koanf:"port"`
-	SSLMode string     `koanf:"ssl_mode"` // no | ssl | starttls
+	SSLMode string     `koanf:"ssl_mode"` // no | ssl | starttls | required
 	SSL     *SSLConfig `koanf:"ssl"`      // overrides general.ssl
 	HAProxy bool       `koanf:"haproxy_protocol"`
 	// XClient enables native inbound client-IP forwarding on this listener
@@ -492,19 +496,8 @@ type ServiceConfig struct {
 	XClient bool `koanf:"xclient_protocol"`
 
 	// AllowCleartext is the reference spelling of this listener's cleartext
-	// policy, and it means the OPPOSITE of what our key meant:
-	// auth_allow_cleartext=false is disable_plaintext_auth=true.
-	//
-	// Because the sense is inverted, this pair is not an ordinary alias and
-	// must never be adopted like one: an alias layer that copied the value
-	// across would flip an operator's security setting on a config nobody
-	// edited. Both spellings are accepted, and BOTH SET AT ONCE is refused --
-	// even when they agree, since an operator carrying both is one edit away
-	// from meaning the opposite of what they wrote (#1286, package 4).
-	//
-	// Defaults to true (cleartext allowed) so an unset key keeps the old
-	// unset behaviour of disable_plaintext_auth=false; the loader sets it from
-	// whichever spelling was given.
+	// policy; auth_allow_cleartext=false is disable_plaintext_auth=true, so the
+	// pair is never aliased and both at once is refused (#1286). Unset is false.
 	AllowCleartext *bool `koanf:"auth_allow_cleartext"`
 	// DisablePlainAuth is the pre-beta spelling, inverted. Read by the loader
 	// only -- every consumer reads CleartextAllowed().
@@ -512,12 +505,11 @@ type ServiceConfig struct {
 }
 
 // CleartextAllowed reports whether this listener permits cleartext
-// authentication, resolving the two spellings in ONE place: the inversion
-// exists here and nowhere else, so no consumer can get the direction wrong.
-// Unset means allowed, which is what an unset disable_plaintext_auth meant.
+// authentication, resolving the two spellings in one place. Unset is
+// DefaultAllowCleartext.
 func (s *ServiceConfig) CleartextAllowed() bool {
 	if s == nil {
-		return true
+		return DefaultAllowCleartext
 	}
 	if s.AllowCleartext != nil {
 		return *s.AllowCleartext
@@ -525,11 +517,19 @@ func (s *ServiceConfig) CleartextAllowed() bool {
 	if s.DisablePlainAuth != nil {
 		return !*s.DisablePlainAuth
 	}
-	return true
+	return DefaultAllowCleartext
 }
+
+// DefaultAllowCleartext is auth_allow_cleartext for a listener that leaves it out.
+const DefaultAllowCleartext = false
 
 // PlainAuthDisabled is the same fact in the spelling the login servers use.
 func (s *ServiceConfig) PlainAuthDisabled() bool { return !s.CleartextAllowed() }
+
+// SSLRequired is ssl_mode required: STARTTLS, and no authentication before it.
+func (s *ServiceConfig) SSLRequired() bool {
+	return s != nil && strings.EqualFold(s.SSLMode, "required")
+}
 
 // Active returns true if the service is configured and enabled.
 func (s *ServiceConfig) Active() bool { return s != nil && s.Enabled }
@@ -1890,12 +1890,43 @@ type ManageSieveLoginServiceConfig struct {
 	DirectorAddr string `koanf:"director_addr"`
 	BackendPort  int    `koanf:"backend_port"`
 	DirectorTag  string `koanf:"director_tag"`
-	// HAProxy enables PROXY protocol v1/v2 header parsing.
+	// HAProxy is the pre-2.4.7 spelling of services.managesieve_login.haproxy_protocol.
 	HAProxy bool `koanf:"haproxy_protocol"`
 	// HAProxyTimeout is the read deadline for the PROXY header in seconds.
 	HAProxyTimeout int `koanf:"haproxy_timeout"`
-	// HAProxyNets lists CIDRs whose PROXY header is trusted.
+	// HAProxyNets is the pre-2.4.7 spelling of general.haproxy.haproxy_trusted_networks
+	// for this proxy; read through ManageSieveHAProxyNets.
 	HAProxyNets []string `koanf:"haproxy_trusted_nets"`
+	// ownNets is set at load when the file names HAProxyNets and not the general key.
+	ownNets bool
+}
+
+// ManageSieveHAProxyNets is the PROXY trusted networks of yarilo-managesieve-login:
+// the general key, or the proxy's own pre-2.4.7 key when the file sets only that.
+func (c *Config) ManageSieveHAProxyNets() []string {
+	if c.ManageSieveLoginService.ownNets {
+		return c.ManageSieveLoginService.HAProxyNets
+	}
+	return c.General.HAProxy.HAProxyTrustedNetworks
+}
+
+// resolveManageSieveHAProxyKeys names the proxy's own PROXY keys, kept only for
+// configs written before they joined the general ones, and picks the networks.
+func resolveManageSieveHAProxyKeys(k *koanf.Koanf, cfg *Config) {
+	m := &cfg.ManageSieveLoginService
+	if k.Exists("managesieve_login_service.haproxy_trusted_nets") {
+		slog.Warn("config: deprecated key accepted",
+			"key", "managesieve_login_service.haproxy_trusted_nets", "use", "general.haproxy.haproxy_trusted_networks")
+		if k.Exists("general.haproxy.haproxy_trusted_networks") || k.Exists("general.haproxy.trusted_nets") {
+			slog.Warn("config: managesieve_login_service.haproxy_trusted_nets and general.haproxy.haproxy_trusted_networks are both set; using the general one")
+		} else {
+			m.ownNets = true
+		}
+	}
+	if m.HAProxy {
+		slog.Warn("config: deprecated key accepted",
+			"key", "managesieve_login_service.haproxy_protocol", "use", "services.managesieve_login.haproxy_protocol")
+	}
 }
 
 // ValidateBackendOrDirector requires at least one of a login/proxy
@@ -2904,6 +2935,7 @@ func Defaults() *Config {
 			VacationCheckRecipient: true,
 			ReportUserAgent:        "yarilo",
 			SubmissionSSL:          "no",
+			SubmissionSSLVerify:    true,
 			PipeBinDir:             "/usr/lib/yarilo/sieve-pipe",
 			PipeSocketDir:          "sieve-pipe",
 			PipeInputEOL:           "crlf",
@@ -3085,7 +3117,11 @@ func Load(path string) (*Config, error) {
 	warnChartSkew(cfg.ChartVersion)
 	warnConfigSchemaSkew(k, cfg.ConfigSchemaVersion, cfg.ChartVersion)
 	warnXClientUntrusted(cfg)
+	resolveManageSieveHAProxyKeys(k, cfg)
 	if err := refuseInvertedPairs(cfg); err != nil {
+		return nil, err
+	}
+	if err := checkSSLRequired(cfg); err != nil {
 		return nil, err
 	}
 	expandEnv(cfg)
@@ -3390,6 +3426,29 @@ func expand(s string) string {
 	return os.ExpandEnv(s)
 }
 
+// sslRequiredListeners are the STARTTLS login listeners ssl_mode required applies to.
+var sslRequiredListeners = map[string]bool{"imap_login": true, "pop3_login": true, "submission_login": true, "managesieve_login": true}
+
+// checkSSLRequired refuses ssl_mode required where it means nothing, and with
+// auth_allow_cleartext true, which it contradicts.
+func checkSSLRequired(cfg *Config) error {
+	for _, e := range cfg.Services.Entries() {
+		svc := *e.Svc
+		if !svc.SSLRequired() {
+			continue
+		}
+		if !sslRequiredListeners[e.Name] {
+			return fmt.Errorf("config: services.%s.ssl_mode: required applies to the STARTTLS login listeners only "+
+				"(imap_login, pop3_login, submission_login, managesieve_login)", e.Name)
+		}
+		if svc.CleartextAllowed() {
+			return fmt.Errorf("config: services.%s sets ssl_mode: required with auth_allow_cleartext: true; "+
+				"required refuses every login before TLS, so the two cannot hold together", e.Name)
+		}
+	}
+	return nil
+}
+
 // CheckListenerTLS compares what a listener declares against the certificate
 // configured for it. An implicit-TLS listener with none is an error: it would
 // serve its protocol in the clear on a port that is TLS by definition. A
@@ -3406,6 +3465,9 @@ func CheckListenerTLS(name string, svc *ServiceConfig, ssl SSLConfig) (warning s
 		return "", nil
 	}
 	switch strings.ToLower(svc.SSLMode) {
+	case "required":
+		return "", fmt.Errorf("config: %s declares ssl_mode: required but no certificate is configured "+
+			"(set general.ssl.tls_cert/tls_key, or %s.ssl); no client could ever log in", name, name)
 	case "ssl":
 		return "", fmt.Errorf("config: %s declares ssl_mode: ssl but no certificate is configured "+
 			"(set general.ssl.tls_cert/tls_key, or %s.ssl); refusing to serve this listener in the clear", name, name)
@@ -3927,7 +3989,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 29
+const minConfigSchema = 31
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -3974,6 +4036,9 @@ var schemaAdditions = map[int][]string{
 		"warden_service.sentinel_addrs", "warden_service.sentinel_master", "warden_service.sentinel_user", "warden_service.sentinel_password"},
 	28: {"auth.auth_username_format"},
 	29: {"jmap_login_service.client_ip_header"},
+	30: {"services.imap_login.auth_allow_cleartext", "services.pop3_login.auth_allow_cleartext",
+		"services.managesieve_login.auth_allow_cleartext", "services.jmap_login.auth_allow_cleartext"},
+	31: {"sieve.sieve_submission_ssl_verify", "sieve.sieve_submission_ssl_ca"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

@@ -43,6 +43,8 @@ type Options struct {
 	// SieveExtensions is what a user's script may use: sieve_extensions less
 	// sieve_global_extensions (sieve.UserExtensions).
 	SieveExtensions sieve.ExtensionSet
+	// MaxRedirects is sieve_max_redirects; 0 refuses a script with redirect.
+	MaxRedirects int
 	// ScriptsDriver selects the script storage backend: "fs" (default) or "redis".
 	ScriptsDriver string
 	// ScriptsDict is the dict instance used when ScriptsDriver is "redis".
@@ -144,6 +146,7 @@ func (srv *Server) newSession(conn net.Conn, username, homeDir, sid string) *ses
 		maxStorage:        srv.opts.MaxStorage,
 		maxLine:           int64(srv.opts.Config.MaxLineLength),
 		allowedExtensions: srv.opts.SieveExtensions,
+		maxRedirects:      srv.opts.MaxRedirects,
 		sid:               sid,
 	}
 }

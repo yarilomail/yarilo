@@ -134,6 +134,9 @@ spec:
             {{- if has $p.name (list "submission" "jmap") }}
             {{- include "yarilo.relayPasswordEnv" $root | nindent 12 }}
             {{- end }}
+            {{- if has $p.name (list "lmtp" "imap") }}
+            {{- include "yarilo.sieveSubmissionEnv" $root | nindent 12 }}
+            {{- end }}
             {{- with $root.Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

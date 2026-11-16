@@ -282,6 +282,14 @@ Full documentation lives at **[doc.yarilomail.org](https://doc.yarilomail.org/)*
 
 ---
 
+## Support the project
+
+Yarilo is independent open source, funded by the people and companies who use
+it. If it is useful to you, you can support it on the
+[Donate](https://yarilomail.org/donate.html) page: Ko-fi, thanks.dev or crypto.
+
+---
+
 ## License
 
 GNU Affero General Public License v3.0 - see [LICENSE](LICENSE).

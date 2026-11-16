@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 29
+config_schema_version: 31
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -1605,10 +1605,14 @@ components:
         enabled: true
         servicePort: 993
         containerPort: 10993
+        auth_allow_cleartext: false
       imap:
+        ## starttls, or required: no authentication before STARTTLS.
+        ssl_mode: starttls
         enabled: false
         servicePort: 143
         containerPort: 10143
+        auth_allow_cleartext: false
 
     ## TLS cert presented to mail clients (IMAPS / STARTTLS for IMAP).
     tls:
@@ -1700,10 +1704,14 @@ components:
         enabled: true
         servicePort: 995
         containerPort: 10995
+        auth_allow_cleartext: false
       pop3:
+        ## starttls, or required: no authentication before STARTTLS.
+        ssl_mode: starttls
         enabled: false
         servicePort: 110
         containerPort: 10110
+        auth_allow_cleartext: false
 
     tls:
       secretName: ""
@@ -1782,13 +1790,17 @@ components:
 
     listeners:
       submission:
+        ## starttls, or required: no authentication before STARTTLS.
+        ssl_mode: starttls
         enabled: true
         servicePort: 587
         containerPort: 10587
+        auth_allow_cleartext: false
       submissions:
         enabled: false
         servicePort: 465
         containerPort: 10465
+        auth_allow_cleartext: false
 
     tls:
       secretName: ""
@@ -1968,10 +1980,12 @@ components:
 
     listeners:
       managesieve:
+        ## starttls, or required: no authentication before STARTTLS.
+        ssl_mode: starttls
         enabled: true
         servicePort: 4190
         containerPort: 14190
-        disablePlainAuth: false
+        auth_allow_cleartext: false
 
     tls:
       secretName: ""
@@ -1995,9 +2009,9 @@ components:
     ## director_tag - see imapLogin's comment for the tag/pool-topology rule.
     director_tag: ""
 
-    haproxy_protocol: false
+    ## PROXY header: general.haproxy.enabled and haproxy_trusted_networks, as for
+    ## the other login listeners.
     haproxy_timeout: 3
-    haproxy_nets: []
 
     service:
       type: ClusterIP
@@ -2097,8 +2111,7 @@ components:
         enabled: true
         servicePort: 443
         containerPort: 8443
-        ## Refuse Basic credentials on a non-TLS listener.
-        disablePlainAuth: true
+        auth_allow_cleartext: false
 
     ## TLS cert presented to JMAP clients. Required while the listener's
     ## ssl_mode is ssl: the proxy refuses to start without one rather than
@@ -2446,7 +2459,13 @@ sieve:
   ## Outbound MTA for redirect / vacation actions.
   sieve_submission_host: ""
   sieve_submission_ssl: "no"
+  ## The MTA's certificate is checked against sieve_submission_ssl_ca, the
+  ## system roots when empty.
+  sieve_submission_ssl_verify: true
+  sieve_submission_ssl_ca: ""
   sieve_submission_timeout: 30
+  ## Secret with keys user and password: the Sieve sender logs in with them
+  ## (YARILO_SIEVE_SUBMISSION_USER/PASSWORD in yarilo-lmtp and yarilo-imap).
   sieve_submission_auth_secret: ""
   ## sieve_global_before / sieve_global_after: ordered lists of absolute paths to
   ## .sieve files executed before / after each user's active script. Admin-defined.

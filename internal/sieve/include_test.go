@@ -118,9 +118,9 @@ func TestIncludeGlobal(t *testing.T) {
 		{name: ":optional skips a missing global script",
 			main: `require ["include", "fileinto"]; include :global :optional "nosuch"; fileinto "After";`, folders: []string{"After"}},
 		// The library refuses such a name when the script compiles, so the script
-		// is skipped and nothing outside sieve_global is read.
+		// is skipped (implicit keep, #2530) and nothing outside sieve_global is read.
 		{name: "a name with a slash is no path", global: map[string]string{"site": `require "fileinto"; fileinto "Site";`},
-			main: `require ["include", "fileinto"]; include :global :optional "../site"; fileinto "After";`, folders: nil},
+			main: `require ["include", "fileinto"]; include :global :optional "../site"; fileinto "After";`, folders: []string{"INBOX"}},
 		{name: "personal and global of one name differ", global: map[string]string{"same": `require "fileinto"; fileinto "Global";`},
 			main: `require "include"; include :global "same"; include :personal "same";`, folders: []string{"Global", "Personal"}},
 		{name: "a global script is held to sieve_extensions", exts: []string{"include", "fileinto"},

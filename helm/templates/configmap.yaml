@@ -57,13 +57,15 @@ data:
         port: {{ .Values.components.imapLogin.listeners.imaps.containerPort }}
         address: "0.0.0.0"
         ssl_mode: ssl
+        auth_allow_cleartext: {{ .Values.components.imapLogin.listeners.imaps.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       imap_login:
         enabled: {{ .Values.components.imapLogin.listeners.imap.enabled }}
         port: {{ .Values.components.imapLogin.listeners.imap.containerPort }}
         address: "0.0.0.0"
-        ssl_mode: starttls
+        ssl_mode: {{ .Values.components.imapLogin.listeners.imap.ssl_mode }}
+        auth_allow_cleartext: {{ .Values.components.imapLogin.listeners.imap.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       pop3s_login:
@@ -71,21 +73,23 @@ data:
         port: {{ .Values.components.pop3Login.listeners.pop3s.containerPort }}
         address: "0.0.0.0"
         ssl_mode: ssl
+        auth_allow_cleartext: {{ .Values.components.pop3Login.listeners.pop3s.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       pop3_login:
         enabled: {{ .Values.components.pop3Login.listeners.pop3.enabled }}
         port: {{ .Values.components.pop3Login.listeners.pop3.containerPort }}
         address: "0.0.0.0"
-        ssl_mode: starttls
+        ssl_mode: {{ .Values.components.pop3Login.listeners.pop3.ssl_mode }}
+        auth_allow_cleartext: {{ .Values.components.pop3Login.listeners.pop3.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       submission_login:
         enabled: {{ .Values.components.submissionLogin.listeners.submission.enabled }}
         port: {{ .Values.components.submissionLogin.listeners.submission.containerPort }}
         address: "0.0.0.0"
-        ssl_mode: starttls
-        auth_allow_cleartext: false
+        ssl_mode: {{ .Values.components.submissionLogin.listeners.submission.ssl_mode }}
+        auth_allow_cleartext: {{ .Values.components.submissionLogin.listeners.submission.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       submissions_login:
@@ -93,7 +97,7 @@ data:
         port: {{ .Values.components.submissionLogin.listeners.submissions.containerPort }}
         address: "0.0.0.0"
         ssl_mode: ssl
-        auth_allow_cleartext: false
+        auth_allow_cleartext: {{ .Values.components.submissionLogin.listeners.submissions.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
         xclient_protocol: {{ .Values.general.xclient.enabled }}
       lmtp_login:
@@ -108,8 +112,8 @@ data:
         enabled: {{ $msLoginL.enabled | default false }}
         port: {{ $msLoginL.containerPort | default 4190 }}
         address: "0.0.0.0"
-        ssl_mode: starttls
-        auth_allow_cleartext: {{ not ($msLoginL.disablePlainAuth | default false) }}
+        ssl_mode: {{ $msLoginL.ssl_mode }}
+        auth_allow_cleartext: {{ $msLoginL.auth_allow_cleartext }}
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
       {{- $jmapL := (((.Values.components.jmapLogin | default dict).listeners | default dict).jmap | default dict) }}
       jmap_login:
@@ -118,7 +122,7 @@ data:
         address: "0.0.0.0"
         ssl_mode: ssl
         haproxy_protocol: {{ .Values.general.haproxy.enabled }}
-        auth_allow_cleartext: {{ not ($jmapL.disablePlainAuth | default false) }}
+        auth_allow_cleartext: {{ $jmapL.auth_allow_cleartext }}
       imap:
         enabled: {{ .Values.components.imap.listeners.imap.enabled }}
         port: {{ .Values.components.imap.listeners.imap.containerPort }}
@@ -319,6 +323,14 @@ data:
       sieve_duplicate_driver: {{ $sieve.sieve_duplicate_driver | default "file" | quote }}
       sieve_duplicate_file: {{ $sieve.sieve_duplicate_file | default ".yarilo.sieve-duplicate" | quote }}
       sieve_global: {{ $sieve.sieve_global | quote }}
+      {{- with $sieve.sieve_global_before }}
+      sieve_global_before:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $sieve.sieve_global_after }}
+      sieve_global_after:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       sieve_vacation_enabled: {{ $sieve.sieve_vacation_enabled }}
       sieve_vacation_min_period: {{ $sieve.sieve_vacation_min_period | int64 }}
       sieve_vacation_max_period: {{ $sieve.sieve_vacation_max_period | int64 }}
@@ -336,6 +348,8 @@ data:
       sieve_report_user_agent: {{ $sieve.sieve_report_user_agent | default "yarilo" | quote }}
       sieve_submission_host: {{ $sieve.sieve_submission_host | default "" | quote }}
       sieve_submission_ssl: {{ $sieve.sieve_submission_ssl | default "no" | quote }}
+      sieve_submission_ssl_verify: {{ $sieve.sieve_submission_ssl_verify }}
+      sieve_submission_ssl_ca: {{ $sieve.sieve_submission_ssl_ca | quote }}
       sieve_submission_timeout: {{ $sieve.sieve_submission_timeout }}
       sieve_submission_auth_secret: {{ $sieve.sieve_submission_auth_secret | default "" | quote }}
       {{- with $sieve.sieve_extensions }}
@@ -1081,15 +1095,6 @@ data:
       director_addr: {{ .Values.components.manageSieveLogin.director_addr | quote }}
       backend_port: {{ .Values.components.manageSieveLogin.backend_port | default 0 }}
       director_tag: {{ .Values.components.manageSieveLogin.director_tag | quote }}
-      {{- if .Values.components.manageSieveLogin.haproxy_protocol }}
-      haproxy_protocol: true
-      {{- with .Values.components.manageSieveLogin.haproxy_nets }}
-      haproxy_trusted_nets:
-        {{- range . }}
-        - {{ . | quote }}
-        {{- end }}
-      {{- end }}
-      {{- end }}
       {{- end }}
 
     {{- if .Values.components.backendAPI.enabled }}

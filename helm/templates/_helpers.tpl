@@ -804,3 +804,26 @@ Call with the protocol's values map.
 mail_max_userip_connections: {{ index . "mail_max_userip_connections" | int64 }}
 {{- end -}}
 {{- end }}
+
+{{/*
+SMTP AUTH of the Sieve sender (vacation, redirect, notify, imapsieve) in every
+container that runs it: yarilo-lmtp and yarilo-imap.
+*/}}
+{{- define "yarilo.sieveSubmissionEnv" -}}
+{{- $sieve := .Values.sieve | default dict }}
+{{- if ($sieve.submission | default dict).authSecret }}
+{{- fail "sieve.submission.authSecret is not read: set sieve.sieve_submission_auth_secret" }}
+{{- end }}
+{{- with $sieve.sieve_submission_auth_secret }}
+- name: YARILO_SIEVE_SUBMISSION_USER
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: user
+- name: YARILO_SIEVE_SUBMISSION_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ . }}
+      key: password
+{{- end }}
+{{- end }}

@@ -43,18 +43,7 @@ spec:
                   fieldPath: status.podIP
             {{- include "yarilo.adminBackendEnv" . | nindent 12 }}
             {{- include "yarilo.dbEnv" . | nindent 12 }}
-            {{- with ((.Values.sieve | default dict).submission | default dict).authSecret }}
-            - name: YARILO_SIEVE_SUBMISSION_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . }}
-                  key: user
-            - name: YARILO_SIEVE_SUBMISSION_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . }}
-                  key: password
-            {{- end }}
+            {{- include "yarilo.sieveSubmissionEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

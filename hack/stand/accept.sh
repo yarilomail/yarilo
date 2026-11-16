@@ -29,7 +29,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
 PASSWORD="$(sandbox_password)"
 # What one smoketest run passes; it moves with every check added to the binary.
-SMOKE_CHECKS=59
+SMOKE_CHECKS=60
 # The only rows a run skips: they need the OAuth2 overlay, which acceptance runs without (#2231).
 SMOKE_OAUTH2_SKIPS='oauth2 imap AUTHENTICATE OAUTHBEARER (SASL-IR) + SELECT INBOX
 oauth2 pop3 AUTH OAUTHBEARER + STAT
@@ -69,6 +69,16 @@ verdict() {
       FAILS=$((FAILS + 1))
       ;;
   esac
+}
+
+# srs_judge compares the SRS domain with dkim-milter-fwd's sign_domain: a bounce
+# goes back through the one, the forwarded copy is signed with the other.
+srs_judge() {
+  if [ -n "$1" ] && [ "$1" = "$2" ]; then
+    echo "ok $1"
+  else
+    echo "fail SRS domain '${1:-none}', sign_domain '${2:-none}'"
+  fi
 }
 
 # pod_state lists every pod with its uid and each container's restart count: a
@@ -431,6 +441,61 @@ else
     verdict "mail between mailboxes reaches the relay as its sender" fail "${CROSS_BAD:-only $CROSS_OK of 8 sent}"
 fi
 unset MASTER_PW
+
+if ! kubectl -n "$RELAY_NS" --request-timeout=60s get deploy relay-fwd-out >/dev/null 2>&1; then
+  verdict "SRS domain is the forwarder's sign domain" skip "no relay-fwd-out in $RELAY_NS"
+else
+  srs=$(kubectl -n "$RELAY_NS" --request-timeout=60s get deploy relay-postsrsd \
+    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SRS_DOMAIN")].value}' 2>/dev/null || true)
+  sign=$(kubectl -n "$RELAY_NS" --request-timeout=60s logs deploy/dkim-milter-fwd --tail=-1 2>/dev/null |
+    grep -ao '"sign_domain":"[^"]*"' | tail -1 | sed 's/.*:"//; s/"$//' || true)
+  judged=$(srs_judge "$srs" "$sign")
+  case "$judged" in
+    ok*) verdict "SRS domain is the forwarder's sign domain" ok "${judged#ok }" ;;
+    *) verdict "SRS domain is the forwarder's sign domain" fail "${judged#fail }" ;;
+  esac
+fi
+
+echo "== spam into Junk"
+# The stand's spam-junk global script runs before every user's: a message the
+# relay marked X-Spam: Yes is filed into Junk, a clean one stays in INBOX.
+SPAM_USER="${SPAM_USER:-u2@d00001.test}"
+# One token each, neither a prefix of the other: SEARCH is answered by fts,
+# which splits on "-" and matches prefixes, so "x-spam" and "x-clean" would
+# find each other.
+SPAM_SUBJ="spamjunk$(date +%s)s" CLEAN_SUBJ="spamjunk$(date +%s)c"
+lmtp_deliver() { # <extra header lines> <subject>
+  kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "printf 'LHLO accept.invalid\r\nMAIL FROM:<accept@test.invalid>\r\nRCPT TO:<$SPAM_USER>\r\nDATA\r\n$1Subject: $2\r\n\r\nx\r\n.\r\nQUIT\r\n' | nc -w 15 yarilo-lmtp-login 24" |
+    tr -d '\r' | grep -c '^250 2\.0\.0' || true
+}
+# in_folder prints how many messages in folder carry subject; it reads only.
+in_folder() { # <folder> <subject>
+  imap_session "a LOGIN $SPAM_USER $PASSWORD\r\nb EXAMINE $1\r\nc UID SEARCH RETURN (COUNT) HEADER SUBJECT $2\r\ng LOGOUT\r\n" |
+    sed -n 's/^\* ESEARCH (TAG "c") UID COUNT \([0-9]*\).*/\1/p' | head -1
+}
+# drop_subject expunges every message in folder that carries subject.
+drop_subject() { # <folder> <subject>
+  imap_session "a LOGIN $SPAM_USER $PASSWORD\r\nb SELECT $1\r\nc UID SEARCH RETURN (SAVE ALL) HEADER SUBJECT $2\r\ne UID STORE \$ +FLAGS.SILENT (\\\\Deleted)\r\nf UID EXPUNGE \$\r\ng LOGOUT\r\n" > /dev/null
+}
+spam_ok=$(lmtp_deliver 'X-Spam: Yes\r\n' "$SPAM_SUBJ")
+clean_ok=$(lmtp_deliver '' "$CLEAN_SUBJ")
+# The index may trail the delivery: wait for both positives, as delivered does,
+# and only then read the two negatives.
+waited=0
+while :; do
+  spam_junk=$(in_folder Junk "$SPAM_SUBJ"); clean_inbox=$(in_folder INBOX "$CLEAN_SUBJ")
+  { [ "${spam_junk:-0}" -ge 1 ] && [ "${clean_inbox:-0}" -ge 1 ]; } && break
+  [ "$waited" -ge 60 ] && break
+  sleep 3; waited=$((waited + 3))
+done
+spam_inbox=$(in_folder INBOX "$SPAM_SUBJ"); clean_junk=$(in_folder Junk "$CLEAN_SUBJ")
+for f in INBOX Junk; do drop_subject "$f" "$SPAM_SUBJ"; drop_subject "$f" "$CLEAN_SUBJ"; done
+if [ "$spam_ok" = 1 ] && [ "$clean_ok" = 1 ] && [ "${spam_junk:-0}" = 1 ] && [ "${spam_inbox:-0}" = 0 ] &&
+  [ "${clean_inbox:-0}" = 1 ] && [ "${clean_junk:-0}" = 0 ]; then
+  verdict "spam into Junk, clean mail into INBOX" ok "$SPAM_USER: X-Spam: Yes in Junk, unmarked in INBOX (after ${waited}s)"
+else
+  verdict "spam into Junk, clean mail into INBOX" fail "$SPAM_USER: delivered spam=$spam_ok clean=$clean_ok; after ${waited}s spam Junk=${spam_junk:-?} INBOX=${spam_inbox:-?}; clean INBOX=${clean_inbox:-?} Junk=${clean_junk:-?}"
+fi
 
 echo "== imaptest, one type at a time"
 for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do

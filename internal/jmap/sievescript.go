@@ -47,13 +47,19 @@ func optionalLimit(n int) *int {
 	return &n
 }
 
+// redirectLimit is advertised as is: sieve_max_redirects 0 forbids redirect,
+// it does not lift the limit.
+func redirectLimit(n int) *int {
+	return &n
+}
+
 func (o *SieveScripts) session() *jmapcore.SieveSession {
 	exts := sieve.EffectiveExtensions(o.Extensions)
 	acct := jmapcore.SieveCapability{
 		MaxSizeScriptName:  maxSieveNameOctets,
 		MaxSizeScript:      optionalLimit(o.Quota.MaxSize),
 		MaxNumberScripts:   optionalLimit(o.Quota.MaxScripts),
-		MaxNumberRedirects: optionalLimit(o.MaxRedirects),
+		MaxNumberRedirects: redirectLimit(o.MaxRedirects),
 		SieveExtensions:    exts,
 	}
 	if slices.Contains(exts, "enotify") {
@@ -254,6 +260,9 @@ func (s *Server) checkSieveContent(src []byte) *jmapcore.SetError {
 		return &jmapcore.SetError{Type: jmapcore.SetErrInvalidSieve, Description: strings.TrimSpace(err.Error())}
 	}
 	if err := sieve.CheckExtensions(compiled, s.opts.Sieve.Extensions); err != nil {
+		return &jmapcore.SetError{Type: jmapcore.SetErrInvalidSieve, Description: err.Error()}
+	}
+	if err := sieve.CheckRedirects(src, s.opts.Sieve.MaxRedirects); err != nil {
 		return &jmapcore.SetError{Type: jmapcore.SetErrInvalidSieve, Description: err.Error()}
 	}
 	return nil

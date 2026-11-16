@@ -220,6 +220,7 @@ func serverOptions(cfg *config.Config, svc *config.ServiceConfig, addr string, e
 		WardenFailOpen:     cfg.WardenService.FailOpen,
 		ProxyProtocol:      svc.HAProxy,
 		HAProxyTrustedNets: parseCIDRs(cfg.General.HAProxy.HAProxyTrustedNetworks),
+		TrustedNets:        parseCIDRs(cfg.General.XClient.TrustedNets),
 		HAProxyTimeout:     time.Duration(cfg.General.HAProxy.Timeout) * time.Second,
 		ClientIPHeader:     cfg.JMAPLoginService.ClientIPHeader,
 		LocalIP:            os.Getenv("POD_IP"),

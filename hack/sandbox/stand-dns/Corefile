@@ -1,0 +1,7 @@
+test:53 {
+    errors
+    health :8080
+    ready :8181
+    file /etc/coredns/test.db
+    reload 10s
+}

@@ -22,18 +22,18 @@ import (
 // cleartextDisabledMsg is the refusal of a cleartext login on an open line.
 const cleartextDisabledMsg = "Cleartext authentication disallowed on non-secure (SSL/TLS) connections."
 
-// cleartextRefused reports a PLAIN or LOGIN attempt the listener must refuse:
-// cleartext is off and the connection is not TLS, not proxied, not local.
-func cleartextRefused(conn net.Conn, opts Options) bool {
-	if !opts.DisablePlainAuth || opts.HAProxy {
-		return false
+// offeredRelay is the relayed mechanisms the capability list names: none
+// before TLS under ssl_mode required, else what advertisedRelay allows.
+func offeredRelay(conn net.Conn, opts Options, rc relayContext) []string {
+	if sslRefused(conn, opts) {
+		return nil
 	}
-	if _, ok := conn.(*tls.Conn); ok {
-		return false
-	}
-	r, rok := conn.RemoteAddr().(*net.TCPAddr)
-	l, lok := conn.LocalAddr().(*net.TCPAddr)
-	return !rok || !lok || !r.IP.Equal(l.IP)
+	return advertisedRelay(rc, conn, !cleartextRefused(conn, opts))
+}
+
+// smtpPreTLS is a command ssl_mode required still takes before STARTTLS (RFC 3207 §4).
+func smtpPreTLS(upper string) bool {
+	return strings.HasPrefix(upper, "EHLO ") || upper == "EHLO" || upper == "STARTTLS" || upper == "NOOP" || upper == "QUIT"
 }
 
 // isCleartextMech is a mechanism whose secret travels as is: a password, or a
@@ -45,14 +45,14 @@ func isCleartextMech(m string) bool {
 
 // imapPreAuthCaps returns the IMAP capability string for the pre-auth state.
 // extTLS is non-nil when STARTTLS is available (plain listener).
-func imapPreAuthCaps(extTLS *tls.Config, opts Options, relayed []string) string {
+func imapPreAuthCaps(extTLS *tls.Config, refused bool, relayed []string) string {
 	caps := "IMAP4rev2 IMAP4rev1 SASL-IR LITERAL+ ID IDLE"
 	if extTLS != nil {
 		caps += " STARTTLS"
 	}
-	// Plain-text mechanisms: suppressed on unencrypted connections when
-	// DisablePlainAuth is set; offered once TLS is established.
-	if !opts.DisablePlainAuth || extTLS == nil {
+	if refused {
+		caps += " LOGINDISABLED"
+	} else {
 		caps += " AUTH=PLAIN AUTH=LOGIN"
 	}
 	// From the service, because the service runs them: advertising one it
@@ -223,7 +223,7 @@ func extractPreamble(conn net.Conn, rd *bufio.Reader, p Protocol, extTLS *tls.Co
 
 // extractIMAPPreamble sends the greeting then enters the auth command loop.
 func extractIMAPPreamble(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Options, rc relayContext) (*preamble, net.Conn, *bufio.Reader, error) {
-	caps := imapPreAuthCaps(extTLS, opts, advertisedRelay(rc, conn, !opts.DisablePlainAuth || extTLS == nil))
+	caps := imapPreAuthCaps(extTLS, cleartextRefused(conn, opts), offeredRelay(conn, opts, rc))
 	if _, err := fmt.Fprintf(conn, "* OK [CAPABILITY %s] Yarilo Login ready\r\n", caps); err != nil {
 		return nil, conn, rd, fmt.Errorf("imap: send greeting: %w", err)
 	}
@@ -257,7 +257,7 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 
 		switch cmd {
 		case "CAPABILITY":
-			c := imapPreAuthCaps(extTLS, opts, advertisedRelay(rc, conn, !opts.DisablePlainAuth || extTLS == nil))
+			c := imapPreAuthCaps(extTLS, cleartextRefused(conn, opts), offeredRelay(conn, opts, rc))
 			fmt.Fprintf(conn, "* CAPABILITY %s\r\n", c)                       //nolint:errcheck
 			fmt.Fprintf(conn, "%s OK [CAPABILITY %s] CAPABILITY\r\n", tag, c) //nolint:errcheck
 		case "ID":
@@ -300,6 +300,8 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				continue
 			}
 			if cleartextRefused(conn, opts) {
+				logCleartextRefused(conn, rc.sessionID)
+				fmt.Fprintf(conn, "* BAD [ALERT] %s\r\n", cleartextExposedMsg)                 //nolint:errcheck
 				fmt.Fprintf(conn, "%s NO [PRIVACYREQUIRED] %s\r\n", tag, cleartextDisabledMsg) //nolint:errcheck
 				continue
 			}
@@ -317,7 +319,14 @@ func imapCommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				fmt.Fprintf(conn, "%s BAD AUTHENTICATE requires mechanism\r\n", tag) //nolint:errcheck
 				continue
 			}
+			if sslRefused(conn, opts) {
+				logSSLRefused(conn, rc.sessionID)
+				fmt.Fprintf(conn, "%s NO [PRIVACYREQUIRED] %s\r\n", tag, sslRequiredMsg) //nolint:errcheck
+				continue
+			}
 			if isCleartextMech(fields[2]) && cleartextRefused(conn, opts) {
+				logCleartextRefused(conn, rc.sessionID)
+				fmt.Fprintf(conn, "* BAD [ALERT] %s\r\n", cleartextExposedMsg)                 //nolint:errcheck
 				fmt.Fprintf(conn, "%s NO [PRIVACYREQUIRED] %s\r\n", tag, cleartextDisabledMsg) //nolint:errcheck
 				continue
 			}
@@ -479,13 +488,12 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 			if extTLS != nil {
 				capa += "STLS\r\n"
 			}
-			cleartextOK := !opts.DisablePlainAuth || extTLS == nil
 			sasl := "SASL"
-			if cleartextOK {
+			if !cleartextRefused(conn, opts) {
 				capa += "USER\r\n"
 				sasl += " PLAIN LOGIN"
 			}
-			for _, mech := range advertisedRelay(rc, conn, cleartextOK) {
+			for _, mech := range offeredRelay(conn, opts, rc) {
 				sasl += " " + mech
 			}
 			if sasl != "SASL" {
@@ -525,7 +533,13 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 				fmt.Fprintf(conn, "-ERR Unknown authentication mechanism\r\n") //nolint:errcheck
 				continue
 			}
+			if sslRefused(conn, opts) {
+				logSSLRefused(conn, rc.sessionID)
+				fmt.Fprintf(conn, "-ERR [AUTH] %s\r\n", sslRequiredMsg) //nolint:errcheck
+				continue
+			}
 			if isCleartextMech(fields[1]) && cleartextRefused(conn, opts) {
+				logCleartextRefused(conn, rc.sessionID)
 				fmt.Fprintf(conn, "-ERR [AUTH] %s\r\n", cleartextDisabledMsg) //nolint:errcheck
 				continue
 			}
@@ -625,6 +639,7 @@ func pop3CommandLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts O
 			}
 		case (strings.HasPrefix(upper, "USER ") || strings.HasPrefix(upper, "PASS ")) && cleartextRefused(conn, opts):
 			username = ""
+			logCleartextRefused(conn, rc.sessionID)
 			fmt.Fprintf(conn, "-ERR [AUTH] %s\r\n", cleartextDisabledMsg) //nolint:errcheck
 		case strings.HasPrefix(upper, "USER "):
 			username = strings.TrimSpace(line[5:])
@@ -691,18 +706,19 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 		upper := strings.ToUpper(trimmed)
 
 		switch {
+		case sslRefused(conn, opts) && !smtpPreTLS(upper):
+			fmt.Fprintf(conn, "530 5.7.0 TLS required.\r\n") //nolint:errcheck
 		case strings.HasPrefix(upper, "EHLO ") || strings.HasPrefix(upper, "HELO "):
 			ehloLine = trimmed + "\r\n"
 			caps := fmt.Sprintf("250-%s Hello\r\n", strings.Fields(trimmed)[1])
 			if extTLS != nil && !tlsDone {
 				caps += "250-STARTTLS\r\n"
 			}
-			cleartextOK := !opts.DisablePlainAuth || extTLS == nil || tlsDone
 			mechs := ""
-			if cleartextOK {
+			if !cleartextRefused(conn, opts) {
 				mechs = " PLAIN LOGIN"
 			}
-			for _, mech := range advertisedRelay(rc, conn, cleartextOK) {
+			for _, mech := range offeredRelay(conn, opts, rc) {
 				mechs += " " + mech
 			}
 			if mechs != "" {
@@ -750,6 +766,7 @@ func smtpAuthLoop(conn net.Conn, rd *bufio.Reader, extTLS *tls.Config, opts Opti
 			fmt.Fprintf(conn, "220 Yarilo Login ready\r\n") //nolint:errcheck
 		case strings.HasPrefix(upper, "AUTH ") && len(strings.Fields(upper)) > 1 &&
 			isCleartextMech(strings.Fields(upper)[1]) && cleartextRefused(conn, opts):
+			logCleartextRefused(conn, rc.sessionID)
 			fmt.Fprintf(conn, "523 5.7.10 %s\r\n", cleartextDisabledMsg) //nolint:errcheck
 		case strings.HasPrefix(upper, "AUTH "):
 			pre, err := handleSMTPAuth(conn, rd, trimmed, ehloLine, rc)

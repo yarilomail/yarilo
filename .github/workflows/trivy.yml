@@ -50,6 +50,7 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
+          trivyignores: .trivyignore
 
       - name: Upload image scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
@@ -71,6 +72,7 @@ jobs:
           # As in the image scan above: advice with no fixed version, about a
           # package the build does not contain, is not a finding.
           ignore-unfixed: true
+          trivyignores: .trivyignore
 
       - name: Upload filesystem scan results
         uses: github/codeql-action/upload-sarif@v4
