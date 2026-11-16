@@ -162,13 +162,15 @@ jobs:
             type=raw,value=latest
             type=raw,value=${{ steps.version.outputs.image_tag }},enable=${{ steps.version.outputs.is_release == 'true' }}
 
-      - name: Build and push
+      - name: Build
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile
-          push: true
+          # Into the local daemon only: nothing is published before the scan.
+          push: false
+          load: true
           platforms: linux/amd64
           # The stages that run apk upgrade are rebuilt every time; the Go
           # builders keep this runner's layer cache.
@@ -184,18 +186,30 @@ jobs:
             BUILD_VERSION=${{ steps.version.outputs.image_tag }}
             BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
 
-      ## The image just pushed, by its digest: the scheduled Trivy run builds
-      ## its own on a clean runner and can pass while this one, from the
-      ## runner's layer cache, carries an old package.
-      - name: Trivy - the pushed image
+      ## The image about to be published, before any tag of it exists in a
+      ## registry: a finding stops the job with nothing pushed. The scheduled
+      ## Trivy run builds its own image and cannot see what a cached layer
+      ## left in this one.
+      - name: Trivy - the image to publish
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ steps.build.outputs.imageid }}
           format: table
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
           trivyignores: .trivyignore
+
+      ## The scanned image, tag by tag; each line names the digest the registry got.
+      - name: Push
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          printf '%s\n' "$TAGS" | while read -r tag; do
+            [ -n "$tag" ] || continue
+            docker push --quiet "$tag" >/dev/null
+            echo "$tag $(docker inspect --format '{{join .RepoDigests " "}}' "$tag")"
+          done
 
       - name: Generate release notes
         if: steps.version.outputs.is_release == 'true'

@@ -80,8 +80,9 @@ jobs:
           file: docker/Dockerfile
           push: true
           platforms: linux/amd64
-          # A rebuild exists to take the base's current packages: nothing
-          # from the layer cache.
+          # Nothing from the layer cache: a rebuild must not inherit an
+          # earlier build's packages, and older tags have no runtime stage to
+          # name in no-cache-filters.
           no-cache: true
           tags: |
             ${{ env.IMAGE }}:${{ steps.tag.outputs.version }}-rebuild
