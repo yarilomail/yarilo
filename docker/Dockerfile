@@ -90,13 +90,13 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     go build -tags flatcurve -trimpath -o /out/fts-bench ./app/fts-bench
 
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS fts-bench
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS fts-bench
 # hadolint ignore=DL3018
 RUN apk upgrade --no-cache && apk add --no-cache xapian-core libstdc++
 COPY --from=fts-bench-builder /out/fts-bench /usr/local/bin/fts-bench
 ENTRYPOINT ["/usr/local/bin/fts-bench"]
 
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 # tini is PID 1 (see ENTRYPOINT): the components that run external programs --
 # the director's flush hook, sieve pipe/filter/execute, the quota-warning
 # script -- leave orphaned grandchildren behind when one is killed, and Go
