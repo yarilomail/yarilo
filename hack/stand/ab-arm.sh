@@ -617,6 +617,31 @@ else
     set -- $(type_inventory "$t")
     echo "-- start after seed: type=$t files=${1:-?} du_kb=${2:-?}"
   done | tee "$OUT/start-$ARM-seeded-types.txt"
+  # Per type, the message files' bytes (maildir cur/ and new/, sdbox u.*, mdbox
+  # m.*) apart from the indexes: every arm fills the same messages, so one
+  # arm's bytes against another's is what its write mode costs on disk.
+  : > "$OUT/disk-$ARM.txt"
+  for t in $TYPES; do
+    set -- $(type_domain "$t")
+    case "$t" in
+      maildir) pat="-path '*/Maildir/cur/*' -o -path '*/Maildir/new/*'" ;;
+      sdbox) pat="-path '*/dbox-Mails/u.*'" ;;
+      mdbox) pat="-path '*/storage/m.*'" ;;
+    esac
+    out=$(kube exec "$(first_pod backend)" -c yarilo-imap -- sh -c "
+      cd /var/mail/vhosts/$1 2>/dev/null || exit 0
+      b=0; n=0; k=0
+      for i in \$(seq $2 $3); do
+        d=\"u\${i}@$1\"
+        [ -d \"\$d\" ] || continue
+        k=\$((k + \$(du -sk \"\$d\" | cut -f1)))
+        set -- \$(find \"\$d\" -type f \\( $pat \\) -exec stat -c %s {} + | awk '{ b += \$1; n++ } END { print b + 0, n + 0 }')
+        b=\$((b + \$1)); n=\$((n + \$2))
+      done
+      echo \"\$b \$n \$k\"" 2>/dev/null)
+    set -- $out
+    echo "disk: arm=$ARM type=$t message_bytes=${1:-?} message_files=${2:-?} du_kb=${3:-?}" | tee -a "$OUT/disk-$ARM.txt"
+  done
 fi
 # u1-150 are empty at the start by design: the seed puts them in the database
 # and imaptest fills them during the run. What the seed does deliver is the
