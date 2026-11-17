@@ -107,7 +107,7 @@ func TestRefused(t *testing.T) {
 		want   error
 	}{
 		{"plain text", plain, []*ecdh.PrivateKey{k}, ErrNotEncrypted},
-		{"empty", nil, []*ecdh.PrivateKey{k}, ErrTruncated},
+		{"magic cut short", Magic[:5], []*ecdh.PrivateKey{k}, ErrTruncated},
 		{"unknown version", replace(gcm, append(append([]byte(nil), Magic...), 2), append(append([]byte(nil), Magic...), 9)), []*ecdh.PrivateKey{k}, ErrUnsupported},
 		{"truncated header", gcm[:hdrEnd-5], []*ecdh.PrivateKey{k}, ErrTruncated},
 		{"truncated body", gcm[:hdrEnd+100], []*ecdh.PrivateKey{k}, ErrIntegrity},
@@ -136,6 +136,13 @@ func TestRefused(t *testing.T) {
 				t.Fatalf("failure reported as EOF")
 			}
 		})
+	}
+}
+
+func TestEmptyInputIsEmptyBody(t *testing.T) {
+	got, err := decryptAll(nil, nil)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %d bytes, err %v", len(got), err)
 	}
 }
 

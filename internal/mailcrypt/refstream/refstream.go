@@ -82,7 +82,11 @@ var hashOIDs = map[string]func() hash.Hash{
 // check at the end is returned by Read as ErrIntegrity, never as io.EOF.
 func NewReader(src io.Reader, keys ...*ecdh.PrivateKey) (io.Reader, error) {
 	head := make([]byte, len(Magic)+1)
-	if _, err := io.ReadFull(src, head); err != nil {
+	if n, err := io.ReadFull(src, head); err != nil {
+		if n == 0 && errors.Is(err, io.EOF) {
+			// The reference writes nothing at all for an empty body.
+			return bytes.NewReader(nil), nil
+		}
 		return nil, headErr(err)
 	}
 	if !IsEncrypted(head) {
