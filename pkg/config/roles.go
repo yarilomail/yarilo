@@ -12,6 +12,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 	"github.com/yarilomail/yarilo/v2/internal/fts/language"
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/pkg/redisopt"
 )
 
@@ -24,9 +25,17 @@ var roleChecks = map[string]func(c *Config) error{
 		if _, _, err := c.BackendAPI.Gate(); err != nil {
 			return err
 		}
-		return c.LocksClient.Check(false)
+		if err := c.LocksClient.Check(false); err != nil {
+			return err
+		}
+		return c.Storage.checkCryptKeys()
 	},
-	"yarilo-backend": func(c *Config) error { return c.LocksClient.Check(false) },
+	"yarilo-backend": func(c *Config) error {
+		if err := c.LocksClient.Check(false); err != nil {
+			return err
+		}
+		return c.Storage.checkCryptKeys()
+	},
 	"yarilo-director": func(c *Config) error {
 		if raw := strings.TrimSpace(c.DirectorService.UsernameHash); raw != "" {
 			if _, err := ring.ParseHashFormat(raw); err != nil {
@@ -38,7 +47,10 @@ var roleChecks = map[string]func(c *Config) error{
 	},
 	"yarilo-fts": func(c *Config) error {
 		f := c.FTS
-		return language.ValidateTokenizerConfig(f.LanguageTokenizerAlgorithm, f.LanguageTokenizerWB5A, f.LanguageTokenizerExplicitPrefix)
+		if err := language.ValidateTokenizerConfig(f.LanguageTokenizerAlgorithm, f.LanguageTokenizerWB5A, f.LanguageTokenizerExplicitPrefix); err != nil {
+			return err
+		}
+		return c.Storage.checkCryptKeys()
 	},
 	"yarilo-imap-login": func(c *Config) error {
 		return ValidateBackendOrDirector("imap_login_service", c.IMAPLoginService.BackendAddr, c.IMAPLoginService.DirectorAddr)
@@ -59,7 +71,12 @@ var roleChecks = map[string]func(c *Config) error{
 		_, err := CheckTicketKey(c.JMAPLoginService.WebSocketTicketKey, c.Protocol.JMAP.WebSocketTicketTTL)
 		return err
 	},
-	"yarilo-jmap":  func(c *Config) error { return c.LocksClient.Check(true) },
+	"yarilo-jmap": func(c *Config) error {
+		if err := c.LocksClient.Check(true); err != nil {
+			return err
+		}
+		return c.Storage.checkCryptKeys()
+	},
 	"yarilo-locks": func(c *Config) error { return c.LocksService.check() },
 }
 
@@ -222,4 +239,14 @@ func CheckTicketKey(key string, ttl int) (string, error) {
 		return "jmap-login: jmap_login_service.websocket_ticket_key is empty, no WebSocket tickets are issued", nil
 	}
 	return "", nil
+}
+
+// checkCryptKeys reads the storage.mail_crypt key files with the function a
+// store-building start uses (mailboxbuild.CryptLayer), so check refuses what
+// that start would.
+func (s StorageConfig) checkCryptKeys() error {
+	if _, err := mailcrypt.LoadKeys(s.MailCryptKeys()); err != nil {
+		return fmt.Errorf("storage.mail_crypt.%w", err)
+	}
+	return nil
 }

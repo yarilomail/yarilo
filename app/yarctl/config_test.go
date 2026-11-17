@@ -184,3 +184,42 @@ func sameValue(a, b any) bool {
 	}
 	return false
 }
+
+// A key that does not exist is an error, not an empty answer a script reads.
+func TestConfigUnknownKeyIsAnError(t *testing.T) {
+	path := writeConfig(t, testConfig)
+	for _, args := range [][]string{
+		{"-c", path, "storage.mail_drivr"},
+		{"-c", path, "-h", "storage.mail_drivr"},
+		{"-c", path, "storage.mail_driver", "no_such_section"},
+	} {
+		out, errOut, err := runConfig(t, args...)
+		if !errors.Is(err, errConfigRefused) || !strings.Contains(errOut, "no such key") {
+			t.Fatalf("%v: err %v, stderr %q, out %q", args, err, errOut, out)
+		}
+	}
+}
+
+// check refuses key files a store-building start would refuse, with the
+// error that start gives.
+func TestConfigCheckReadsTheCryptKeys(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "public")
+	path := writeConfig(t, "storage:\n  mail_crypt:\n    write: age\n    public_key: "+missing+"\nlocks_client:\n  mode: remote\n  endpoints: [\"l:9104\"]\nbackend_api:\n  token: t\n")
+	if _, err := config.Load(path); err != nil {
+		t.Fatalf("the file itself is valid: %v", err)
+	}
+	for _, role := range []string{"yarilo-backend", "yarilo-backend-api", "yarilo-jmap", "yarilo-fts"} {
+		_, errOut, err := runConfig(t, "-c", path, "-r", role, "check")
+		if err == nil || !strings.Contains(errOut, "storage.mail_crypt.public_key") {
+			t.Errorf("%s: err %v, stderr %q", role, err, errOut)
+		}
+	}
+	// Without -r: the locks_client section says the backend role is here.
+	if _, errOut, err := runConfig(t, "-c", path, "check"); err == nil || !strings.Contains(errOut, "storage.mail_crypt.public_key") {
+		t.Errorf("default roles: err %v, stderr %q", err, errOut)
+	}
+	// A role that builds no store does not hold the keys.
+	if _, errOut, err := runConfig(t, "-c", path, "-r", "yarilo-director", "check"); err != nil && strings.Contains(errOut, "mail_crypt") {
+		t.Errorf("director refused for the keys: %q", errOut)
+	}
+}

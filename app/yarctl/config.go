@@ -88,7 +88,12 @@ func dispatchConfig(args []string, stdout, stderr io.Writer) error {
 	settings := visible(config.Walk(cfg, false))
 	switch {
 	case len(rest) > 0:
-		settings = named(settings, rest)
+		var missing []string
+		settings, missing = named(settings, rest)
+		if len(missing) > 0 {
+			fmt.Fprintf(stderr, "no such key: %s\n", strings.Join(missing, ", "))
+			return errConfigRefused
+		}
 	case !*all && !*defaults:
 		settings = differing(settings, visible(config.Walk(config.Defaults(), false)))
 	}
@@ -138,17 +143,21 @@ func differing(in, defaults []config.Setting) []config.Setting {
 }
 
 // named keeps the keys asked for, in the order asked: a key itself, or every
-// key of a section.
-func named(in []config.Setting, keys []string) []config.Setting {
-	var out []config.Setting
+// key of a section; missing are the names that matched nothing.
+func named(in []config.Setting, keys []string) (out []config.Setting, missing []string) {
 	for _, k := range keys {
+		found := false
 		for _, s := range in {
 			if s.Key == k || strings.HasPrefix(s.Key, k+".") || strings.HasPrefix(s.Key, k+"[") {
 				out = append(out, s)
+				found = true
 			}
 		}
+		if !found {
+			missing = append(missing, k)
+		}
 	}
-	return out
+	return out, missing
 }
 
 func valueText(s config.Setting, showSecrets bool) string {
