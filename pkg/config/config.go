@@ -3211,6 +3211,9 @@ func validateMailDriver(driver string) error {
 }
 
 func (cfg *Config) validate() error {
+	if err := checkMinTLS(cfg); err != nil {
+		return err
+	}
 	if err := checkNumbers(cfg); err != nil {
 		return err
 	}
@@ -3381,14 +3384,11 @@ func BuildTLSConfig(ssl SSLConfig) (*tls.Config, error) {
 		}
 		certs = append(certs, alt)
 	}
-	tlsCfg := &tls.Config{
-		Certificates: certs,
-		MinVersion:   tls.VersionTLS12,
+	minVersion, err := ParseMinTLS(ssl.SSLMinProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("tls: %w", err)
 	}
-	if ssl.SSLMinProtocol == "TLS1.3" {
-		tlsCfg.MinVersion = tls.VersionTLS13
-	}
-	return tlsCfg, nil
+	return &tls.Config{Certificates: certs, MinVersion: minVersion}, nil
 }
 
 func expandEnv(cfg *Config) {
