@@ -34,6 +34,9 @@ env:
   REGISTRY: ghcr.io
   IMAGE: ghcr.io/${{ github.repository_owner }}/yarilo
   DOCKERHUB_IMAGE: docker.io/0kaba0/yarilo
+  # The scanner of the build job, kept on the runner's disk (Install Trivy).
+  TRIVY_VERSION: "0.70.0"
+  TRIVY_SHA256: 8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -190,18 +193,35 @@ jobs:
       ## registry: a finding stops the job with nothing pushed. The scheduled
       ## Trivy run builds its own image and cannot see what a cached layer
       ## left in this one.
-      ## Installed without the Actions cache: on this runner a binary restored
-      ## from it was not there to run (exit 127, trivy: command not found).
+      ## On the runner's disk, outside the workspace: the binary is fetched once
+      ## per version and the DB is refreshed in place, nothing goes through the
+      ## Actions cache, whose upload over this runner's link took minutes.
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
-        with:
-          version: v0.70.0
-          cache: false
+        id: trivy
+        run: |
+          base="$HOME/.cache/yarilo-ci/trivy"
+          bin="$base/v$TRIVY_VERSION"
+          if [ -x "$bin/trivy" ] && "$bin/trivy" --version | grep -qx "Version: $TRIVY_VERSION"; then
+            echo "Trivy $TRIVY_VERSION already in $bin"
+          else
+            tmp=$(mktemp -d)
+            curl -sSfL -o "$tmp/t.tgz" \
+              "https://github.com/aquasecurity/trivy/releases/download/v$TRIVY_VERSION/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+            echo "$TRIVY_SHA256  $tmp/t.tgz" | sha256sum -c -
+            tar -xzf "$tmp/t.tgz" -C "$tmp" trivy
+            mkdir -p "$bin" && mv "$tmp/trivy" "$bin/trivy.new" && mv "$bin/trivy.new" "$bin/trivy"
+            rm -rf "$tmp"
+            echo "Trivy $TRIVY_VERSION installed in $bin"
+          fi
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "cache-dir=$base/db" >> "$GITHUB_OUTPUT"
 
       - name: Trivy - the image to publish
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           skip-setup-trivy: true
+          cache: false
+          cache-dir: ${{ steps.trivy.outputs.cache-dir }}
           image-ref: ${{ steps.build.outputs.imageid }}
           format: table
           severity: CRITICAL,HIGH
