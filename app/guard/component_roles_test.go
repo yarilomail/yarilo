@@ -2,8 +2,10 @@ package guard_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -33,8 +35,9 @@ func TestEveryComponentHasItsRoleChecks(t *testing.T) {
 	}
 }
 
-// The components whose role checks read the encryption keys are exactly the
-// containers the chart mounts the keys into: one more, and check refuses in a
+// The components whose binary builds the store with keys (its imports, less
+// the keyless list), whose role checks read the keys, and the containers the
+// chart mounts the keys into are one set: one more, and check refuses in a
 // container the process starts in; one fewer, and check passes where the start
 // exits. Which roles read the keys is asked of the checks themselves.
 func TestComponentKeyChecksMatchTheKeyMounts(t *testing.T) {
@@ -66,6 +69,25 @@ func TestComponentKeyChecksMatchTheKeyMounts(t *testing.T) {
 	ws = append(ws, renderWorkloads(t, "--set", "mailCrypt.secretName=keys",
 		"--set", "components.backend.coLocated=false", "--set", "components.fts.enabled=true",
 		"--set", "components.submission.enabled=true", "--set", "components.jmap.enabled=true")...)
+	// Which binaries build the store, from their imports, less the keyless ones.
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-f", `{{.ImportPath}} {{join .Deps " "}}`, "../...").Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	buildsStore := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 || !strings.Contains(f[0], "/app/yarilo-") {
+			continue
+		}
+		bin := f[0][strings.LastIndex(f[0], "/")+1:]
+		buildsStore[bin] = slices.Contains(f[1:], "github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild") && keyless[bin] == ""
+	}
+	for bin := range keyless {
+		if _, ok := buildsStore[bin]; !ok {
+			t.Errorf("%s is listed keyless and is no binary", bin)
+		}
+	}
 	rendered := map[string]bool{}
 	for _, w := range ws {
 		for _, c := range w.Spec.Template.Spec.Containers {
@@ -83,8 +105,9 @@ func TestComponentKeyChecksMatchTheKeyMounts(t *testing.T) {
 			for _, m := range c.VolumeMounts {
 				mounted = mounted || m.Name == "mail-crypt"
 			}
-			if r := readsKeys(comp); r != mounted {
-				t.Errorf("%s/%s (%s): check reads the keys %v, the chart mounts them %v", w.Metadata.Name, c.Name, comp, r, mounted)
+			if r, b := readsKeys(comp), buildsStore[comp]; r != mounted || b != mounted {
+				t.Errorf("%s/%s (%s): builds the store with keys %v, check reads the keys %v, the chart mounts them %v",
+					w.Metadata.Name, c.Name, comp, b, r, mounted)
 			}
 		}
 	}

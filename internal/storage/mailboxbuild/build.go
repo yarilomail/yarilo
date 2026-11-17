@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
@@ -55,10 +56,30 @@ func ByDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 	})
 }
 
+// ByDriverWithoutKeys is ByDriver for a process that reads sizes from the
+// index and never a body (yarilo-quota-status): no key file is read, and the
+// process gets none mounted. A plaintext body opens, an age body's size is
+// told from its header, a reference-format size is unknown, and a save is
+// refused.
+func ByDriverWithoutKeys(driver string, sc config.StorageConfig, locker locks.Locker) mailbox.MailboxBackend {
+	return mailbox.Validating(byDriverLayer(driver, sc, locker, mailcrypt.Keyless), mailbox.NameRules{
+		ValidateFSNames:       sc.MailboxListValidateFSNames,
+		RefuseLayoutSeparator: sc.MailboxListRefuseLayoutSeparator,
+		ReservedSegments:      sc.MailboxListReservedSegments,
+		StorageEscapeChar:     sc.MailboxListStorageEscapeChar,
+	})
+}
+
 func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailbox.MailboxBackend {
+	return byDriverLayer(driver, sc, locker, func() *mailcrypt.Layer { return CryptLayer(sc) })
+}
+
+// byDriverLayer builds the driver with the layer crypt makes, asked for only
+// by the drivers that store bodies.
+func byDriverLayer(driver string, sc config.StorageConfig, locker locks.Locker, crypt func() *mailcrypt.Layer) mailbox.MailboxBackend {
 	switch strings.ToLower(driver) {
 	case "sdbox", "dbox":
-		return dboxv2.New(dboxv2.WithCrypt(CryptLayer(sc)),
+		return dboxv2.New(dboxv2.WithCrypt(crypt()),
 			dboxv2.WithLocker(locker), dboxv2.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			dboxv2.WithFsync(fsyncMode(sc)),
 			dboxv2.WithListUTF8(sc.MailboxListUTF8))
@@ -67,7 +88,7 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 		// the write knobs: what it needs is its configuration file.
 		return virtual.New()
 	case "mdbox":
-		return mdbox.New(mdbox.WithCrypt(CryptLayer(sc)),
+		return mdbox.New(mdbox.WithCrypt(crypt()),
 			mdbox.WithLocker(locker),
 			mdbox.WithFsync(fsyncMode(sc)),
 			mdbox.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
@@ -78,7 +99,7 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 			mdbox.WithMapFormat(sc.MdboxMapFormat),
 			mapLogRotation(sc))
 	default:
-		return maildir.New(maildir.WithCrypt(CryptLayer(sc)),
+		return maildir.New(maildir.WithCrypt(crypt()),
 			maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			maildir.WithListUTF8(sc.MailboxListUTF8),
 			maildir.WithProactiveScan(sc.MaildirSyncOnSelect),

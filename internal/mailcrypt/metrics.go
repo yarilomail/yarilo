@@ -56,7 +56,7 @@ func reason(err error) string {
 	switch {
 	case errors.Is(err, ErrPlanted):
 		return "planted"
-	case errors.Is(err, ErrNoKey), errors.As(err, &noMatch), errors.Is(err, refstream.ErrNoKey):
+	case errors.Is(err, ErrNoKey), errors.Is(err, ErrKeyless), errors.As(err, &noMatch), errors.Is(err, refstream.ErrNoKey):
 		return "no-key"
 	case errors.Is(err, refstream.ErrIntegrity):
 		return "integrity"
