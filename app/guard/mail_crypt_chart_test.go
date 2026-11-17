@@ -17,7 +17,11 @@ type podWorkload struct {
 		Template struct {
 			Spec struct {
 				Containers []struct {
-					Name         string `yaml:"name"`
+					Name string `yaml:"name"`
+					Env  []struct {
+						Name  string `yaml:"name"`
+						Value string `yaml:"value"`
+					} `yaml:"env"`
 					VolumeMounts []struct {
 						Name      string `yaml:"name"`
 						MountPath string `yaml:"mountPath"`

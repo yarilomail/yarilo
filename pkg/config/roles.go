@@ -101,7 +101,7 @@ var roleSections = map[string][]string{
 // componentRoles maps the YARILO_COMPONENT a chart container carries to the
 // role checks its binary runs at start; a component with none only loads.
 // The session binaries and the migration build the store as the backend role
-// does.
+// does; submission relays and builds none.
 var componentRoles = map[string][]string{
 	"yarilo-auth":              {"yarilo-auth"},
 	"yarilo-backend-api":       {"yarilo-backend-api"},
@@ -123,7 +123,7 @@ var componentRoles = map[string][]string{
 	"yarilo-pop3-login":        {"yarilo-pop3-login"},
 	"yarilo-quota-status":      nil,
 	"yarilo-sasl-login":        nil,
-	"yarilo-submission":        {"yarilo-backend"},
+	"yarilo-submission":        nil,
 	"yarilo-submission-login":  {"yarilo-submission-login"},
 	"yarilo-warden":            nil,
 }
