@@ -20,27 +20,27 @@ func TestBothSpellingsProduceTheSamePolicy(t *testing.T) {
 	}{
 		{
 			name:          "pre-beta spelling, cleartext disabled",
-			body:          "services:\n  imap:\n    listen: \":143\"\n    disable_plaintext_auth: true\n",
+			body:          "services:\n  imap:\n    port: 143\n    disable_plaintext_auth: true\n",
 			wantCleartext: false,
 		},
 		{
 			name:          "canonical spelling, the same policy",
-			body:          "services:\n  imap:\n    listen: \":143\"\n    auth_allow_cleartext: false\n",
+			body:          "services:\n  imap:\n    port: 143\n    auth_allow_cleartext: false\n",
 			wantCleartext: false,
 		},
 		{
 			name:          "pre-beta spelling, cleartext allowed",
-			body:          "services:\n  imap:\n    listen: \":143\"\n    disable_plaintext_auth: false\n",
+			body:          "services:\n  imap:\n    port: 143\n    disable_plaintext_auth: false\n",
 			wantCleartext: true,
 		},
 		{
 			name:          "canonical spelling, the same permissive policy",
-			body:          "services:\n  imap:\n    listen: \":143\"\n    auth_allow_cleartext: true\n",
+			body:          "services:\n  imap:\n    port: 143\n    auth_allow_cleartext: true\n",
 			wantCleartext: true,
 		},
 		{
 			name:          "neither spelling is the reference default, cleartext off",
-			body:          "services:\n  imap:\n    listen: \":143\"\n",
+			body:          "services:\n  imap:\n    port: 143\n",
 			wantCleartext: false,
 		},
 	}
@@ -73,11 +73,11 @@ func TestBothSpellingsAtOnceRefuseStartup(t *testing.T) {
 	}{
 		{
 			name: "disagreeing",
-			body: "services:\n  imap:\n    listen: \":143\"\n    auth_allow_cleartext: true\n    disable_plaintext_auth: true\n",
+			body: "services:\n  imap:\n    port: 143\n    auth_allow_cleartext: true\n    disable_plaintext_auth: true\n",
 		},
 		{
 			name: "agreeing, which is still two spellings of one setting",
-			body: "services:\n  imap:\n    listen: \":143\"\n    auth_allow_cleartext: false\n    disable_plaintext_auth: true\n",
+			body: "services:\n  imap:\n    port: 143\n    auth_allow_cleartext: false\n    disable_plaintext_auth: true\n",
 		},
 	}
 
