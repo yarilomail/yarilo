@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 31
+config_schema_version: 32
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -215,6 +215,20 @@ storage:
   ## What reaches the disk before a delivery is answered: never, optimized
   ## (the body) or always (plus index, list and directory). See the docs.
   mail_fsync: optimized
+  ## Encryption of message bodies at rest. write: off stores bodies as given,
+  ## age encrypts new ones to public_key. Reading needs private_keys (age
+  ## identities, one per line during a rotation) and, for a store taken from
+  ## another server's disk, reference_keys (PEM). See the docs.
+  mail_crypt:
+    write: "off"
+    public_key: /etc/yarilo/mail-crypt/public
+    private_keys: /etc/yarilo/mail-crypt/private
+    reference_keys: []
+    ## Decrypted reference-format bodies kept in mail_temp_dir, summed per
+    ## process; past it a body is read as a stream. "0" keeps none.
+    reference_cache_size: "256M"
+  ## Plaintext a process must spill; never on the mail volume.
+  mail_temp_dir: /tmp/yarilo-mail
   mail_driver: maildir
   maildir_root: /var/mail/vhosts
   mail_home: "%d/%u"

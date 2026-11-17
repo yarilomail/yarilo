@@ -103,7 +103,7 @@ func writeRaw(t *testing.T, box *userMailbox, body string, guid [16]byte) raw {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	off, err := appendRecordToFile(f, []byte(body), guid, "INBOX", time.Unix(1, 0))
+	off, err := appendRecordToFile(f, []byte(body), parsedTrailer{guid: guid, origMailbox: "INBOX", internalDate: time.Unix(1, 0)})
 	if err != nil {
 		t.Fatal(err)
 	}

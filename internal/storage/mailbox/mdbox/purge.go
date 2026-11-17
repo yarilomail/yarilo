@@ -155,11 +155,12 @@ func (u *userMailbox) copyRecords(verb, srcPath, dstPath string, dstFileID uint3
 
 	out := make([]mdboxmap.MovedRecord, 0, len(live))
 	for _, e := range live {
-		body, guid, origMbox, received, err := readRecordBodyAndTrailer(src, e.Offset)
+		body, tr, err := readRecordBodyAndTrailer(src, e.Offset)
 		if err != nil {
 			return nil, fmt.Errorf("mdbox/%s: read uid=%d: %w", verb, e.UID, err)
 		}
-		offset, err := appendRecordToFile(dst, body, guid, origMbox, received)
+		guid := tr.guid
+		offset, err := appendRecordToFile(dst, body, tr)
 		if err != nil {
 			return nil, fmt.Errorf("mdbox/%s: write uid=%d: %w", verb, e.UID, err)
 		}
@@ -177,9 +178,9 @@ func (u *userMailbox) copyRecords(verb, srcPath, dstPath string, dstFileID uint3
 	return out, nil
 }
 
-// appendRecordToFile writes a record at end of file and returns its offset. guid
-// and received must be the source's, or they do not survive compaction.
-func appendRecordToFile(dst *os.File, body []byte, guid [16]byte, origMailbox string, received time.Time) (uint32, error) {
+// appendRecordToFile writes a record at end of file and returns its offset. The
+// trailer must be the source's: GUID, date and sizes survive compaction only so.
+func appendRecordToFile(dst *os.File, body []byte, tr parsedTrailer) (uint32, error) {
 	pos, err := dst.Seek(0, io.SeekEnd)
 	if err != nil {
 		return 0, err
@@ -187,7 +188,8 @@ func appendRecordToFile(dst *os.File, body []byte, guid [16]byte, origMailbox st
 	// The header line precedes only the first record. The size is ours without
 	// asking: compaction creates the file and writes the line itself, where the
 	// save path appends to files it did not create and must read M (#1525).
-	rec := buildDboxMessageRecord(body, guid, origMailbox, messageHeaderSize, received)
+	rec := buildDboxMessageRecordSized(body, tr.guid, tr.origMailbox, messageHeaderSize, tr.internalDate,
+		recSizes{v: tr.vsize, z: tr.physSize})
 	if pos == 0 {
 		rec = append(buildDboxFileHeader(), rec...)
 	}

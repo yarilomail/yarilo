@@ -149,7 +149,7 @@ func quoteFilename(name string) string {
 
 // serveUpload streams an uploaded blob from the caller's own store.
 func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request, h *userHandle, id identity, up uploadID, name string) {
-	st, err := h.uploads(s.opts.Storage.Locker, s.opts.UploadTTL)
+	st, err := h.uploads(s.opts.Storage.Locker, s.opts.UploadTTL, s.opts.Storage.Crypt)
 	if err != nil {
 		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Mail store unavailable")
 		return

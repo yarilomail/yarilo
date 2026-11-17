@@ -2678,6 +2678,27 @@ type StorageConfig struct {
 	// access to a folder that exists -- so it is configurable. Empty disables
 	// it. Default: the layout directories.
 	MailboxListReservedSegments []string `koanf:"mailbox_list_reserved_segments"`
+	// MailCrypt encrypts message bodies at rest (MAILCRYPT phase).
+	MailCrypt MailCryptConfig `koanf:"mail_crypt"`
+	// MailTempDir holds plaintext a process must spill, such as decrypted
+	// reference-format bodies; never on the mail volume.
+	MailTempDir string `koanf:"mail_temp_dir"`
+}
+
+// MailCryptConfig is storage.mail_crypt.
+type MailCryptConfig struct {
+	// Write is off (bodies stored as given) or age (encrypted to PublicKey).
+	Write string `koanf:"write"`
+	// PublicKey is a file of age recipients, read only with Write: age.
+	PublicKey string `koanf:"public_key"`
+	// PrivateKeys is a file of age identities, one per line during a
+	// rotation; read when it exists.
+	PrivateKeys string `koanf:"private_keys"`
+	// ReferenceKeys are PEM private keys opening reference-format bodies.
+	ReferenceKeys []string `koanf:"reference_keys"`
+	// ReferenceCacheSize bounds the decrypted reference bodies kept in
+	// MailTempDir, summed over the process; 0 streams every one.
+	ReferenceCacheSize string `koanf:"reference_cache_size"`
 }
 
 // TelemetryConfig is the telemetry section: health, metrics and profiling.
@@ -2813,6 +2834,13 @@ func Defaults() *Config {
 			// and 2338 dbox folders found no user folder colliding with one,
 			// so the default costs nothing there.
 			MailboxListReservedSegments: []string{"cur", "new", "tmp", "dbox-Mails", "fts-flatcurve"},
+			MailCrypt: MailCryptConfig{
+				Write:              "off",
+				PublicKey:          "/etc/yarilo/mail-crypt/public",
+				PrivateKeys:        "/etc/yarilo/mail-crypt/private",
+				ReferenceCacheSize: "256M",
+			},
+			MailTempDir: "/tmp/yarilo-mail",
 		},
 		InternalTLS: InternalTLSConfig{
 			Enabled: true,
@@ -3305,6 +3333,9 @@ func (cfg *Config) validate() error {
 	}
 	if _, err := filelock.Parse(cfg.Storage.LockMethod); err != nil {
 		return fmt.Errorf("config: storage.storage_lock_method: %w", err)
+	}
+	if err := checkMailCrypt(cfg.Storage); err != nil {
+		return err
 	}
 	if p := cfg.Storage.MailCachePurgeDeletePercentage; p > 100 {
 		return fmt.Errorf("config: storage.mail_cache_purge_delete_percentage: %d is more than every message", p)
@@ -3989,7 +4020,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 31
+const minConfigSchema = 32
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -4039,6 +4070,7 @@ var schemaAdditions = map[int][]string{
 	30: {"services.imap_login.auth_allow_cleartext", "services.pop3_login.auth_allow_cleartext",
 		"services.managesieve_login.auth_allow_cleartext", "services.jmap_login.auth_allow_cleartext"},
 	31: {"sieve.sieve_submission_ssl_verify", "sieve.sieve_submission_ssl_ca"},
+	32: {"storage.mail_crypt", "storage.mail_temp_dir"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

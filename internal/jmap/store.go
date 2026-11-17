@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
@@ -48,6 +49,8 @@ type Storage struct {
 	// Ops is the mutation layer's wiring: FTS and the quota services. Its
 	// Locker and Protocol are this Storage's.
 	Ops mailops.Config
+	// Crypt seals uploaded blobs at rest as message bodies are (MAILCRYPT).
+	Crypt *mailcrypt.Layer
 }
 
 // userHandle is one request's view of a user's mail. JMAP has no session, so a

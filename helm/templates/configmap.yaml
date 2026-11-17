@@ -840,6 +840,13 @@ data:
       mail_cache_purge_continued_percentage: {{ $storage.mail_cache_purge_continued_percentage | int64 }}
       mail_cache_purge_min_size: {{ if hasKey $storage "mail_cache_purge_min_size" }}{{ $storage.mail_cache_purge_min_size | toString | quote }}{{ else }}"32k"{{ end }}
       mail_fsync: {{ $storage.mail_fsync | default "optimized" | quote }}
+      mail_crypt:
+        write: {{ $storage.mail_crypt.write | quote }}
+        public_key: {{ $storage.mail_crypt.public_key | quote }}
+        private_keys: {{ $storage.mail_crypt.private_keys | quote }}
+        reference_keys: {{ $storage.mail_crypt.reference_keys | toJson }}
+        reference_cache_size: {{ $storage.mail_crypt.reference_cache_size | toString | quote }}
+      mail_temp_dir: {{ $storage.mail_temp_dir | quote }}
       {{- if $storage.mail_driver }}
       mail_driver: {{ $storage.mail_driver | quote }}
       {{- end }}

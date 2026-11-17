@@ -52,3 +52,37 @@ func NewReaderAt(src io.ReaderAt, size int64, ids ...age.Identity) (io.ReaderAt,
 	}
 	return r, n, nil
 }
+
+const (
+	chunkSize = 64 << 10
+	tagLen    = 16
+	nonceLen  = 16
+)
+
+// PlainSize is the plaintext length of an age file of size bytes, from where
+// its header ends and its length: no key needed, nothing decrypted.
+func PlainSize(r io.ReaderAt, size int64) (int64, error) {
+	head := make([]byte, min(size, 64<<10))
+	n, err := r.ReadAt(head, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("agestream/size: %w", err)
+	}
+	head = head[:n]
+	if !IsEncrypted(head) {
+		return 0, errors.New("agestream/size: not an age file")
+	}
+	mac := bytes.Index(head, []byte("\n--- "))
+	if mac < 0 {
+		return 0, errors.New("agestream/size: header end not found")
+	}
+	end := bytes.IndexByte(head[mac+1:], '\n')
+	if end < 0 {
+		return 0, errors.New("agestream/size: header end not found")
+	}
+	payload := size - int64(mac+1+end+1) - nonceLen
+	if payload < tagLen {
+		return 0, errors.New("agestream/size: truncated payload")
+	}
+	chunks := (payload + chunkSize + tagLen - 1) / (chunkSize + tagLen)
+	return payload - chunks*tagLen, nil
+}

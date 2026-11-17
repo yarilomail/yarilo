@@ -3406,7 +3406,12 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				mark("body["+string(section.Specifier)+"]", ferr)
 				break
 			}
-			extracted := imapserver.ExtractBodySection(rc, section)
+			var extracted []byte
+			if rr, ok := rc.(mailbox.RangeReader); ok && wholeMessageRange(section) {
+				extracted = readRange(rr, section.Partial)
+			} else {
+				extracted = imapserver.ExtractBodySection(rc, section)
+			}
 			rc.Close()
 			if extracted == nil {
 				// The section could not be produced: since #1377 the library
