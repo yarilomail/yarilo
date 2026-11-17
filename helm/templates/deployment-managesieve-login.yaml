@@ -77,7 +77,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.externalTLSVolume" .Values.components.manageSieveLogin.tls.secretName | nindent 8 }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.manageSieveLogin.internalTLS "role" "managesieve-login") | nindent 8 }}
         {{- with .Values.extraVolumes }}

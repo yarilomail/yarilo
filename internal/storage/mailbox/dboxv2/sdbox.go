@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,7 +57,9 @@ type Backend struct {
 }
 
 // WithCrypt sets the layer that encrypts bodies at rest.
-func WithCrypt(l *mailcrypt.Layer) Option { return func(b *Backend) { b.crypt = l } }
+func WithCrypt(l *mailcrypt.Layer) Option {
+	return func(b *Backend) { b.crypt = l.ForDriver(driverName) }
+}
 
 // Option configures a Backend at construction time.
 type Option func(*Backend)
@@ -667,21 +670,29 @@ func (u *userMailbox) plainBodySize(path string, fileSize int64) uint32 {
 		n, err := agestream.PlainSize(sec, sec.Size())
 		_ = f.Close()
 		if err != nil {
-			return 0
+			return u.sizeUnknown(path, err)
 		}
 		return uint32(n)
 	}
 	_ = f.Close()
 	rc, err := u.fetchPath(path)
 	if err != nil {
-		return 0
+		return u.sizeUnknown(path, err)
 	}
 	defer rc.Close() //nolint:errcheck
 	n, err := io.Copy(io.Discard, rc)
 	if err != nil {
-		return 0
+		return u.sizeUnknown(path, err)
 	}
 	return uint32(n)
+}
+
+// sizeUnknown counts and logs a sealed record whose size cannot be told, and
+// lists it as 0: unknown, never the ciphertext's length.
+func (u *userMailbox) sizeUnknown(path string, err error) uint32 {
+	u.b.crypt.FailedSize(err)
+	slog.Error("sdbox: plaintext size unknown, listed as 0", "path", path, "err", err)
+	return 0
 }
 
 // readPhysicalSize is the Z field of a record's metadata, when present.

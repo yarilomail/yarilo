@@ -14,6 +14,20 @@ hostname: ""
 ## move on develop (#1528).
 config_schema_version: 32
 
+## Size limit of the /tmp emptyDir in every pod, e.g. "1Gi"; empty: none.
+## Past it kubelet evicts the pod. storage.mail_temp_dir lives there, with its
+## reference_cache_size, which must stay below it.
+tmpSizeLimit: ""
+
+## Mail encryption keys (storage.mail_crypt): an existing Secret, mounted
+## read-only at /etc/yarilo/mail-crypt in every container that opens mail.
+## Keys "public" (age recipients) and "private" (age identities, one per line
+## while rotating); reference-format PEM keys under any other name, listed in
+## storage.mail_crypt.reference_keys. Empty mounts nothing. Create it with ESO
+## from Vault, as the other keys.
+mailCrypt:
+  secretName: ""
+
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
   ## its `latest` is a develop build.

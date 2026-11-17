@@ -76,7 +76,7 @@ spec:
         - name: varlib
           emptyDir: {}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.locks.internalTLS "role" "locks") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

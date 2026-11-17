@@ -75,7 +75,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- if .Values.storage.persistence.enabled }}
         - name: mail
           persistentVolumeClaim:

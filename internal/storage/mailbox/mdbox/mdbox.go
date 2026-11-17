@@ -58,7 +58,9 @@ const (
 var errCorruptRecord = errors.New("mdbox: corrupt record")
 
 // WithCrypt sets the layer that encrypts bodies at rest.
-func WithCrypt(l *mailcrypt.Layer) Option { return func(b *Backend) { b.crypt = l } }
+func WithCrypt(l *mailcrypt.Layer) Option {
+	return func(b *Backend) { b.crypt = l.ForDriver(driverName) }
+}
 
 // Backend is the mdbox MailboxBackend factory. Per-user state lives in
 // UserMailbox; the Backend holds only the shared locks.Locker and config.

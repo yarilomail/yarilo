@@ -56,6 +56,10 @@ func checkMailCrypt(s StorageConfig) error {
 func staticPrefix(loc string) string {
 	if i := strings.IndexByte(loc, '%'); i >= 0 {
 		loc = loc[:i]
+		// "/var/mail/u-%d" names homes in /var/mail, not in /var/mail/u-.
+		if !strings.HasSuffix(loc, "/") {
+			loc = filepath.Dir(loc)
+		}
 	}
 	if !filepath.IsAbs(loc) {
 		return ""

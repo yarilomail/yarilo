@@ -121,7 +121,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.externalTLSVolume" .Values.components.jmapLogin.tls.secretName | nindent 8 }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.jmapLogin.internalTLS "role" "jmap-login") | nindent 8 }}
         {{- with .Values.extraVolumes }}

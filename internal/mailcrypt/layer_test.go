@@ -346,3 +346,20 @@ func TestReferenceWithoutKey(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// A corrupt reference body read without the cache has no size: 0, unknown,
+// never what decrypted before the failure.
+func TestCorruptReferenceSizeIsUnknown(t *testing.T) {
+	stream, key, _ := referenceVector(t)
+	bad := append([]byte(nil), stream...)
+	bad[len(bad)-1] ^= 1
+	l := New(Options{ReferenceKeys: []*ecdh.PrivateKey{key}})
+	o, err := l.Open(newBody(bad), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	if n := o.Size(); n != 0 {
+		t.Fatalf("size %d", n)
+	}
+}

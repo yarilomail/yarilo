@@ -65,7 +65,9 @@ func WithLockMethod(m filelock.Method) Option {
 
 // WithCrypt sets the layer that encrypts bodies at rest; without it bodies
 // are stored as given and planted ciphertext is still refused.
-func WithCrypt(l *mailcrypt.Layer) Option { return func(b *Backend) { b.crypt = l } }
+func WithCrypt(l *mailcrypt.Layer) Option {
+	return func(b *Backend) { b.crypt = l.ForDriver(driverName) }
+}
 
 // WithFsync sets what a delivery makes durable before it is acknowledged.
 func WithFsync(m mailbox.FsyncMode) Option {
@@ -1183,6 +1185,8 @@ func (f fileBody) Size() int64 { return f.size }
 func (u *userMailbox) plainSize(path string, size int64) uint32 {
 	n, err := u.b.crypt.PlainFileSize(path, size)
 	if err != nil {
+		u.b.crypt.FailedSize(err)
+		slog.Error("maildir: plaintext size unknown, listed as 0", "path", path, "err", err)
 		return 0
 	}
 	return uint32(n)

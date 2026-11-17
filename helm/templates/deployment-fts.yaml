@@ -58,6 +58,7 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- include "yarilo.mailCryptMount" $ | nindent 12 }}
             {{- if .Values.storage.persistence.enabled }}
             - name: mail
               mountPath: {{ .Values.storage.maildir_root | default "/var/mail/vhosts" }}
@@ -72,7 +73,8 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
+        {{- include "yarilo.mailCryptVolume" $ | nindent 8 }}
         {{- if .Values.storage.persistence.enabled }}
         - name: mail
           persistentVolumeClaim:
