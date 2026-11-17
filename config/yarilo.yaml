@@ -34,15 +34,15 @@ services:
     ssl_mode: "no"
 
 sieve:
-  scripts_driver: fs
-  enabled: false
+  sieve_scripts_driver: fs
+  sieve_enabled: false
   sieve_max_script_size: 65536
-  max_redirects: 32
-  vacation_enabled: true
-  submission_host: ""
-  submission_ssl: "no"
-  submission_timeout: 30
-  submission_auth_secret: ""
+  sieve_max_redirects: 32
+  sieve_vacation_enabled: true
+  sieve_submission_host: ""
+  sieve_submission_ssl: "no"
+  sieve_submission_timeout: 30
+  sieve_submission_auth_secret: ""
   sieve_extensions:
     - fileinto
     - reject

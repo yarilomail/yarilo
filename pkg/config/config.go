@@ -3141,6 +3141,9 @@ func Load(path string) (*Config, error) {
 	if err := refuseRemovedKeys(k, removedKeys()); err != nil {
 		return nil, err
 	}
+	if err := refuseUnknownKeys(unknownKeys(k), cfg.ConfigSchemaVersion); err != nil {
+		return nil, err
+	}
 	warnRetiredKeys(k, retiredKeys())
 	warnChartSkew(cfg.ChartVersion)
 	warnConfigSchemaSkew(k, cfg.ConfigSchemaVersion, cfg.ChartVersion)

@@ -289,7 +289,7 @@ auth:
   auth_failure_delay: 2
   internal_failure_delay_ms: 2000
   cache:
-    size_bytes: 1.048576e+08
+    auth_cache_size: "100M"
     auth_cache_ttl: 1800
     auth_cache_negative_ttl: 1800
   penalty:
