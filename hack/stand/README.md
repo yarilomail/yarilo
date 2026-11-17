@@ -54,6 +54,33 @@ the ones allowed for it. An overlay is never deployed on its own.
   lists, so keep it in step with `values-sandbox.yaml`: the only difference is
   those two lines.
 
+## The MAILCRYPT window
+
+```
+KUBECONFIG=~/.kube/sbox.yaml YARILO_ARM_COMMIT=$(git rev-parse HEAD) \
+  bash hack/stand/mailcrypt-window.sh <image-tag> <out-dir>
+```
+
+A1 B1 A2 B2 A3 in one slot on one image: each change of `storage.mail_crypt.write`
+is crossed twice in each direction.
+
+- Every arm mounts the same keys (`mailcrypt-keys` overlay); B arms write age
+  (`mailcrypt-write`), and the two overlays differ in `write` alone, which a
+  test holds. Each arm wipes and fills, so A2 and A3 read no ciphertext from the
+  B arm before them.
+- `mailcrypt-keys.sh` makes the one-time hybrid age key under umask 077, never
+  printed, into Secret `yarilo-mail-crypt-window`, with the reference-format
+  test key of `internal/mailcrypt/refstream/testdata`. The window deletes it
+  after putting the stand back on its own values. A row names the key's type
+  only.
+- `watch-tmp.sh` samples `/tmp` in every pod, one container a pod, every 15 s,
+  through all five arms alike; `tmp-peak.txt` is each pod's peak.
+- `crypt-checks.sh` after each B arm: `yarctl config check` exits 0,
+  `mailbox_crypt_sealed_total` grew and `mailbox_crypt_failed_total` is 0, no
+  message file of the arm is plaintext, disk = index, RFC822.SIZE is the
+  plaintext size, and a reference-format file in a maildir INBOX reads whole
+  and in part through FETCH. PASS/FAIL lines in `crypt-<arm>.txt`.
+
 ## The acceptance run
 
 ```

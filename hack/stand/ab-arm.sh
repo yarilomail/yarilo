@@ -198,6 +198,7 @@ overlay_allows() {
     fsync-never) echo '^storage(\.mail_fsync)?$' ;;
     notls) echo '^internalTLS(\.enabled)?$' ;;
     no-protocol-rule) echo '^components(\.auth)?$' ;;
+    mailcrypt-keys|mailcrypt-write) echo '^(mailCrypt(\.secretName)?|storage(\.mail_crypt)?)$' ;;
     *) return 1 ;;
   esac
 }

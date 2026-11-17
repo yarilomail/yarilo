@@ -558,3 +558,45 @@ func TestSRSDomainIsTheSignDomain(t *testing.T) {
 		}
 	}
 }
+
+// The MAILCRYPT window compares write modes alone: the A and B overlays may
+// differ in storage.mail_crypt.write and nothing else, or B would measure
+// another change too. Both must be overlays ab-arm.sh accepts.
+func TestMailCryptOverlaysDifferInWriteAlone(t *testing.T) {
+	lines := func(name string) []string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "helm_values", "values-sandbox-"+name+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, l := range strings.Split(string(b), "\n") {
+			if s := strings.TrimSpace(l); s != "" && !strings.HasPrefix(s, "#") {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	a, b := lines("mailcrypt-keys"), lines("mailcrypt-write")
+	if len(a) != len(b) {
+		t.Fatalf("the overlays have %d and %d lines", len(a), len(b))
+	}
+	diff := 0
+	for i := range a {
+		if a[i] != b[i] {
+			diff++
+			if strings.TrimSpace(a[i]) != `write: "off"` || strings.TrimSpace(b[i]) != "write: age" {
+				t.Errorf("line %d: %q against %q; only write may differ", i+1, a[i], b[i])
+			}
+		}
+	}
+	if diff != 1 {
+		t.Errorf("%d lines differ, want the write line alone", diff)
+	}
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^\s*mailcrypt-keys\|mailcrypt-write\)`).Match(arm) {
+		t.Error("ab-arm.sh does not name the mailcrypt overlays")
+	}
+}
