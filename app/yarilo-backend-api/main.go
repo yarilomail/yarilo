@@ -57,6 +57,10 @@ func main() {
 		slog.Error("config load failed", "err", err, "path", cfgPath)
 		os.Exit(1)
 	}
+	if err := cfg.CheckRole("yarilo-backend-api"); err != nil {
+		slog.Error("config validation failed", "err", err)
+		os.Exit(1)
+	}
 
 	listen := cfg.BackendAPI.Listen
 	if listen == "" {

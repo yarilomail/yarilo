@@ -7,12 +7,10 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -55,15 +53,11 @@ func main() {
 	} else if warn != "" {
 		slog.Warn(warn)
 	}
-	if err := config.ValidateBackendOrDirector("jmap_login_service",
-		cfg.JMAPLoginService.BackendAddr, cfg.JMAPLoginService.DirectorAddr); err != nil {
+	if err := cfg.CheckRole("yarilo-jmap-login"); err != nil {
 		slog.Error("config validation failed", "err", err)
 		os.Exit(1)
 	}
-	if warn, err := checkTicketKey(cfg.JMAPLoginService.WebSocketTicketKey, cfg.Protocol.JMAP.WebSocketTicketTTL); err != nil {
-		slog.Error("config validation failed", "err", err)
-		os.Exit(1)
-	} else if warn != "" {
+	if warn, _ := config.CheckTicketKey(cfg.JMAPLoginService.WebSocketTicketKey, cfg.Protocol.JMAP.WebSocketTicketTTL); warn != "" {
 		slog.Warn(warn)
 	}
 
@@ -246,17 +240,4 @@ func parseCIDRs(ss []string) []*net.IPNet {
 		nets = append(nets, n)
 	}
 	return nets
-}
-
-// checkTicketKey refuses a key that is still a placeholder: that is a missing
-// Secret, and the placeholder is public, so signing with it lets anyone write a
-// ticket. An empty key only warns, so a config from before the key starts.
-func checkTicketKey(key string, ttl int) (string, error) {
-	if strings.Contains(key, "${") {
-		return "", fmt.Errorf("jmap_login_service.websocket_ticket_key is an unexpanded placeholder")
-	}
-	if ttl > 0 && key == "" {
-		return "jmap-login: jmap_login_service.websocket_ticket_key is empty, no WebSocket tickets are issued", nil
-	}
-	return "", nil
 }

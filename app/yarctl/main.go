@@ -7,6 +7,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -126,7 +127,9 @@ func main() {
 	}
 
 	if err := dispatch(args); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		if !errors.Is(err, errConfigRefused) { // the reason is printed already
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -138,6 +141,10 @@ func dispatch(args []string) error {
 	// dispatches `wait` as a backend service and fails.
 	if len(args) > 0 && args[0] == "wait" {
 		return dispatchWait(args[1:])
+	}
+	// Local, like wait: reads the configuration file, calls no service.
+	if len(args) > 0 && args[0] == "config" {
+		return dispatchConfig(args[1:], os.Stdout, os.Stderr)
 	}
 
 	// When YARILO_ADMIN_TYPE is set the plane is implicit: first arg is the
