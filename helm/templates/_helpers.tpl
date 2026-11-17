@@ -398,7 +398,10 @@ Args: dict "root" $ "itls" <internalTLS config>.
   mountPath: {{ $root.Values.storage.maildir_root | default "/var/mail/vhosts" }}
 {{- end }}
 {{- include "yarilo.internalTLSMount" (dict "root" $root "itls" .itls "role" .role "vol" (printf "internal-tls-%s" .role)) }}
+{{- /* submission relays and opens no mailbox: no keys. */}}
+{{- if ne .role "submission" }}
 {{- include "yarilo.mailCryptMount" $root }}
+{{- end }}
 {{- include "yarilo.sieveGlobalMount" (dict "root" $root "role" .role) }}
 {{- include "yarilo.imapsieveMount" (dict "root" $root "role" .role) }}
 {{- /* extraVolumes are rendered on the StatefulSet, so the matching mounts

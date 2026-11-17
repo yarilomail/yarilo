@@ -53,12 +53,13 @@ func renderWorkloads(t *testing.T, args ...string) []podWorkload {
 // changes when neither is set.
 func TestMailCryptKeysAndTmpLimitInTheChart(t *testing.T) {
 	opensMail := map[string]bool{"yarilo-imap": true, "yarilo-pop3": true, "yarilo-lmtp": true, "yarilo-jmap": true,
-		"yarilo-managesieve": true, "yarilo-fts": true, "yarilo-backend-api": true, "yarilo-submission": true}
+		"yarilo-managesieve": true, "yarilo-fts": true, "yarilo-backend-api": true}
 	// The co-located StatefulSet (the stand) and the per-protocol Deployments.
 	ws := renderWorkloads(t, "-f", "../../helm_values/values-sandbox.yaml",
 		"--set", "mailCrypt.secretName=keys", "--set", "tmpSizeLimit=1Gi")
 	ws = append(ws, renderWorkloads(t, "--set", "mailCrypt.secretName=keys", "--set", "tmpSizeLimit=1Gi",
-		"--set", "components.backend.coLocated=false", "--set", "components.fts.enabled=true")...)
+		"--set", "components.backend.coLocated=false", "--set", "components.fts.enabled=true",
+		"--set", "components.submission.enabled=true")...)
 	keyed := 0
 	for _, w := range ws {
 		for _, c := range w.Spec.Template.Spec.Containers {
@@ -75,7 +76,11 @@ func TestMailCryptKeysAndTmpLimitInTheChart(t *testing.T) {
 				keyed++
 			}
 		}
+		names := map[string]int{}
 		for _, v := range w.Spec.Template.Spec.Volumes {
+			if names[v.Name]++; names[v.Name] == 2 {
+				t.Errorf("%s: volume %q twice: the API server refuses the pod spec", w.Metadata.Name, v.Name)
+			}
 			if v.Name == "tmp" && v.EmptyDir["sizeLimit"] != "1Gi" {
 				t.Errorf("%s: /tmp %v, want sizeLimit 1Gi", w.Metadata.Name, v.EmptyDir)
 			}
