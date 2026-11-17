@@ -65,7 +65,13 @@ func dispatchConfig(args []string, stdout, stderr io.Writer) error {
 	if *defaults {
 		source = "defaults"
 	}
-	fmt.Fprintf(stdout, "# yarilo %s %s\n", build.Version, source)
+	// With -h stdout is the values alone, for x=$(yarctl config -h KEY): the
+	// line goes to stderr, still on screen when the file does not load.
+	header := stdout
+	if *valuesOnly {
+		header = stderr
+	}
+	fmt.Fprintf(header, "# yarilo %s %s\n", build.Version, source)
 
 	if len(rest) == 1 && rest[0] == "check" {
 		if _, err := config.LoadChecked(*path, roles...); err != nil {

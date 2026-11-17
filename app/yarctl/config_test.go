@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,9 +52,9 @@ func TestConfigCalls(t *testing.T) {
 		{"defaults", []string{"-c", filepath.Join(t.TempDir(), "absent.yaml"), "-d"}, []string{"ssl_min_protocol: TLS1.2", "# yarilo "}, []string{"sdbox"}, false},
 		{"a key at its default", []string{"-c", path, "general.ssl.ssl_min_protocol"}, []string{"ssl_min_protocol: TLS1.2"}, []string{"mail_driver"}, false},
 		{"a section", []string{"-c", path, "general.ssl"}, []string{"ssl_min_protocol", "ssl_server_cert_file"}, []string{"mail_driver"}, false},
-		{"values only", []string{"-c", path, "-h", "storage.mail_driver", "director_service.ring_secret"}, []string{"sdbox\n" + config.Hidden + "\n"}, []string{"mail_driver:"}, false},
+		{"values only", []string{"-c", path, "-h", "storage.mail_driver", "director_service.ring_secret"}, []string{"sdbox\n" + config.Hidden + "\n"}, []string{"mail_driver:", "# yarilo"}, false},
 		{"values only, secret shown", []string{"-c", path, "-h", "-P", "director_service.ring_secret"}, []string{"s3cret-ring\n"}, nil, false},
-		{"flags after the key", []string{"-c", path, "storage.mail_driver", "-h"}, []string{"\nsdbox\n"}, []string{"mail_driver:"}, false},
+		{"flags after the key", []string{"-c", path, "storage.mail_driver", "-h"}, []string{"sdbox\n"}, []string{"mail_driver:", "# yarilo"}, false},
 		{"check passes", []string{"-c", path, "-r", "yarilo-fts", "check"}, nil, []string{"\n"}, false},
 	}
 	for _, c := range cases {
@@ -62,10 +63,17 @@ func TestConfigCalls(t *testing.T) {
 			if (err != nil) != c.wantErr {
 				t.Fatalf("err %v, stderr %q", err, errOut)
 			}
-			if !strings.HasPrefix(out, "# yarilo ") {
-				t.Fatalf("first line %q", strings.SplitN(out, "\n", 2)[0])
+			body := out
+			if slices.Contains(c.args, "-h") {
+				if !strings.HasPrefix(errOut, "# yarilo ") {
+					t.Fatalf("with -h the version line is not on stderr: %q", errOut)
+				}
+			} else {
+				if !strings.HasPrefix(out, "# yarilo ") {
+					t.Fatalf("first line %q", strings.SplitN(out, "\n", 2)[0])
+				}
+				body = strings.SplitN(out, "\n", 2)[1]
 			}
-			body := strings.SplitN(out, "\n", 2)[1]
 			for _, h := range c.has {
 				if !strings.Contains(out, h) {
 					t.Errorf("no %q in:\n%s", h, out)
@@ -221,5 +229,20 @@ func TestConfigCheckReadsTheCryptKeys(t *testing.T) {
 	// A role that builds no store does not hold the keys.
 	if _, errOut, err := runConfig(t, "-c", path, "-r", "yarilo-director", "check"); err != nil && strings.Contains(errOut, "mail_crypt") {
 		t.Errorf("director refused for the keys: %q", errOut)
+	}
+}
+
+// x=$(yarctl config -h KEY) is the value and nothing else.
+func TestConfigValuesOnlyIsTheValueAlone(t *testing.T) {
+	path := writeConfig(t, testConfig)
+	out, errOut, err := runConfig(t, "-c", path, "-h", "storage.mail_driver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "sdbox\n" {
+		t.Fatalf("stdout %q, want the value alone", out)
+	}
+	if !strings.Contains(errOut, path) {
+		t.Fatalf("the version line is gone: stderr %q", errOut)
 	}
 }
