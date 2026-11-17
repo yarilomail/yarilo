@@ -58,7 +58,8 @@ func ByDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailbox.MailboxBackend {
 	switch strings.ToLower(driver) {
 	case "sdbox", "dbox":
-		return dboxv2.New(dboxv2.WithLocker(locker), dboxv2.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
+		return dboxv2.New(dboxv2.WithCrypt(CryptLayer(sc)),
+			dboxv2.WithLocker(locker), dboxv2.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			dboxv2.WithFsync(fsyncMode(sc)),
 			dboxv2.WithListUTF8(sc.MailboxListUTF8))
 	case "virtual":
@@ -66,7 +67,8 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 		// the write knobs: what it needs is its configuration file.
 		return virtual.New()
 	case "mdbox":
-		return mdbox.New(mdbox.WithLocker(locker),
+		return mdbox.New(mdbox.WithCrypt(CryptLayer(sc)),
+			mdbox.WithLocker(locker),
 			mdbox.WithFsync(fsyncMode(sc)),
 			mdbox.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			mdbox.WithListUTF8(sc.MailboxListUTF8),
@@ -76,7 +78,8 @@ func byDriver(driver string, sc config.StorageConfig, locker locks.Locker) mailb
 			mdbox.WithMapFormat(sc.MdboxMapFormat),
 			mapLogRotation(sc))
 	default:
-		return maildir.New(maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
+		return maildir.New(maildir.WithCrypt(CryptLayer(sc)),
+			maildir.WithMaxConcurrentWrites(sc.MaxConcurrentWrites),
 			maildir.WithListUTF8(sc.MailboxListUTF8),
 			maildir.WithProactiveScan(sc.MaildirSyncOnSelect),
 			maildir.WithLockMethod(lockMethod(sc)),

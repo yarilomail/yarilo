@@ -176,7 +176,7 @@ func (h *userHandle) importTargets(ids map[string]bool) ([]importTarget, *jmapco
 // the caller's own account.
 func (s *Server) readBlob(ctx context.Context, h *userHandle, blobID string) ([]byte, error) {
 	if up, ok := parseUploadID(blobID, s.uploadMax()); ok {
-		st, err := h.uploads(s.opts.Storage.Locker, s.opts.UploadTTL)
+		st, err := h.uploads(s.opts.Storage.Locker, s.opts.UploadTTL, s.opts.Storage.Crypt)
 		if err != nil {
 			return nil, err
 		}

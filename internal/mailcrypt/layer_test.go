@@ -1,0 +1,289 @@
+package mailcrypt
+
+import (
+	"bufio"
+	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"filippo.io/age"
+
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt/refstream"
+)
+
+// countingBody counts the bytes read from the stored body.
+type countingBody struct {
+	*bytes.Reader
+	read atomic.Int64
+}
+
+func (c *countingBody) ReadAt(p []byte, off int64) (int, error) {
+	n, err := c.Reader.ReadAt(p, off)
+	c.read.Add(int64(n))
+	return n, err
+}
+
+func newBody(b []byte) *countingBody { return &countingBody{Reader: bytes.NewReader(b)} }
+
+func sealed(t *testing.T, l *Layer, plain []byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	if err := l.Seal(&out, bytes.NewReader(plain)); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+func open(t *testing.T, l *Layer, stored []byte) []byte {
+	t.Helper()
+	o, err := l.Open(newBody(stored), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	b, err := io.ReadAll(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func ageLayer(t *testing.T) (*Layer, *age.X25519Identity) {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(Options{Recipients: []age.Recipient{id.Recipient()}, Identities: []age.Identity{id}}), id
+}
+
+func TestSealOpen(t *testing.T) {
+	enc, _ := ageLayer(t)
+	cases := []struct {
+		name    string
+		l       *Layer
+		wantAge bool
+	}{{"off", New(Options{}), false}, {"nil", nil, false}, {"age", enc, true}}
+	for _, c := range cases {
+		for _, n := range []int{0, 1, 70000} {
+			plain := make([]byte, n)
+			_, _ = rand.Read(plain)
+			stored := sealed(t, c.l, plain)
+			if got := Classify(stored) == Age; got != c.wantAge && n > 0 {
+				t.Fatalf("%s n=%d: age on disk %v", c.name, n, got)
+			}
+			if got := open(t, c.l, stored); !bytes.Equal(got, plain) {
+				t.Fatalf("%s n=%d: plaintext differs", c.name, n)
+			}
+			size, err := c.l.PlainSize(newBody(stored))
+			if err != nil || size != int64(n) {
+				t.Fatalf("%s n=%d: PlainSize %d %v", c.name, n, size, err)
+			}
+		}
+	}
+}
+
+func TestPlantedRefusedInBothModes(t *testing.T) {
+	enc, _ := ageLayer(t)
+	ageBody := sealed(t, enc, []byte("hello"))
+	ref := append(append([]byte(nil), refstream.Magic...), 2, 0, 0, 0)
+	for _, l := range []*Layer{New(Options{}), enc} {
+		for _, body := range [][]byte{ageBody, ref} {
+			if err := l.Seal(io.Discard, bytes.NewReader(body)); !errors.Is(err, ErrPlanted) {
+				t.Fatalf("writes=%v: %v", l.Writes(), err)
+			}
+		}
+		// A body that only mentions the signature further in is plain mail.
+		if err := l.Seal(io.Discard, strings.NewReader("Subject: x\r\n\r\nage-encryption.org/v1\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRotation(t *testing.T) {
+	oldID, _ := age.GenerateX25519Identity()
+	newID, _ := age.GenerateHybridIdentity()
+	before := New(Options{Recipients: []age.Recipient{oldID.Recipient()}})
+	after := New(Options{Recipients: []age.Recipient{newID.Recipient()}, Identities: []age.Identity{oldID, newID}})
+	oldMail := sealed(t, before, []byte("old"))
+	newMail := sealed(t, after, []byte("new"))
+	if string(open(t, after, oldMail)) != "old" || string(open(t, after, newMail)) != "new" {
+		t.Fatal("rotation lost a message")
+	}
+	onlyOld := New(Options{Identities: []age.Identity{oldID}})
+	if _, err := onlyOld.Open(newBody(newMail), nil); err == nil {
+		t.Fatal("new mail opened with the old key alone")
+	}
+}
+
+func TestWrongKey(t *testing.T) {
+	enc, _ := ageLayer(t)
+	other, _ := ageLayer(t)
+	if _, err := other.Open(newBody(sealed(t, enc, []byte("x"))), nil); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+// TestPartialReadTouchesOnlyItsChunks: a 4 KiB read from the middle of a
+// 10 MiB age body reads two chunks and the header, not the body.
+func TestPartialReadTouchesOnlyItsChunks(t *testing.T) {
+	enc, _ := ageLayer(t)
+	plain := make([]byte, 10<<20)
+	_, _ = rand.Read(plain)
+	body := newBody(sealed(t, enc, plain))
+	o, err := enc.Open(body, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := body.read.Load()
+	buf := make([]byte, 4096)
+	if _, err := o.ReadAt(buf, 5<<20); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(buf, plain[5<<20:5<<20+4096]) {
+		t.Fatal("wrong bytes")
+	}
+	if read := body.read.Load() - before; read > 3*(64<<10+16) {
+		t.Fatalf("read %d bytes of the file for 4 KiB", read)
+	}
+	if o.Size() != int64(len(plain)) {
+		t.Fatalf("size %d", o.Size())
+	}
+}
+
+func referenceVector(t *testing.T) (stream []byte, key *ecdh.PrivateKey, plainSHA string) {
+	t.Helper()
+	dir := filepath.Join("refstream", "testdata", "reference")
+	f, err := os.Open(filepath.Join(dir, "MANIFEST"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fs := strings.Fields(sc.Text())
+		if len(fs) == 3 && strings.HasSuffix(fs[0], "-gcm-1000.bin") && strings.HasPrefix(fs[0], "prime256v1") {
+			stream, _ = os.ReadFile(filepath.Join(dir, fs[0]))
+			pemKey, _ := os.ReadFile(filepath.Join(dir, fs[1]))
+			key, err = refstream.ParsePrivateKeyPEM(pemKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return stream, key, fs[2]
+		}
+	}
+	t.Fatal("no vector")
+	return nil, nil, ""
+}
+
+func TestReferenceThroughCache(t *testing.T) {
+	stream, key, _ := referenceVector(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "body-left-over"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := NewCache(dir, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Fatalf("start did not sweep: %v", left)
+	}
+	now := time.Unix(1000, 0)
+	cache.now = func() time.Time { return now }
+	l := New(Options{ReferenceKeys: []*ecdh.PrivateKey{key}, Cache: cache})
+
+	plain := open(t, l, stream)
+	if len(plain) != 1000 {
+		t.Fatalf("plain %d bytes", len(plain))
+	}
+	files, _ := os.ReadDir(dir)
+	if len(files) != 1 {
+		t.Fatalf("cache files %d", len(files))
+	}
+	info, _ := files[0].Info()
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", info.Mode().Perm())
+	}
+	if !bytes.Equal(open(t, l, stream), plain) {
+		t.Fatal("second open differs")
+	}
+	now = now.Add(cacheTTL + time.Second)
+	if cache.Used() != 0 {
+		t.Fatalf("used %d after expiry", cache.Used())
+	}
+	if files, _ := os.ReadDir(dir); len(files) != 0 {
+		t.Fatalf("expired file kept: %v", files)
+	}
+}
+
+func TestReferenceBypassPastBudget(t *testing.T) {
+	stream, key, _ := referenceVector(t)
+	dir := t.TempDir()
+	cache, err := NewCache(dir, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bypassed int
+	cache.Bypassed = func() { bypassed++ }
+	l := New(Options{ReferenceKeys: []*ecdh.PrivateKey{key}, Cache: cache})
+	o, err := l.Open(newBody(stream), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	got, err := io.ReadAll(o)
+	if err != nil || len(got) != 1000 || o.Size() != 1000 {
+		t.Fatalf("stream: %d bytes, size %d, %v", len(got), o.Size(), err)
+	}
+	buf := make([]byte, 10)
+	if _, err := o.ReadAt(buf, 500); err != nil || !bytes.Equal(buf, got[500:510]) {
+		t.Fatalf("ReadAt backwards: %v", err)
+	}
+	if files, _ := os.ReadDir(dir); len(files) != 0 || bypassed != 1 {
+		t.Fatalf("files %d, bypassed %d", len(files), bypassed)
+	}
+}
+
+func TestReferenceWithoutKey(t *testing.T) {
+	stream, _, _ := referenceVector(t)
+	if _, err := New(Options{}).Open(newBody(stream), nil); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+// TestBrokenKeys: keys that could not be read refuse what they were for and
+// nothing else.
+func TestBrokenKeys(t *testing.T) {
+	enc, _ := ageLayer(t)
+	sealedMail := sealed(t, enc, []byte("secret"))
+	cause := errors.New("private_keys: unreadable")
+	for _, c := range []struct {
+		name       string
+		writes     bool
+		writeFails bool
+	}{{"write: off", false, false}, {"write: age", true, true}} {
+		l := Broken(cause, c.writes)
+		err := l.Seal(io.Discard, strings.NewReader("plain mail"))
+		if (err != nil) != c.writeFails {
+			t.Fatalf("%s: write err %v", c.name, err)
+		}
+		if got := open(t, l, []byte("plain mail")); string(got) != "plain mail" {
+			t.Fatalf("%s: plaintext unreadable", c.name)
+		}
+		if _, err := l.Open(newBody(sealedMail), nil); !errors.Is(err, cause) {
+			t.Fatalf("%s: encrypted read err %v", c.name, err)
+		}
+		if err := l.Seal(io.Discard, bytes.NewReader(sealedMail)); !errors.Is(err, ErrPlanted) && !c.writeFails {
+			t.Fatalf("%s: planted not refused: %v", c.name, err)
+		}
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
@@ -174,8 +175,8 @@ func nameCarriesSizes(base string) bool {
 
 // measureSizes reads the file for the two numbers a name does not carry: the
 // physical size, and the virtual one a lone LF grows under CRLF.
-func measureSizes(path string) (psize, vsize uint32, err error) {
-	f, err := openPath(path)
+func measureSizes(l *mailcrypt.Layer, path string) (psize, vsize uint32, err error) {
+	f, err := l.OpenFile(path)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -423,7 +424,7 @@ func (u *userMailbox) recordUIDsHeld(folder string, entries []listEntry, seed ui
 			}
 			rec := uidRecord{uid: e.uid, base: base}
 			if !nameCarriesSizes(base) {
-				psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", e.filename))
+				psize, vsize, merr := measureSizes(u.b.crypt, filepath.Join(u.folderPath(folder), "cur", e.filename))
 				if merr == nil {
 					rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
 				}
