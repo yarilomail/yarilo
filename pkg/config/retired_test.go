@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -66,7 +67,9 @@ func TestARetiredKeyIsAnsweredOnPresenceNotValue(t *testing.T) {
 func TestNoRetiredKeyIsStillWrittenByTheChart(t *testing.T) {
 	chart := readChartText(t)
 	for _, r := range retiredKeys() {
-		if strings.Contains(chart, path.Base(strings.ReplaceAll(r.key, ".", "/"))) {
+		// As a key: a bare substring would match index in fts_autoindex.
+		name := path.Base(strings.ReplaceAll(r.key, ".", "/"))
+		if regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `:`).MatchString(chart) {
 			t.Errorf("%s is retired but the chart still writes it; every install would carry the key and every start would warn", r.key)
 		}
 	}

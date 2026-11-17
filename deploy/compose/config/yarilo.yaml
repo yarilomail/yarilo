@@ -381,7 +381,6 @@ storage:
   mail_driver: "maildir"
   maildir_root: "/var/mail/vhosts"
   mail_home: "%d/%u"
-  index: "fileindex"
   # mdbox tuning (only used when mailbox: mdbox):
   # mdbox_rotate_size: 10M           # max size per m.<N> before rolling (10M/1G or raw bytes; 0 = default 10 MiB)
   # mdbox_rotate_interval: 0         # roll append file once older than this (30s/5m/1h or raw seconds; 0 = disabled)

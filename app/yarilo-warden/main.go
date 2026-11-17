@@ -80,14 +80,7 @@ func main() {
 			os.Exit(1)
 		}
 		rdb := redisopt.Client(opt, cfg.WardenService.Sentinel())
-		prefix := cfg.WardenService.KeyPrefix
-		if prefix == "" {
-			prefix = "yarilo:warden:"
-		}
-		chanPrefix := cfg.WardenService.ChannelPrefix
-		if chanPrefix == "" {
-			chanPrefix = "yarilo:warden:events:"
-		}
+		prefix, chanPrefix := redisPrefixes(cfg.WardenService)
 		backend := warden.NewRedisBackend(rdb, prefix, chanPrefix, warden.DefaultPenaltyDecay, warden.DefaultSessionTTL, limits)
 		stateOpts = append(stateOpts, warden.WithStateBackend(backend))
 		closeState = func() { _ = backend.Close() }
@@ -219,4 +212,17 @@ func connLimits(cfg *config.Config) warden.ConnLimits {
 		l.Protocols[p] = cfg.MaxUserIPConnections(p)
 	}
 	return l
+}
+
+// redisPrefixes are the Redis key and channel prefixes, with the defaults for
+// a config built without config.Defaults.
+func redisPrefixes(w config.WardenServiceConfig) (key, channel string) {
+	key, channel = w.KeyPrefix, w.ChannelPrefix
+	if key == "" {
+		key = "yarilo:warden:"
+	}
+	if channel == "" {
+		channel = "yarilo:warden:events:"
+	}
+	return key, channel
 }

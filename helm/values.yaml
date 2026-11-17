@@ -246,7 +246,6 @@ storage:
   mail_driver: maildir
   maildir_root: /var/mail/vhosts
   mail_home: "%d/%u"
-  index: fileindex
   ## On-disk format of the per-user mdbox map index. v2 is fixed-width and
   ## sorted by map_uid, so an open parses nothing; v1 is the older format, kept
   ## because it is what an older image can still read. Changing this converts
