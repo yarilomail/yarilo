@@ -74,7 +74,27 @@ func dispatchConfig(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(header, "# yarilo %s %s\n", build.Version, source)
 
 	if len(rest) == 1 && rest[0] == "check" {
-		if _, err := config.LoadChecked(*path, roles...); err != nil {
+		check := func() error {
+			_, err := config.LoadChecked(*path, roles...)
+			return err
+		}
+		// In a chart container the role is the container's own: the shared
+		// file carries every role's section, the secrets only this one's.
+		if comp := os.Getenv("YARILO_COMPONENT"); len(roles) == 0 && comp != "" {
+			own, err := config.ComponentRoles(comp)
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return errConfigRefused
+			}
+			check = func() error {
+				cfg, err := config.Load(*path)
+				if err == nil && len(own) > 0 {
+					err = cfg.CheckRoles(own...)
+				}
+				return err
+			}
+		}
+		if err := check(); err != nil {
 			fmt.Fprintln(stderr, err)
 			return errConfigRefused
 		}
@@ -133,7 +153,10 @@ func visible(in []config.Setting) []config.Setting {
 	return out
 }
 
-// differing is what the file changes against the defaults.
+// differing is what the file changes against the defaults. A key the defaults
+// lack (a field of a list or map entry they do not have) is compared with its
+// zero value: an entry shows only the fields it sets, and null, "not set",
+// is not printed.
 func differing(in, defaults []config.Setting) []config.Setting {
 	def := make(map[string]any, len(defaults))
 	for _, s := range defaults {
@@ -141,11 +164,34 @@ func differing(in, defaults []config.Setting) []config.Setting {
 	}
 	var out []config.Setting
 	for _, s := range in {
-		if d, ok := def[s.Key]; !ok || !reflect.DeepEqual(d, s.Value) {
+		d, ok := def[s.Key]
+		if ok && !sameValue(d, s.Value) || !ok && !isZero(s.Value) {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+// sameValue is DeepEqual with an empty list or map equal to a nil one: both
+// load from the same file, and YAML writes both as [] or {}.
+func sameValue(a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.IsValid() && vb.IsValid() && va.Type() == vb.Type() &&
+		(va.Kind() == reflect.Slice || va.Kind() == reflect.Map) {
+		return va.Len() == 0 && vb.Len() == 0
+	}
+	return false
+}
+
+func isZero(v any) bool {
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() || rv.IsZero() {
+		return true
+	}
+	return (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.Len() == 0
 }
 
 // named keeps the keys asked for, in the order asked: a key itself, or every

@@ -98,6 +98,51 @@ var roleSections = map[string][]string{
 	"yarilo-locks":             {"locks_service"},
 }
 
+// componentRoles maps the YARILO_COMPONENT a chart container carries to the
+// role checks its binary runs at start; a component with none only loads.
+// The session binaries and the migration build the store as the backend role
+// does; submission relays and builds none.
+var componentRoles = map[string][]string{
+	"yarilo-auth":              {"yarilo-auth"},
+	"yarilo-backend-api":       {"yarilo-backend-api"},
+	"yarilo-backend-reg":       nil,
+	"yarilo-dict":              nil,
+	"yarilo-director":          {"yarilo-director"},
+	"yarilo-fts":               {"yarilo-fts"},
+	"yarilo-imap":              {"yarilo-backend"},
+	"yarilo-imap-login":        {"yarilo-imap-login"},
+	"yarilo-jmap":              {"yarilo-jmap"},
+	"yarilo-jmap-login":        {"yarilo-jmap-login"},
+	"yarilo-lmtp":              {"yarilo-backend"},
+	"yarilo-lmtp-login":        nil,
+	"yarilo-locks":             {"yarilo-locks"},
+	"yarilo-managesieve":       {"yarilo-backend"},
+	"yarilo-managesieve-login": {"yarilo-managesieve-login"},
+	"yarilo-migrate":           {"yarilo-backend"},
+	"yarilo-pop3":              {"yarilo-backend"},
+	"yarilo-pop3-login":        {"yarilo-pop3-login"},
+	"yarilo-quota-status":      nil,
+	"yarilo-sasl-login":        nil,
+	"yarilo-submission":        nil,
+	"yarilo-submission-login":  {"yarilo-submission-login"},
+	"yarilo-warden":            nil,
+}
+
+// ComponentRoles are the role checks of a chart component; an unknown one is
+// an error naming the known components.
+func ComponentRoles(component string) ([]string, error) {
+	roles, ok := componentRoles[component]
+	if !ok {
+		known := make([]string, 0, len(componentRoles))
+		for c := range componentRoles {
+			known = append(known, c)
+		}
+		sort.Strings(known)
+		return nil, fmt.Errorf("config: no component %q (known: %s)", component, strings.Join(known, ", "))
+	}
+	return roles, nil
+}
+
 // PresentRoles are the roles whose section the file at path carries.
 func PresentRoles(path string) ([]string, error) {
 	k := koanf.New(".")

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -179,20 +178,6 @@ func TestConfigIsComplete(t *testing.T) {
 	}
 }
 
-// sameValue is DeepEqual with an empty list or map equal to a nil one: YAML
-// writes both as [] or {}, and the defaults are filled before the file.
-func sameValue(a, b any) bool {
-	if reflect.DeepEqual(a, b) {
-		return true
-	}
-	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
-	if va.IsValid() && vb.IsValid() && va.Type() == vb.Type() &&
-		(va.Kind() == reflect.Slice || va.Kind() == reflect.Map) {
-		return va.Len() == 0 && vb.Len() == 0
-	}
-	return false
-}
-
 // A key that does not exist is an error, not an empty answer a script reads.
 func TestConfigUnknownKeyIsAnError(t *testing.T) {
 	path := writeConfig(t, testConfig)
@@ -244,5 +229,56 @@ func TestConfigValuesOnlyIsTheValueAlone(t *testing.T) {
 	}
 	if !strings.Contains(errOut, path) {
 		t.Fatalf("the version line is gone: stderr %q", errOut)
+	}
+}
+
+// In a chart container check runs the container's own role: the shared file
+// carries the backend_api section, its token only that container's env.
+func TestConfigCheckTakesTheRoleFromTheComponent(t *testing.T) {
+	path := writeConfig(t, "backend_api:\n  listen: \":9105\"\nlocks_client:\n  mode: remote\n  endpoints: [\"l:9104\"]\n")
+	t.Setenv("YARILO_COMPONENT", "")
+	if _, _, err := runConfig(t, "-c", path, "check"); err == nil {
+		t.Fatal("the sections' roles pass with no backend_api token; the case tests nothing")
+	}
+	cases := []struct {
+		component string
+		args      []string
+		ok        bool
+		stderr    string
+	}{
+		{"yarilo-imap", nil, true, ""},
+		{"yarilo-warden", nil, true, ""},
+		{"yarilo-backend-api", nil, false, "yarilo-backend-api"},
+		{"yarilo-imap", []string{"-r", "yarilo-backend-api"}, false, "yarilo-backend-api"},
+		{"yarilo-imapp", nil, false, "known: yarilo-auth"},
+	}
+	for _, c := range cases {
+		t.Run(c.component+strings.Join(c.args, ""), func(t *testing.T) {
+			t.Setenv("YARILO_COMPONENT", c.component)
+			_, errOut, err := runConfig(t, append(append([]string{"-c", path}, c.args...), "check")...)
+			if (err == nil) != c.ok || !strings.Contains(errOut, c.stderr) {
+				t.Fatalf("err %v, stderr %q", err, errOut)
+			}
+		})
+	}
+}
+
+// The differences list what the file sets: an empty list against a nil
+// default is not one, and an entry the defaults lack shows its set fields
+// only, without its zero and null ones.
+func TestConfigDifferencesAreWhatTheFileSets(t *testing.T) {
+	path := writeConfig(t, "storage:\n  mail_crypt:\n    reference_keys: []\nservices:\n  imap:\n    enabled: true\n    port: 10143\n")
+	out, _, err := runConfig(t, "-c", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "services:\n  imap:\n    enabled: true\n    port: 10143\n"
+	if body := strings.SplitN(out, "\n", 2)[1]; body != want {
+		t.Fatalf("differences:\n%s\nwant:\n%s", body, want)
+	}
+	// -a keeps the entry whole: its output loads back.
+	all, _, _ := runConfig(t, "-c", path, "-a")
+	if !strings.Contains(all, "haproxy_protocol: false") || !strings.Contains(all, "ssl: null") {
+		t.Fatalf("-a lost the entry's unset fields:\n%s", all)
 	}
 }
