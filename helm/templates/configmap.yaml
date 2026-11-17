@@ -860,7 +860,6 @@ data:
       {{- if $storage.mail_home_template }}
       mail_home_template: {{ $storage.mail_home_template | quote }}
       {{- end }}
-      index: {{ $storage.index | quote }}
       {{- /* Pre-beta spelling of mail_alt_path; both are accepted, a conflict between them is refused at startup. */}}
       {{- if $storage.mdbox_alt_storage_path }}
       mdbox_alt_storage_path: {{ $storage.mdbox_alt_storage_path | quote }}

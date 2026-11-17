@@ -131,7 +131,7 @@ func TestConfigOutputLoadsBack(t *testing.T) {
 	}
 	a, b := values(want), values(got)
 	for k, v := range a {
-		if !sameValue(v, b[k]) {
+		if !config.SameValue(v, b[k]) {
 			t.Errorf("%s: %v, after the round trip %v", k, v, b[k])
 		}
 	}

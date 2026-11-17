@@ -574,6 +574,10 @@ func retiredKeys() []retiredKey {
 				"the split was made on a difference that does not exist, since heap and allocs " +
 				"are one profile with different default sample types (#1488)",
 		},
+		{
+			key:  "storage.index",
+			note: "nothing ever read it; the index backend is the file index, with no choice to make",
+		},
 	}
 	for _, e := range (&ServicesConfig{}).Entries() {
 		keys = append(keys, retiredKey{

@@ -2493,7 +2493,6 @@ type StorageConfig struct {
 	MailHome      string `koanf:"mail_home"`
 	MailPath      string `koanf:"mail_path"`
 	MailInboxPath string `koanf:"mail_inbox_path"`
-	Index         string `koanf:"index"`
 	// MailIndexPath is the INDEX= template. Canonical spelling; "index_dir" is
 	// the pre-beta alias.
 	MailIndexPath string `koanf:"mail_index_path"`
@@ -2821,7 +2820,17 @@ func Defaults() *Config {
 			},
 		},
 		Storage: StorageConfig{
-			MaildirSyncOnSelect: true,
+			// What the code takes for an empty value, written here so the
+			// defaults read as the binary behaves; the code keeps its own
+			// fallback for a StorageConfig built without Defaults.
+			MailDriver:               "maildir",
+			MaildirRoot:              "/var/mail/vhosts",
+			MailHome:                 "%d/%u",
+			MailFsync:                "optimized",
+			LockMethod:               "flock",
+			MdboxMapFormat:           "v2",
+			MailCachePurgeMinSizeRaw: "32k",
+			MaildirSyncOnSelect:      true,
 			// Both are documented as defaulting to true and neither was
 			// defaulted, so ByDriver passed false and every folder name went
 			// to disk as modified-UTF-7 with no NFC normalisation -- the
@@ -2849,9 +2858,12 @@ func Defaults() *Config {
 			CA:      "/etc/yarilo/tls/ca.crt",
 		},
 		WardenService: WardenServiceConfig{
-			Listen:     "127.0.0.1:9101",
-			SocketMode: "0660",
-			Shutdown:   ShutdownConfig{},
+			Listen:        "127.0.0.1:9101",
+			SocketMode:    "0660",
+			StateBackend:  "memory",
+			KeyPrefix:     "yarilo:warden:",
+			ChannelPrefix: "yarilo:warden:events:",
+			Shutdown:      ShutdownConfig{},
 		},
 		AuthService: AuthServiceConfig{
 			Listen:             "127.0.0.1:9100",
@@ -2875,7 +2887,8 @@ func Defaults() *Config {
 			// flushes from user-management tooling.
 			Cache: AuthCacheConfig{},
 			Token: AuthTokenConfig{
-				Backend: "memory",
+				Backend:   "memory",
+				KeyPrefix: "yarilo:authtoken:",
 			},
 			Policy: AuthPolicyConfig{
 				HashMech:    "sha256",
@@ -2945,7 +2958,9 @@ func Defaults() *Config {
 			Listen: "127.0.0.1:9105",
 		},
 		LocksService: LocksServiceConfig{
-			SocketMode: "0660",
+			SocketMode:    "0660",
+			KeyPrefix:     "yarilo:locks:",
+			ChannelPrefix: "yarilo:events:",
 		},
 		Telemetry: TelemetryConfig{
 			Listen:       ":8080",
@@ -2957,6 +2972,7 @@ func Defaults() *Config {
 		Log: LogConfig{Level: "info"},
 		Sieve: SieveConfig{
 			DefaultName:            "yarilo",
+			ScriptsDriver:          "fs",
 			DuplicateDriver:        "file",
 			DuplicateFile:          ".yarilo.sieve-duplicate",
 			VacationEnabled:        true,

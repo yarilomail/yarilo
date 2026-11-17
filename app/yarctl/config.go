@@ -121,7 +121,7 @@ func dispatchConfig(args []string, stdout, stderr io.Writer) error {
 			return errConfigRefused
 		}
 	case !*all && !*defaults:
-		settings = differing(settings, visible(config.Walk(config.Defaults(), false)))
+		settings = config.Differing(settings, visible(config.Walk(config.Defaults(), false)))
 	}
 
 	if *valuesOnly {
@@ -151,47 +151,6 @@ func visible(in []config.Setting) []config.Setting {
 		}
 	}
 	return out
-}
-
-// differing is what the file changes against the defaults. A key the defaults
-// lack (a field of a list or map entry they do not have) is compared with its
-// zero value: an entry shows only the fields it sets, and null, "not set",
-// is not printed.
-func differing(in, defaults []config.Setting) []config.Setting {
-	def := make(map[string]any, len(defaults))
-	for _, s := range defaults {
-		def[s.Key] = s.Value
-	}
-	var out []config.Setting
-	for _, s := range in {
-		d, ok := def[s.Key]
-		if ok && !sameValue(d, s.Value) || !ok && !isZero(s.Value) {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-// sameValue is DeepEqual with an empty list or map equal to a nil one: both
-// load from the same file, and YAML writes both as [] or {}.
-func sameValue(a, b any) bool {
-	if reflect.DeepEqual(a, b) {
-		return true
-	}
-	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
-	if va.IsValid() && vb.IsValid() && va.Type() == vb.Type() &&
-		(va.Kind() == reflect.Slice || va.Kind() == reflect.Map) {
-		return va.Len() == 0 && vb.Len() == 0
-	}
-	return false
-}
-
-func isZero(v any) bool {
-	rv := reflect.ValueOf(v)
-	if !rv.IsValid() || rv.IsZero() {
-		return true
-	}
-	return (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.Len() == 0
 }
 
 // named keeps the keys asked for, in the order asked: a key itself, or every
