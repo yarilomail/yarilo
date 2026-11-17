@@ -1,0 +1,36 @@
+name: mailcrypt vectors
+
+# Streams written by the reference library, read by internal/mailcrypt/refstream.
+on:
+  pull_request:
+    paths:
+      - "internal/mailcrypt/**"
+      - "hack/mailcrypt-vectors/**"
+      - ".github/workflows/mailcrypt-vectors.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "internal/mailcrypt/**"
+      - "hack/mailcrypt-vectors/**"
+      - ".github/workflows/mailcrypt-vectors.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  vectors:
+    name: Reference vectors
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Generate
+        run: |
+          mkdir -p "$RUNNER_TEMP/vectors"
+          hack/mailcrypt-vectors/run.sh "$RUNNER_TEMP/vectors"
+      - name: Read them
+        env:
+          YARILO_REFSTREAM_VECTORS: ${{ runner.temp }}/vectors
+        run: go test -count=1 -run TestReferenceVectors -v ./internal/mailcrypt/refstream/
