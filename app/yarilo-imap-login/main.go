@@ -108,7 +108,7 @@ func main() {
 	// k8s director deployment has no director running in THIS pod at all,
 	// so falling back to it silently dialed localhost where nothing
 	// listens (#735).
-	if err := config.ValidateBackendOrDirector("imap_login_service", cfg.IMAPLoginService.BackendAddr, cfg.IMAPLoginService.DirectorAddr); err != nil {
+	if err := cfg.CheckRole("yarilo-imap-login"); err != nil {
 		slog.Error("config validation failed", "err", err)
 		os.Exit(1)
 	}

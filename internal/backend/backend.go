@@ -1253,6 +1253,9 @@ func buildDict(cfg *config.Config, name string) (dict.Dict, error) {
 // Locker must be closed by Server.Close.
 func buildLocksClient(cfg *config.Config) (locks.Locker, error) {
 	lc := cfg.LocksClient
+	if err := lc.Check(false); err != nil {
+		return nil, err
+	}
 	// The deadline covers the startup wait as well as one dial: a 10s context
 	// would cancel a 30s wait and report a timeout instead of the service
 	// still being absent.

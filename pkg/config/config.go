@@ -145,7 +145,7 @@ type SieveConfig struct {
 	// SubmissionAuthSecret names the Kubernetes Secret with SMTP AUTH
 	// credentials (keys: user, password), mounted by the chart as
 	// YARILO_SIEVE_SUBMISSION_USER/PASSWORD env vars. Empty = no auth.
-	SubmissionAuthSecret string `koanf:"sieve_submission_auth_secret"`
+	SubmissionAuthSecret string `koanf:"sieve_submission_auth_secret" secret:"true"`
 
 	// DefaultName is the reserved name of the per-user default Sieve script.
 	// Default: "yarilo".
@@ -291,7 +291,7 @@ func (c DictServiceConfig) Socket() sockaddr.Perm { return socketPerm(c.SocketMo
 //	home_dir    - passed as OpSettings.HomeDir when callers omit it
 type DictConfig struct {
 	Driver     string         `koanf:"driver"`
-	Settings   map[string]any `koanf:"settings"`
+	Settings   map[string]any `koanf:"settings" secret:"true"`
 	ExpireSecs uint32         `koanf:"expire_secs"`
 	Username   string         `koanf:"username"`
 	HomeDir    string         `koanf:"home_dir"`
@@ -906,9 +906,9 @@ type RelayConfig struct {
 	User string `koanf:"submission_relay_user"` // %u is the session's user
 	// MasterUser, when set, authenticates as this user acting for User.
 	MasterUser string `koanf:"submission_relay_master_user"`
-	Password   string `koanf:"submission_relay_password"`   // supports ${ENV_VAR}
-	SSL        string `koanf:"submission_relay_ssl"`        // no | smtps | starttls
-	SSLVerify  bool   `koanf:"submission_relay_ssl_verify"` // default true
+	Password   string `koanf:"submission_relay_password" secret:"true"` // supports ${ENV_VAR}
+	SSL        string `koanf:"submission_relay_ssl"`                    // no | smtps | starttls
+	SSLVerify  bool   `koanf:"submission_relay_ssl_verify"`             // default true
 	// SSLCA is a PEM file the relay is verified against; empty = system roots.
 	SSLCA          string `koanf:"submission_relay_ssl_ca"`
 	Trusted        bool   `koanf:"submission_relay_trusted"`         // send XCLIENT to relay (Postfix)
@@ -918,7 +918,7 @@ type RelayConfig struct {
 	HostAlias           string `koanf:"host"`
 	PortAlias           int    `koanf:"port"`
 	UserAlias           string `koanf:"user"`
-	PasswordAlias       string `koanf:"password"`
+	PasswordAlias       string `koanf:"password" secret:"true"`
 	SSLAlias            string `koanf:"ssl"`
 	SSLVerifyAlias      bool   `koanf:"ssl_verify"`
 	TrustedAlias        bool   `koanf:"trusted"`
@@ -1180,13 +1180,13 @@ type WardenServiceConfig struct {
 	// Format: redis://[password@]host:port/db
 	RedisAddr string `koanf:"redis_addr"`
 	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
-	RedisPassword string `koanf:"redis_password"`
+	RedisPassword string `koanf:"redis_password" secret:"true"`
 	// SentinelAddrs and SentinelMaster find the master through Sentinel; the
 	// db and password still come from RedisAddr, its host is not used (#2505).
 	SentinelAddrs    []string `koanf:"sentinel_addrs"`
 	SentinelMaster   string   `koanf:"sentinel_master"`
 	SentinelUser     string   `koanf:"sentinel_user"`
-	SentinelPassword string   `koanf:"sentinel_password"`
+	SentinelPassword string   `koanf:"sentinel_password" secret:"true"`
 	// KeyPrefix / ChannelPrefix namespace warden's Redis keys and Pub/Sub
 	// channels. Empty = defaults "yarilo:warden:" / "yarilo:warden:events:".
 	KeyPrefix     string `koanf:"key_prefix"`
@@ -1595,19 +1595,19 @@ type FTSConfig struct {
 // Mode "remote" runs a Redis-backed server on TCP+mTLS (backend deployment per tag).
 // Empty Mode disables the locks server in this process.
 type LocksServiceConfig struct {
-	Mode          string `koanf:"mode"`           // embedded | remote | ""
-	Socket        string `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
-	Listen        string `koanf:"listen"`         // remote: ":9104"
-	SocketMode    string `koanf:"socket_mode"`    // embedded: octal mode of the socket
-	SocketGroup   string `koanf:"socket_group"`   // embedded: group name; empty keeps the process's
-	Redis         string `koanf:"redis"`          // remote: "redis://host:6379/0"
-	RedisPassword string `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
+	Mode          string `koanf:"mode"`                         // embedded | remote | ""
+	Socket        string `koanf:"socket"`                       // embedded: /run/yarilo/locks.sock
+	Listen        string `koanf:"listen"`                       // remote: ":9104"
+	SocketMode    string `koanf:"socket_mode"`                  // embedded: octal mode of the socket
+	SocketGroup   string `koanf:"socket_group"`                 // embedded: group name; empty keeps the process's
+	Redis         string `koanf:"redis"`                        // remote: "redis://host:6379/0"
+	RedisPassword string `koanf:"redis_password" secret:"true"` // overrides the URL's; ${ENV} from a Secret
 	// Sentinel: the master found through these; the db and password still
 	// come from Redis, its host is not used (#2505).
 	SentinelAddrs    []string       `koanf:"sentinel_addrs"`
 	SentinelMaster   string         `koanf:"sentinel_master"`
 	SentinelUser     string         `koanf:"sentinel_user"`
-	SentinelPassword string         `koanf:"sentinel_password"`
+	SentinelPassword string         `koanf:"sentinel_password" secret:"true"`
 	KeyPrefix        string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
 	ChannelPrefix    string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
 	Shutdown         ShutdownConfig `koanf:"shutdown"`
@@ -1632,9 +1632,9 @@ type MailServerConfig struct {
 
 // DirectorAPIConfig configures the HTTP admin API on yarilo-director.
 type DirectorAPIConfig struct {
-	Listen      string   `koanf:"listen"`       // default "127.0.0.1:9103"
-	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR}
-	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
+	Listen      string   `koanf:"listen"`              // default "127.0.0.1:9103"
+	Token       string   `koanf:"token" secret:"true"` // Bearer token; supports ${ENV_VAR}
+	AllowedNets []string `koanf:"allowed_nets"`        // CIDRs allowed to call the API
 	// AuthDisabled is the only way to run the API without a token.
 	AuthDisabled bool `koanf:"auth_disabled"`
 }
@@ -1702,7 +1702,7 @@ type DirectorServiceConfig struct {
 	// release the same way director_service.api.token is (see
 	// helm/templates/secret-director-ring.yaml). Empty disables ring auth:
 	// every JOIN is rejected and this node can only run as a singleton.
-	RingSecret string `koanf:"ring_secret"`
+	RingSecret string `koanf:"ring_secret" secret:"true"`
 	// RingTLSServerName is the TLS ServerName used when dialling ring peers
 	// (JOIN + right-neighbor + seed polls) under internal_tls (#753). Ring
 	// peers are dialled by ephemeral pod IP, so without a stable name Go would
@@ -1860,7 +1860,7 @@ type JMAPLoginServiceConfig struct {
 	DirectorTag  string `koanf:"director_tag"`
 	// WebSocketTicketKey signs WebSocket tickets; every jmap-login replica
 	// needs the same one.
-	WebSocketTicketKey string `koanf:"websocket_ticket_key"`
+	WebSocketTicketKey string `koanf:"websocket_ticket_key" secret:"true"`
 	// ClientIPHeader names the header a proxy in general.haproxy's trusted
 	// networks puts the client address in; empty reads none.
 	ClientIPHeader string `koanf:"client_ip_header"`
@@ -1992,9 +1992,9 @@ type LMTPLoginServiceConfig struct {
 // CLI surfaces both through nested subcommands (`yarctl
 // director ...` vs `yarctl backend ...`).
 type BackendAPIConfig struct {
-	Listen      string   `koanf:"listen"`       // "127.0.0.1:9105" default
-	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR} via koanf
-	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
+	Listen      string   `koanf:"listen"`              // "127.0.0.1:9105" default
+	Token       string   `koanf:"token" secret:"true"` // Bearer token; supports ${ENV_VAR} via koanf
+	AllowedNets []string `koanf:"allowed_nets"`        // CIDRs allowed to call the API
 	// AuthDisabled is the only way to run the API without a token.
 	AuthDisabled bool `koanf:"auth_disabled"`
 
@@ -2156,7 +2156,7 @@ type OAuth2Entry struct {
 	// ClientID / ClientSecret authenticate the introspection call
 	// itself. Ignored in JWKS and tokeninfo modes.
 	ClientID     string `koanf:"oauth2_client_id"`
-	ClientSecret string `koanf:"oauth2_client_secret"`
+	ClientSecret string `koanf:"oauth2_client_secret" secret:"true"`
 
 	// Issuers is the allow-list of `iss` claim values. Empty =
 	// no check (any signed token from a key in JWKS passes).
@@ -2235,7 +2235,7 @@ type OAuth2Entry struct {
 	IntrospectionModeAlias        string   `koanf:"introspection_mode"`
 	PreferIntrospectionAlias      bool     `koanf:"prefer_introspection"`
 	ClientIDAlias                 string   `koanf:"client_id"`
-	ClientSecretAlias             string   `koanf:"client_secret"`
+	ClientSecretAlias             string   `koanf:"client_secret" secret:"true"`
 	IssuersAlias                  []string `koanf:"issuers"`
 }
 
@@ -2274,13 +2274,13 @@ type AuthTokenConfig struct {
 	// Format: redis://[password@]host:port/db
 	RedisAddr string `koanf:"redis_addr"`
 	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
-	RedisPassword string `koanf:"redis_password"`
+	RedisPassword string `koanf:"redis_password" secret:"true"`
 	// SentinelAddrs and SentinelMaster find the master through Sentinel; the
 	// db and password still come from RedisAddr, its host is not used (#2505).
 	SentinelAddrs    []string `koanf:"sentinel_addrs"`
 	SentinelMaster   string   `koanf:"sentinel_master"`
 	SentinelUser     string   `koanf:"sentinel_user"`
-	SentinelPassword string   `koanf:"sentinel_password"`
+	SentinelPassword string   `koanf:"sentinel_password" secret:"true"`
 	// KeyPrefix namespaces token keys in Redis (#939). The installation
 	// boundary: two installs sharing one Redis need distinct prefixes or their
 	// token keys collide. Empty keeps the default "yarilo:authtoken:".
@@ -2296,7 +2296,7 @@ type AuthPolicyConfig struct {
 	// APIHeader is added to every request. Two formats:
 	//   "Key: value"  → custom header
 	//   "value"       → X-API-Key: value
-	APIHeader string `koanf:"auth_policy_server_api_header"`
+	APIHeader string `koanf:"auth_policy_server_api_header" secret:"true"`
 
 	// HashMech is the digest for the pwhash field. "sha256"
 	// (default) or "sha512". Must match the policy server's
@@ -2306,7 +2306,7 @@ type AuthPolicyConfig struct {
 	// HashNonce is the per-deployment salt. REQUIRED when URL is
 	// set; empty nonce is rejected at startup so two deployments
 	// don't share pwhash space.
-	HashNonce string `koanf:"auth_policy_hash_nonce"`
+	HashNonce string `koanf:"auth_policy_hash_nonce" secret:"true"`
 
 	// HashTruncateBits caps the MSB bits of the digest. Default
 	// 12 (4096 buckets - useful for rate-limit patterns, useless
@@ -2342,9 +2342,9 @@ type AuthPolicyConfig struct {
 	RequestAttributes map[string]string `koanf:"auth_policy_request_attributes"`
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	URLAlias              string `koanf:"url"`
-	APIHeaderAlias        string `koanf:"api_header"`
+	APIHeaderAlias        string `koanf:"api_header" secret:"true"`
 	HashMechAlias         string `koanf:"hash_mech"`
-	HashNonceAlias        string `koanf:"hash_nonce"`
+	HashNonceAlias        string `koanf:"hash_nonce" secret:"true"`
 	HashTruncateBitsAlias uint   `koanf:"hash_truncate_bits"`
 	RejectOnFailAlias     bool   `koanf:"reject_on_fail"`
 	LogOnlyAlias          bool   `koanf:"log_only"`
@@ -2428,7 +2428,7 @@ type MasterUsersConfig struct {
 // PassdbEntry is one backend of a passdb or masterdb chain.
 type PassdbEntry struct {
 	Driver            string `koanf:"driver"`                         // sqlite | mysql | postgres | passwd-file
-	DSN               string `koanf:"dsn"`                            // SQL drivers
+	DSN               string `koanf:"dsn" secret:"true"`              // SQL drivers
 	PasswdFile        string `koanf:"passwd_file_path"`               // passwd-file driver: path to the file
 	PasswordQuery     string `koanf:"passdb_sql_query"`               // custom SELECT; %u/%n/%d substituted as parameters
 	UserQuery         string `koanf:"userdb_sql_query"`               // optional userdb lookup; %u/%n/%d substituted
@@ -2443,9 +2443,9 @@ type PassdbEntry struct {
 	ConnMaxIdleTime *int `koanf:"conn_max_idle_time"` // seconds; unset 60; 0 never
 
 	// static driver: one shared credential + templated fields for every user.
-	StaticPassword string            `koanf:"static_password"` // shared password ({SCHEME} or default scheme)
-	Nopassword     bool              `koanf:"nopassword"`      // accept any password (proxy front); requires empty static_password
-	Fields         map[string]string `koanf:"fields"`          // templated fields (%u/%n/%d); userdb_-prefixed → userdb, bare → passdb
+	StaticPassword string            `koanf:"static_password" secret:"true"` // shared password ({SCHEME} or default scheme)
+	Nopassword     bool              `koanf:"nopassword"`                    // accept any password (proxy front); requires empty static_password
+	Fields         map[string]string `koanf:"fields"`                        // templated fields (%u/%n/%d); userdb_-prefixed → userdb, bare → passdb
 	// UsernameFilter limits the entry to matching names: masks split on spaces
 	// and commas, * and ?, a leading ! excludes. Empty takes every name.
 	UsernameFilter string `koanf:"username_filter"`
