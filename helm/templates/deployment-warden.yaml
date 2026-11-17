@@ -80,7 +80,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.warden.internalTLS "role" "warden") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

@@ -96,7 +96,7 @@ spec:
           emptyDir: {}
           {{- end }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.auth.internalTLS "role" "auth") | nindent 8 }}
         {{- with include "yarilo.oauth2KeyVolumes" . | trim }}
         {{- . | nindent 8 }}

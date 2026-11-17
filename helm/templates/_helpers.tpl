@@ -398,6 +398,7 @@ Args: dict "root" $ "itls" <internalTLS config>.
   mountPath: {{ $root.Values.storage.maildir_root | default "/var/mail/vhosts" }}
 {{- end }}
 {{- include "yarilo.internalTLSMount" (dict "root" $root "itls" .itls "role" .role "vol" (printf "internal-tls-%s" .role)) }}
+{{- include "yarilo.mailCryptMount" $root }}
 {{- include "yarilo.sieveGlobalMount" (dict "root" $root "role" .role) }}
 {{- include "yarilo.imapsieveMount" (dict "root" $root "role" .role) }}
 {{- /* extraVolumes are rendered on the StatefulSet, so the matching mounts
@@ -827,3 +828,30 @@ container that runs it: yarilo-lmtp and yarilo-imap.
       key: password
 {{- end }}
 {{- end }}
+
+{{/* The /tmp emptyDir of every pod; tmpSizeLimit bounds it (unset: none). */}}
+{{- define "yarilo.tmpEmptyDir" -}}
+{{- if .Values.tmpSizeLimit -}}
+{sizeLimit: {{ .Values.tmpSizeLimit | quote }}}
+{{- else -}}
+{}
+{{- end -}}
+{{- end -}}
+
+{{/* The mail encryption keys (storage.mail_crypt), in the containers that open mail. */}}
+{{- define "yarilo.mailCryptMount" -}}
+{{- if .Values.mailCrypt.secretName }}
+- name: mail-crypt
+  mountPath: /etc/yarilo/mail-crypt
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "yarilo.mailCryptVolume" -}}
+{{- if .Values.mailCrypt.secretName }}
+- name: mail-crypt
+  secret:
+    secretName: {{ .Values.mailCrypt.secretName }}
+    defaultMode: 0400
+{{- end }}
+{{- end -}}

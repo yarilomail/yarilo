@@ -75,7 +75,8 @@ func newCache(dir string, limit int64, ttl time.Duration) (*Cache, error) {
 	if err := os.Mkdir(own, 0o700); err != nil {
 		return nil, fmt.Errorf("mailcrypt/cache: %w", err)
 	}
-	c := &Cache{dir: own, limit: limit, ttl: ttl, entries: map[string]*cacheEntry{}, now: time.Now}
+	c := &Cache{dir: own, limit: limit, ttl: ttl, entries: map[string]*cacheEntry{}, now: time.Now,
+		Bypassed: metricCacheBypass.Inc}
 	go c.janitor()
 	return c, nil
 }
@@ -179,6 +180,7 @@ func (c *Cache) open(body Body, keys []*ecdh.PrivateKey) (Opened, error) {
 		return nil, err
 	}
 	c.used += size
+	metricCacheBytes.Set(float64(c.used))
 	c.entries[key] = &cacheEntry{path: path, size: size, expires: c.now().Add(c.ttl)}
 	return o, nil
 }
@@ -223,6 +225,7 @@ func (c *Cache) fill(body Body, keys []*ecdh.PrivateKey) (int64, string, error) 
 // expireLocked unlinks entries past their time; open readers keep their
 // file until they close it.
 func (c *Cache) expireLocked() {
+	defer func() { metricCacheBytes.Set(float64(c.used)) }()
 	now := c.now()
 	for k, e := range c.entries {
 		if now.After(e.expires) {
@@ -302,7 +305,12 @@ func (s *refStream) Size() int64 {
 	if err != nil {
 		return 0
 	}
-	n, _ := io.Copy(io.Discard, r)
+	n, err := io.Copy(io.Discard, r)
+	if err != nil {
+		// What decrypted before the failure is not the body's size: 0, unknown.
+		s.size = 0
+		return 0
+	}
 	s.size = n
 	return n
 }

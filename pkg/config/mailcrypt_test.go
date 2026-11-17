@@ -52,6 +52,7 @@ func TestCheckMailCrypt(t *testing.T) {
 		{"temp dir under mail_index_path", func(s *StorageConfig) { s.MailIndexPath, s.MailTempDir = "/idx/%u", "/idx/t" }, "mail_index_path"},
 		{"temp dir under mail_control_path", func(s *StorageConfig) { s.MailControlPath, s.MailTempDir = "/ctl/%u", "/ctl/t" }, "mail_control_path"},
 		{"temp dir under mail_alt_path", func(s *StorageConfig) { s.MailAltPath, s.MailTempDir = "/alt/%u", "/alt/t" }, "mail_alt_path"},
+		{"temp dir beside a name template", func(s *StorageConfig) { s.MailHome, s.MailTempDir = "/var/mail/u-%d/%n", "/var/mail/tmp" }, "mail_home"},
 		{"temp dir under the volatile path", func(s *StorageConfig) { s.MailVolatilePath, s.MailTempDir = "/run/yarilo", "/run/yarilo/t" }, ""},
 	}
 	for _, c := range cases {

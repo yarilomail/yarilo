@@ -332,7 +332,7 @@ spec:
               {{- end }}
         {{- end }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.sieveGlobalVolume" . | nindent 8 }}
         {{- include "yarilo.imapsieveVolume" . | nindent 8 }}
         # shared readiness signal (#788): protocol containers touch, sidecar reads
@@ -357,6 +357,7 @@ spec:
         {{- include "yarilo.adminTLSVolume" (dict "root" $root "role" "admin") | nindent 8 }}
         {{- range $role := $itlsRoles }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $root "itls" $itls "role" $role "vol" (printf "internal-tls-%s" $role)) | nindent 8 }}
+        {{- include "yarilo.mailCryptVolume" $ | nindent 8 }}
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

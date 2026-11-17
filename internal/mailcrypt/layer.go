@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"filippo.io/age"
 
@@ -36,10 +37,23 @@ type Options struct {
 
 // Layer seals bodies on their way to a storage driver and opens them on the
 // way back. It is safe for concurrent use.
-type Layer struct{ o Options }
+type Layer struct {
+	o      Options
+	driver string // the metrics' driver label
+}
 
 // New returns a Layer; a nil *Layer behaves as New(Options{}).
 func New(o Options) *Layer { return &Layer{o: o} }
+
+// ForDriver is the same layer counting its metrics under driver.
+func (l *Layer) ForDriver(driver string) *Layer { return &Layer{o: l.opts(), driver: driver} }
+
+func (l *Layer) driverName() string {
+	if l == nil || l.driver == "" {
+		return "none"
+	}
+	return l.driver
+}
 
 func (l *Layer) opts() Options {
 	if l == nil {
@@ -69,22 +83,21 @@ func Guard(src io.Reader) (io.Reader, error) {
 // Seal copies src into dst, encrypted when the layer writes, and refuses a
 // body that starts with either signature in both modes.
 func (l *Layer) Seal(dst io.Writer, src io.Reader) error {
+	start := time.Now()
 	br, err := Guard(src)
 	if err != nil {
-		return err
+		return l.countFailure("seal", err)
 	}
 	if !l.Writes() {
 		_, err := io.Copy(dst, br)
 		return err
 	}
-	w, err := agestream.NewWriter(dst, l.opts().Recipients...)
-	if err != nil {
-		return err
+	if err := l.Encrypt(dst, br); err != nil {
+		return l.countFailure("seal", err)
 	}
-	if _, err := io.Copy(w, br); err != nil {
-		return err
-	}
-	return w.Close()
+	metricSealed.WithLabelValues(l.driverName()).Inc()
+	observe("seal", Age, start)
+	return nil
 }
 
 // Encrypt copies src into dst, encrypted when the layer writes, with no
@@ -121,22 +134,31 @@ type Opened interface {
 
 // Open returns the plaintext of body; closer is closed with the result.
 func (l *Layer) Open(body Body, closer io.Closer) (Opened, error) {
+	start := time.Now()
 	head := make([]byte, PrefixLen)
 	n, err := body.ReadAt(head, 0)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, closeWith(closer, err)
 	}
-	switch Classify(head[:n]) {
+	kind := Classify(head[:n])
+	metricOpened.WithLabelValues(l.driverName(), kindName(kind)).Inc()
+	var o Opened
+	switch kind {
 	case Age:
 		ra, size, err := agestream.NewReaderAt(body, body.Size(), l.opts().Identities...)
 		if err != nil {
-			return nil, closeWith(closer, keyErr(err))
+			return nil, closeWith(closer, l.countFailure("open", keyErr(err)))
 		}
-		return newOpened(ra, size, closer), nil
+		o = newOpened(ra, size, closer)
 	case Reference:
-		return l.openReference(body, closer)
+		if o, err = l.openReference(body, closer); err != nil {
+			return nil, l.countFailure("open", err)
+		}
+	default:
+		return newOpened(body, body.Size(), closer), nil
 	}
-	return newOpened(body, body.Size(), closer), nil
+	observe("open", kind, start)
+	return &countingOpened{Opened: o, l: l}, nil
 }
 
 // PlainSize is the plaintext length of body: from the header and the length
@@ -152,12 +174,14 @@ func (l *Layer) PlainSize(body Body) (int64, error) {
 	case Age:
 		return agestream.PlainSize(body, body.Size())
 	case Reference:
+		// Counted to the end: a corrupt body is an error, not the bytes that
+		// decrypted before it.
 		o, err := l.Open(body, nil)
 		if err != nil {
 			return 0, err
 		}
 		defer o.Close()
-		return o.Size(), nil
+		return io.Copy(io.Discard, o)
 	}
 	return body.Size(), nil
 }
