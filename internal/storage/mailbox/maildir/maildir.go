@@ -1177,11 +1177,13 @@ type fileBody struct {
 
 func (f fileBody) Size() int64 { return f.size }
 
-// plainSize is the plaintext length of a file whose name carries no S=.
+// plainSize is the plaintext length of a file whose name carries no S=. One
+// that cannot be told (no key) is 0, unknown, never the ciphertext's length:
+// a later RecordSize asks again and fails loudly.
 func (u *userMailbox) plainSize(path string, size int64) uint32 {
 	n, err := u.b.crypt.PlainFileSize(path, size)
 	if err != nil {
-		return uint32(size)
+		return 0
 	}
 	return uint32(n)
 }

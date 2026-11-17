@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -187,25 +188,31 @@ func referenceVector(t *testing.T) (stream []byte, key *ecdh.PrivateKey, plainSH
 func TestReferenceThroughCache(t *testing.T) {
 	stream, key, _ := referenceVector(t)
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "body-left-over"), []byte("x"), 0o600); err != nil {
+	foreign := filepath.Join(dir, "yarilo-pop3.1", "body-1")
+	if err := os.MkdirAll(filepath.Dir(foreign), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(foreign, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cache, err := NewCache(dir, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if left, _ := os.ReadDir(dir); len(left) != 0 {
-		t.Fatalf("start did not sweep: %v", left)
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("another process's cache was swept: %v", err)
 	}
 	now := time.Unix(1000, 0)
+	cache.mu.Lock()
 	cache.now = func() time.Time { return now }
+	cache.mu.Unlock()
 	l := New(Options{ReferenceKeys: []*ecdh.PrivateKey{key}, Cache: cache})
 
 	plain := open(t, l, stream)
 	if len(plain) != 1000 {
 		t.Fatalf("plain %d bytes", len(plain))
 	}
-	files, _ := os.ReadDir(dir)
+	files, _ := os.ReadDir(cache.dir)
 	if len(files) != 1 {
 		t.Fatalf("cache files %d", len(files))
 	}
@@ -216,19 +223,20 @@ func TestReferenceThroughCache(t *testing.T) {
 	if !bytes.Equal(open(t, l, stream), plain) {
 		t.Fatal("second open differs")
 	}
+	cache.mu.Lock()
 	now = now.Add(cacheTTL + time.Second)
+	cache.mu.Unlock()
 	if cache.Used() != 0 {
 		t.Fatalf("used %d after expiry", cache.Used())
 	}
-	if files, _ := os.ReadDir(dir); len(files) != 0 {
+	if files, _ := os.ReadDir(cache.dir); len(files) != 0 {
 		t.Fatalf("expired file kept: %v", files)
 	}
 }
 
 func TestReferenceBypassPastBudget(t *testing.T) {
 	stream, key, _ := referenceVector(t)
-	dir := t.TempDir()
-	cache, err := NewCache(dir, 100)
+	cache, err := NewCache(t.TempDir(), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,42 +256,93 @@ func TestReferenceBypassPastBudget(t *testing.T) {
 	if _, err := o.ReadAt(buf, 500); err != nil || !bytes.Equal(buf, got[500:510]) {
 		t.Fatalf("ReadAt backwards: %v", err)
 	}
-	if files, _ := os.ReadDir(dir); len(files) != 0 || bypassed != 1 {
+	if files, _ := os.ReadDir(cache.dir); len(files) != 0 || bypassed != 1 {
 		t.Fatalf("files %d, bypassed %d", len(files), bypassed)
 	}
+}
+
+// An earlier process of the same binary is gone: its plaintext is removed.
+func TestCacheSweepsADeadPredecessor(t *testing.T) {
+	dir := t.TempDir()
+	dead := filepath.Join(dir, procName+".999999")
+	if err := os.MkdirAll(dead, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewCache(dir, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dead); !os.IsNotExist(err) {
+		t.Fatalf("a dead process's cache kept: %v", err)
+	}
+}
+
+// A cached file that vanished, and two sessions filling the same body at once,
+// leave the budget at one body and one file.
+func TestCacheBudgetDoesNotLeak(t *testing.T) {
+	stream, key, _ := referenceVector(t)
+	cache, err := NewCache(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := New(Options{ReferenceKeys: []*ecdh.PrivateKey{key}, Cache: cache})
+	open(t, l, stream)
+	files, _ := os.ReadDir(cache.dir)
+	for _, f := range files {
+		_ = os.Remove(filepath.Join(cache.dir, f.Name()))
+	}
+	open(t, l, stream)
+	if used := cache.Used(); used != 1000 {
+		t.Fatalf("after a vanished file: used %d", used)
+	}
+
+	cache2, err := NewCache(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l2 := New(Options{ReferenceKeys: []*ecdh.PrivateKey{key}, Cache: cache2})
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			o, err := l2.Open(newBody(stream), nil)
+			if err == nil {
+				_, _ = io.ReadAll(o)
+				_ = o.Close()
+			}
+		}()
+	}
+	wg.Wait()
+	if used := cache2.Used(); used != 1000 {
+		t.Fatalf("after concurrent fills: used %d", used)
+	}
+	if files, _ := os.ReadDir(cache2.dir); len(files) != 1 {
+		t.Fatalf("after concurrent fills: %d files", len(files))
+	}
+}
+
+// An idle cache removes the plaintext on time, with no read to trigger it.
+func TestCacheExpiresWhenIdle(t *testing.T) {
+	stream, key, _ := referenceVector(t)
+	cache, err := newCache(t.TempDir(), 1<<20, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := New(Options{ReferenceKeys: []*ecdh.PrivateKey{key}, Cache: cache})
+	open(t, l, stream)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if files, _ := os.ReadDir(cache.dir); len(files) == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("idle plaintext outlived its time")
 }
 
 func TestReferenceWithoutKey(t *testing.T) {
 	stream, _, _ := referenceVector(t)
 	if _, err := New(Options{}).Open(newBody(stream), nil); !errors.Is(err, ErrNoKey) {
 		t.Fatalf("err %v", err)
-	}
-}
-
-// TestBrokenKeys: keys that could not be read refuse what they were for and
-// nothing else.
-func TestBrokenKeys(t *testing.T) {
-	enc, _ := ageLayer(t)
-	sealedMail := sealed(t, enc, []byte("secret"))
-	cause := errors.New("private_keys: unreadable")
-	for _, c := range []struct {
-		name       string
-		writes     bool
-		writeFails bool
-	}{{"write: off", false, false}, {"write: age", true, true}} {
-		l := Broken(cause, c.writes)
-		err := l.Seal(io.Discard, strings.NewReader("plain mail"))
-		if (err != nil) != c.writeFails {
-			t.Fatalf("%s: write err %v", c.name, err)
-		}
-		if got := open(t, l, []byte("plain mail")); string(got) != "plain mail" {
-			t.Fatalf("%s: plaintext unreadable", c.name)
-		}
-		if _, err := l.Open(newBody(sealedMail), nil); !errors.Is(err, cause) {
-			t.Fatalf("%s: encrypted read err %v", c.name, err)
-		}
-		if err := l.Seal(io.Discard, bytes.NewReader(sealedMail)); !errors.Is(err, ErrPlanted) && !c.writeFails {
-			t.Fatalf("%s: planted not refused: %v", c.name, err)
-		}
 	}
 }

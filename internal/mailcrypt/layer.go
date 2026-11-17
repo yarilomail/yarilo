@@ -36,18 +36,7 @@ type Options struct {
 
 // Layer seals bodies on their way to a storage driver and opens them on the
 // way back. It is safe for concurrent use.
-type Layer struct {
-	o      Options
-	broken error
-	// brokenWrites: the broken keys were to encrypt new bodies.
-	brokenWrites bool
-}
-
-// Broken is a layer whose keys could not be read. It fails every write when
-// writes was to encrypt, so they do not turn into plaintext, and every read
-// of an encrypted body; plaintext bodies still read, and still write when
-// writes is false.
-func Broken(err error, writes bool) *Layer { return &Layer{broken: err, brokenWrites: writes} }
+type Layer struct{ o Options }
 
 // New returns a Layer; a nil *Layer behaves as New(Options{}).
 func New(o Options) *Layer { return &Layer{o: o} }
@@ -80,9 +69,6 @@ func Guard(src io.Reader) (io.Reader, error) {
 // Seal copies src into dst, encrypted when the layer writes, and refuses a
 // body that starts with either signature in both modes.
 func (l *Layer) Seal(dst io.Writer, src io.Reader) error {
-	if l != nil && l.broken != nil && l.brokenWrites {
-		return l.broken
-	}
 	br, err := Guard(src)
 	if err != nil {
 		return err
@@ -105,9 +91,6 @@ func (l *Layer) Seal(dst io.Writer, src io.Reader) error {
 // signature check: for blobs, which may be any bytes, never for message
 // bodies (Seal).
 func (l *Layer) Encrypt(dst io.Writer, src io.Reader) error {
-	if l != nil && l.broken != nil && l.brokenWrites {
-		return l.broken
-	}
 	if !l.Writes() {
 		_, err := io.Copy(dst, src)
 		return err
@@ -143,11 +126,7 @@ func (l *Layer) Open(body Body, closer io.Closer) (Opened, error) {
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, closeWith(closer, err)
 	}
-	kind := Classify(head[:n])
-	if kind != Plain && l != nil && l.broken != nil {
-		return nil, closeWith(closer, l.broken)
-	}
-	switch kind {
+	switch Classify(head[:n]) {
 	case Age:
 		ra, size, err := agestream.NewReaderAt(body, body.Size(), l.opts().Identities...)
 		if err != nil {

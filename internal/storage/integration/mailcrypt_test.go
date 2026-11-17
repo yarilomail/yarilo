@@ -290,3 +290,30 @@ func TestMixedMaildirFolder(t *testing.T) {
 		}
 	}
 }
+
+// A sealed body whose size cannot be told lists at 0, unknown, never at the
+// ciphertext's length, which would reach the index as the message's size.
+func TestUnknownPlainSizeIsNotTheCiphertexts(t *testing.T) {
+	vecDir := filepath.Join("..", "..", "mailcrypt", "refstream", "testdata", "reference")
+	refBody, err := os.ReadFile(filepath.Join(vecDir, "prime256v1-gcm-1000.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}
+	box := maildir.New(maildir.WithCrypt(mailcrypt.New(mailcrypt.Options{}))).OpenUser(info)
+	defer box.Close() //nolint:errcheck
+	if err := box.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "Maildir", "cur", "1002.M1P1.host:2,S"), refBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := box.Scan("INBOX")
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("%d records, %v", len(recs), err)
+	}
+	if recs[0].Size == uint32(len(refBody)) || recs[0].Size != 0 {
+		t.Fatalf("listed at %d, the file is %d bytes: want 0, unknown", recs[0].Size, len(refBody))
+	}
+}

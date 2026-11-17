@@ -2,6 +2,8 @@ package mailboxbuild
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
@@ -12,13 +14,17 @@ import (
 var (
 	cryptMu     sync.Mutex
 	cryptLayers = map[string]*mailcrypt.Layer{}
+	// exitProcess stops a process whose keys cannot be read; tests replace it.
+	exitProcess = func(err error) {
+		slog.Error("storage.mail_crypt: keys unreadable, refusing to start", "err", err)
+		os.Exit(1)
+	}
 )
 
-// CryptLayer is the process's layer for sc, built once: the reference cache
-// sweeps its directory when it is made, so a second one would delete the
-// first one's files. A key file that stopped parsing after the config load
-// gives a layer that refuses encrypted reads and, with write: age, every
-// write, rather than writing plaintext.
+// CryptLayer is the process's layer for sc, built once, where the store is
+// built: the reference cache sweeps its directory when made, so a second one
+// would delete the first one's files. Keys that cannot be read stop the
+// process at this first call, at start, rather than write plaintext.
 func CryptLayer(sc config.StorageConfig) *mailcrypt.Layer {
 	key := fmt.Sprintf("%#v|%s", sc.MailCrypt, sc.MailTempDir)
 	cryptMu.Lock()
@@ -28,12 +34,12 @@ func CryptLayer(sc config.StorageConfig) *mailcrypt.Layer {
 	}
 	l, err := buildCryptLayer(sc)
 	if err != nil {
-		l = mailcrypt.Broken(err, sc.MailCrypt.Write == "age")
+		exitProcess(err)
+		return nil
 	}
 	cryptLayers[key] = l
 	return l
 }
-
 func buildCryptLayer(sc config.StorageConfig) (*mailcrypt.Layer, error) {
 	o, err := mailcrypt.LoadKeys(sc.MailCryptKeys())
 	if err != nil {

@@ -3,6 +3,7 @@ package mailcrypt
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -33,6 +34,13 @@ func LoadKeys(k KeyFiles) (Options, error) {
 		o.Recipients, err = age.ParseRecipients(f)
 		_ = f.Close()
 		if err != nil {
+			return o, fmt.Errorf("public_key %s: %w", k.PublicKey, err)
+		}
+		// A set age refuses to write to (hybrid beside classic) fails here,
+		// at start, not at the first save.
+		if w, err := age.Encrypt(io.Discard, o.Recipients...); err != nil {
+			return o, fmt.Errorf("public_key %s: %w", k.PublicKey, err)
+		} else if err := w.Close(); err != nil {
 			return o, fmt.Errorf("public_key %s: %w", k.PublicKey, err)
 		}
 	default:

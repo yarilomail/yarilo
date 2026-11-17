@@ -593,7 +593,14 @@ func (u *userMailbox) fetchPath(path string) (io.ReadCloser, error) {
 	// Through crlf.New: a record this server wrote is already CRLF and comes
 	// out unchanged, while one written by another implementation can be stored
 	// with bare LF and must not reach the wire that way (#1527).
-	return io.NopCloser(crlf.New(o)), nil
+	return crlfCloser{Reader: crlf.New(o), Closer: o}, nil
+}
+
+// crlfCloser closes what the CRLF filter reads from: a reference body opened
+// through the cache holds a file.
+type crlfCloser struct {
+	io.Reader
+	io.Closer
 }
 
 // openBody opens a message file and returns the section holding its body.
@@ -651,29 +658,28 @@ func (u *userMailbox) plainBodySize(path string, fileSize int64) uint32 {
 		return uint32(fileSize)
 	}
 	kind := bodyKind(sec)
+	if kind == mailcrypt.Plain {
+		_ = f.Close()
+		return uint32(fileSize)
+	}
+	// Sealed: its plaintext size or 0, unknown, never the ciphertext's.
 	if kind == mailcrypt.Age {
 		n, err := agestream.PlainSize(sec, sec.Size())
 		_ = f.Close()
 		if err != nil {
-			return uint32(fileSize)
+			return 0
 		}
 		return uint32(n)
 	}
 	_ = f.Close()
-	if kind == mailcrypt.Plain {
-		return uint32(fileSize)
-	}
 	rc, err := u.fetchPath(path)
 	if err != nil {
-		return uint32(fileSize)
+		return 0
 	}
 	defer rc.Close() //nolint:errcheck
-	if o, ok := rc.(interface{ Size() int64 }); ok {
-		return uint32(o.Size())
-	}
 	n, err := io.Copy(io.Discard, rc)
 	if err != nil {
-		return uint32(fileSize)
+		return 0
 	}
 	return uint32(n)
 }

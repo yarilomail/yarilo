@@ -31,22 +31,28 @@ func TestCheckMailCrypt(t *testing.T) {
 		want string // "" accepts
 	}{
 		{"defaults, no Secret mounted", func(s *StorageConfig) {}, ""},
-		{"age with keys", func(s *StorageConfig) {
-			s.MailCrypt.Write, s.MailCrypt.PublicKey, s.MailCrypt.PrivateKeys = "age", pub, priv
+		// A director or a login service loads the same config and holds no
+		// keys: the files are read where a store is built, not at load.
+		{"age with no key files at all", func(s *StorageConfig) {
+			s.MailCrypt.Write, s.MailCrypt.PublicKey, s.MailCrypt.PrivateKeys = "age", missing, missing
+			s.MailCrypt.ReferenceKeys = []string{missing}
 		}, ""},
-		{"age without a public key", func(s *StorageConfig) { s.MailCrypt.Write, s.MailCrypt.PublicKey = "age", missing }, "public_key"},
-		{"public key garbage", func(s *StorageConfig) { s.MailCrypt.Write, s.MailCrypt.PublicKey = "age", bad }, "public_key"},
-		{"off ignores the public key", func(s *StorageConfig) { s.MailCrypt.PublicKey = bad }, ""},
-		{"private keys garbage", func(s *StorageConfig) { s.MailCrypt.PrivateKeys = bad }, "private_keys"},
+		{"age with garbage key files", func(s *StorageConfig) {
+			s.MailCrypt.Write, s.MailCrypt.PublicKey, s.MailCrypt.PrivateKeys = "age", bad, bad
+		}, ""},
 		{"unknown write", func(s *StorageConfig) { s.MailCrypt.Write = "aes" }, "write"},
-		{"reference key missing", func(s *StorageConfig) { s.MailCrypt.ReferenceKeys = []string{missing} }, "reference_keys"},
-		{"reference key garbage", func(s *StorageConfig) { s.MailCrypt.ReferenceKeys = []string{bad} }, "reference_keys"},
 		{"cache size garbage", func(s *StorageConfig) { s.MailCrypt.ReferenceCacheSize = "lots" }, "reference_cache_size"},
 		{"temp dir relative", func(s *StorageConfig) { s.MailTempDir = "tmp" }, "mail_temp_dir"},
 		{"temp dir empty", func(s *StorageConfig) { s.MailTempDir = "" }, "mail_temp_dir"},
 		{"temp dir under the maildir root", func(s *StorageConfig) { s.MaildirRoot, s.MailTempDir = "/var/mail", "/var/mail/tmp" }, "mail_temp_dir"},
 		{"temp dir under the home template", func(s *StorageConfig) { s.MailHome, s.MailTempDir = "/srv/home/%d/%n", "/srv/home/x" }, "mail_temp_dir"},
 		{"temp dir beside the root", func(s *StorageConfig) { s.MaildirRoot, s.MailTempDir = "/var/mail", "/var/mailtmp" }, ""},
+		{"temp dir under mail_path", func(s *StorageConfig) { s.MailPath, s.MailTempDir = "/data/%d/%n/Maildir", "/data/t" }, "mail_path"},
+		{"temp dir under mail_inbox_path", func(s *StorageConfig) { s.MailInboxPath, s.MailTempDir = "/inbox/%u", "/inbox/t" }, "mail_inbox_path"},
+		{"temp dir under mail_index_path", func(s *StorageConfig) { s.MailIndexPath, s.MailTempDir = "/idx/%u", "/idx/t" }, "mail_index_path"},
+		{"temp dir under mail_control_path", func(s *StorageConfig) { s.MailControlPath, s.MailTempDir = "/ctl/%u", "/ctl/t" }, "mail_control_path"},
+		{"temp dir under mail_alt_path", func(s *StorageConfig) { s.MailAltPath, s.MailTempDir = "/alt/%u", "/alt/t" }, "mail_alt_path"},
+		{"temp dir under the volatile path", func(s *StorageConfig) { s.MailVolatilePath, s.MailTempDir = "/run/yarilo", "/run/yarilo/t" }, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
