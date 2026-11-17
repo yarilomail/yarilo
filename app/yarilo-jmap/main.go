@@ -22,6 +22,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/readyfile"
 	"github.com/yarilomail/yarilo/v2/internal/sieve"
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
 	submproxy "github.com/yarilomail/yarilo/v2/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
@@ -295,6 +296,7 @@ func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error)
 		SpecialUseDefaults: cfg.Protocol.IMAP.SpecialUseDefaults,
 		Mailboxes:          cfg.PersonalAutoMailboxes(),
 		MailboxLimit:       cfg.Quota.QuotaPolicy().MailboxCount,
+		Crypt:              mailboxbuild.CryptLayer(cfg.Storage),
 	}, nil
 }
 

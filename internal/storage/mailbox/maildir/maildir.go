@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
@@ -43,6 +44,8 @@ type Backend struct {
 	// proactiveScan is maildir_sync_on_select: whether opening a folder
 	// reconciles the index against cur/ and new/. Default on.
 	proactiveScan bool
+	// crypt seals bodies on save and opens them on fetch (MAILCRYPT).
+	crypt *mailcrypt.Layer
 }
 
 // Option configures a Backend at construction time.
@@ -59,6 +62,10 @@ func WithProactiveScan(on bool) Option {
 func WithLockMethod(m filelock.Method) Option {
 	return func(b *Backend) { b.lockMethod = m }
 }
+
+// WithCrypt sets the layer that encrypts bodies at rest; without it bodies
+// are stored as given and planted ciphertext is still refused.
+func WithCrypt(l *mailcrypt.Layer) Option { return func(b *Backend) { b.crypt = l } }
 
 // WithFsync sets what a delivery makes durable before it is acknowledged.
 func WithFsync(m mailbox.FsyncMode) Option {
@@ -921,10 +928,14 @@ func (u *userMailbox) Save(folder string, r io.Reader, uid uint32, _ int64, flag
 	if err != nil {
 		return "", 0, noGUID, fmt.Errorf("maildir: create tmp: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
+	// Counted before sealing: S= and W= are the plaintext's sizes.
 	sc := &sizeCounter{}
-	if _, err := io.Copy(f, io.TeeReader(r, sc)); err != nil {
+	if err := u.b.crypt.Seal(f, io.TeeReader(r, sc)); err != nil {
 		f.Close()
 		os.Remove(tmpPath)
+		if errors.Is(err, mailcrypt.ErrPlanted) {
+			return "", 0, noGUID, fmt.Errorf("maildir: %w", err)
+		}
 		return "", 0, noGUID, fmt.Errorf("maildir: write: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 	// Before the name, not after: the answer to the client follows this, and a
@@ -1058,7 +1069,7 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 		if !found {
 			sizePath = filepath.Join(u.folderPath(folder), "cur", filename)
 		}
-		psize, vsize, merr := measureSizes(sizePath)
+		psize, vsize, merr := measureSizes(u.b.crypt, sizePath)
 		if merr == nil {
 			rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
 		}
@@ -1146,7 +1157,35 @@ func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, err
 	if err != nil {
 		return nil, fmt.Errorf("maildir: fetch %s: %w", filename, err)
 	}
-	return f, nil
+	st, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("maildir: fetch %s: %w", filename, err)
+	}
+	o, err := u.b.crypt.Open(fileBody{File: f, size: st.Size()}, f)
+	if err != nil {
+		return nil, fmt.Errorf("maildir: fetch %s: %w", filename, err)
+	}
+	return o, nil
+}
+
+// fileBody is an open message file as a mailcrypt.Body.
+type fileBody struct {
+	*os.File
+	size int64
+}
+
+func (f fileBody) Size() int64 { return f.size }
+
+// plainSize is the plaintext length of a file whose name carries no S=. One
+// that cannot be told (no key) is 0, unknown, never the ciphertext's length:
+// a later RecordSize asks again and fails loudly.
+func (u *userMailbox) plainSize(path string, size int64) uint32 {
+	n, err := u.b.crypt.PlainFileSize(path, size)
+	if err != nil {
+		return 0
+	}
+	return uint32(n)
 }
 
 // Remove unlinks one message. A name that is not there is not "already gone":
@@ -1263,7 +1302,7 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 			sz = phys
 		default:
 			if info, _ := e.Info(); info != nil {
-				sz = uint32(info.Size())
+				sz = u.plainSize(filepath.Join(dir, name), info.Size())
 			}
 		}
 		uid := uidMap[maildirBase(name)]
@@ -1383,14 +1422,14 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 				case hasPhys:
 					facts.size = phys
 				case statErr == nil:
-					facts.size = uint32(info.Size())
+					facts.size = u.plainSize(filepath.Join(dir, name), info.Size())
 				}
 				facts.vsize = virt
 				if virt == 0 {
 					// A name with no W= says nothing about the RFC822 form, and
 					// the index keeps one number: measured here, or the byte
 					// count stands as the message's size for ever (#1962).
-					if _, measured, merr := measureSizes(filepath.Join(dir, name)); merr == nil {
+					if _, measured, merr := measureSizes(u.b.crypt, filepath.Join(dir, name)); merr == nil {
 						facts.vsize = measured
 					}
 				}
@@ -1434,14 +1473,14 @@ func (u *userMailbox) scanNamed(folder string, names []string) []mailbox.ScanRec
 			continue // moved on by another process between the rename and here
 		}
 		phys, virt, hasPhys, _ := parseSizeInfo(name)
-		size := uint32(info.Size())
-		if hasPhys {
-			size = phys
+		size := phys
+		if !hasPhys {
+			size = u.plainSize(filepath.Join(curDir, name), info.Size())
 		}
 		if virt == 0 {
 			// As in Scan: a name with no W= says nothing about the RFC822 form,
 			// and the index keeps one number for both (#1962).
-			if _, measured, merr := measureSizes(filepath.Join(curDir, name)); merr == nil {
+			if _, measured, merr := measureSizes(u.b.crypt, filepath.Join(curDir, name)); merr == nil {
 				virt = measured
 			}
 		}

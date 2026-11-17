@@ -148,3 +148,11 @@ func Counting(b Box) Box {
 	}
 	return b
 }
+
+// RangeReader is a body reader that also reads at any offset of the
+// plaintext, so a partial fetch need not read the message from its start.
+// An encrypted body answers it chunk by chunk.
+type RangeReader interface {
+	io.ReaderAt
+	Size() int64
+}

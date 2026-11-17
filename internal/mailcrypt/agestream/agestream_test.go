@@ -182,3 +182,51 @@ func FuzzReader(f *testing.F) {
 		}
 	})
 }
+
+func TestPlainSizeWithoutKey(t *testing.T) {
+	for _, k := range keyPairs(t) {
+		for _, n := range []int{0, 1, chunk - 1, chunk, chunk + 1, 2 * chunk, 2*chunk + 1, 1 << 20} {
+			sealed := seal(t, k.rcpt, random(n))
+			got, err := PlainSize(bytes.NewReader(sealed), int64(len(sealed)))
+			if err != nil || got != int64(n) {
+				t.Fatalf("%s n=%d: %d %v", k.name, n, got, err)
+			}
+		}
+	}
+	if _, err := PlainSize(bytes.NewReader([]byte("plain")), 5); err == nil {
+		t.Fatal("plain text sized")
+	}
+}
+
+func TestPlainSizeManyRecipientsAndBadHeaders(t *testing.T) {
+	ks := keyPairs(t)
+	for _, n := range []int{0, 5, chunk + 7} {
+		var b bytes.Buffer
+		w, err := NewWriter(&b, ks[0].rcpt, keyPairs(t)[0].rcpt, keyPairs(t)[0].rcpt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write(random(n))
+		_ = w.Close()
+		got, err := PlainSize(bytes.NewReader(b.Bytes()), int64(b.Len()))
+		if err != nil || got != int64(n) {
+			t.Fatalf("three recipients n=%d: %d %v", n, got, err)
+		}
+	}
+	good := seal(t, ks[0].rcpt, random(100))
+	mac := bytes.Index(good, []byte("\n--- "))
+	cases := []struct {
+		name string
+		b    []byte
+	}{
+		{"no mac line", append(append([]byte(nil), good[:mac]...), good[mac+5:]...)},
+		{"cut in the header", good[:mac]},
+		{"cut after the header", good[:mac+60]},
+		{"magic only", Magic},
+	}
+	for _, c := range cases {
+		if got, err := PlainSize(bytes.NewReader(c.b), int64(len(c.b))); err == nil {
+			t.Errorf("%s: sized at %d", c.name, got)
+		}
+	}
+}

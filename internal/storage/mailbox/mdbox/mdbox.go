@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt/agestream"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/crlf"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
@@ -55,6 +57,9 @@ const (
 // and truncation, to ErrCorruptStorage -- a transient EIO must not.
 var errCorruptRecord = errors.New("mdbox: corrupt record")
 
+// WithCrypt sets the layer that encrypts bodies at rest.
+func WithCrypt(l *mailcrypt.Layer) Option { return func(b *Backend) { b.crypt = l } }
+
 // Backend is the mdbox MailboxBackend factory. Per-user state lives in
 // UserMailbox; the Backend holds only the shared locks.Locker and config.
 type Backend struct {
@@ -63,6 +68,8 @@ type Backend struct {
 	// fsync says what reaches the disk before a delivery is answered (#1847).
 	fsync    mailbox.FsyncMode
 	listUTF8 bool
+	// crypt seals bodies on save and opens them on fetch (MAILCRYPT).
+	crypt *mailcrypt.Layer
 
 	// rotateSize is the per-m.<N> size cap before Save rolls to a fresh file_id
 	// (mdbox_rotate_size). 0 selects defaultRotateSize (10 MiB default).
@@ -510,11 +517,21 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 		defer func() { <-u.b.writeSem }()
 	}
 	tRead := time.Now()
+	r, err := mailcrypt.Guard(r)
+	if err != nil {
+		return "", 0, noGUID, fmt.Errorf("mdbox/save: %w", err)
+	}
 	body, err := readBodyCRLF(r)
 	mailboxmetrics.ObserveSavePart(driverName, "read", time.Since(tRead))
 	if err != nil {
 		return "", 0, noGUID, fmt.Errorf("mdbox/save: read body: %w", err)
 	}
+	plainLen := uint32(len(body))
+	var stored bytes.Buffer
+	if err := u.b.crypt.Seal(&stored, bytes.NewReader(body)); err != nil {
+		return "", 0, noGUID, fmt.Errorf("mdbox/save: %w", err)
+	}
+	body = stored.Bytes()
 	tPrepare := time.Now()
 	if err := os.MkdirAll(u.folderPath(folder), 0o700); err != nil {
 		return "", 0, noGUID, fmt.Errorf("mdbox/save: mkdir folder: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
@@ -548,7 +565,7 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 	if err != nil {
 		return "", 0, noGUID, err
 	}
-	return strconv.FormatUint(uint64(mapUID), 10), uint32(len(body)), guid, nil
+	return strconv.FormatUint(uint64(mapUID), 10), plainLen, guid, nil
 }
 
 // place writes the record at the end of the chosen m.<N> and registers it, all
@@ -741,7 +758,7 @@ func (u *userMailbox) openEntry(entry mdboxmap.MapEntry, altTier bool) (io.ReadC
 		mdboxmap.ObserveReadPart("open", time.Since(openStart))
 		if ferr == nil {
 			recordStart := time.Now()
-			rc, berr := openRecordBody(f, entry.Offset, entry.GUID)
+			rc, berr := openRecordBody(u.b.crypt, f, entry.Offset, entry.GUID)
 			mdboxmap.ObserveReadPart("record", time.Since(recordStart))
 			if berr == nil {
 				return rc, nil
@@ -765,7 +782,7 @@ func (u *userMailbox) openEntry(entry mdboxmap.MapEntry, altTier bool) (io.ReadC
 	}
 	mdboxmap.ObserveReadPart("open", time.Since(openStart))
 	recordStart := time.Now()
-	rc, err := openRecordBody(f, entry.Offset, entry.GUID)
+	rc, err := openRecordBody(u.b.crypt, f, entry.Offset, entry.GUID)
 	mdboxmap.ObserveReadPart("record", time.Since(recordStart))
 	if err != nil {
 		_ = f.Close()
@@ -777,7 +794,7 @@ func (u *userMailbox) openEntry(entry mdboxmap.MapEntry, altTier bool) (io.ReadC
 // openRecordBody returns a reader over exactly the body, read only as far as the
 // consumer goes (#1517). Truncation is checked here against the file size, so it
 // is reported from Fetch rather than as an EOF nobody classifies.
-func openRecordBody(f *os.File, offset uint32, guid [16]byte) (io.ReadCloser, error) {
+func openRecordBody(l *mailcrypt.Layer, f *os.File, offset uint32, guid [16]byte) (io.ReadCloser, error) {
 	bodyOff, size, err := readRecordHeader(f, offset)
 	if err != nil {
 		return nil, err
@@ -798,8 +815,22 @@ func openRecordBody(f *os.File, offset uint32, guid [16]byte) (io.ReadCloser, er
 			return nil, fmt.Errorf("%w: trailer GUID %x, map GUID %x", errCorruptRecord, tr.guid, guid)
 		}
 	}
+	sec := io.NewSectionReader(f, bodyOff, int64(size))
+	head := make([]byte, mailcrypt.PrefixLen)
+	n, _ := sec.ReadAt(head, 0)
+	switch mailcrypt.Classify(head[:n]) {
+	case mailcrypt.Age:
+		// Our own body, CRLF already, read in place by chunk.
+		return l.Open(sec, f)
+	case mailcrypt.Reference:
+		o, err := l.Open(sec, nil)
+		if err != nil {
+			return nil, err
+		}
+		return &sectionCloser{Reader: crlf.New(o), f: f, inner: o}, nil
+	}
 	return &sectionCloser{
-		Reader: crlf.New(io.NewSectionReader(f, bodyOff, int64(size))),
+		Reader: crlf.New(sec),
 		f:      f,
 	}, nil
 }
@@ -810,9 +841,16 @@ func openRecordBody(f *os.File, offset uint32, guid [16]byte) (io.ReadCloser, er
 type sectionCloser struct {
 	io.Reader
 	f *os.File
+	// inner is a decrypted body that holds a file of its own (the cache).
+	inner io.Closer
 }
 
-func (s *sectionCloser) Close() error { return s.f.Close() }
+func (s *sectionCloser) Close() error {
+	if s.inner != nil {
+		_ = s.inner.Close()
+	}
+	return s.f.Close()
+}
 
 // readRecordHeader skips a file header line if present, parses the message
 // header at the size the file announces, and returns the body's start and length.
@@ -991,10 +1029,10 @@ func (u *userMailbox) receivedOf(mapUID uint32) time.Time {
 		if err != nil {
 			continue
 		}
-		_, _, _, received, rerr := readRecordBodyAndTrailer(f, entry.Offset)
+		_, tr, rerr := readRecordBodyAndTrailer(f, entry.Offset)
 		_ = f.Close()
 		if rerr == nil {
-			return received
+			return tr.internalDate
 		}
 	}
 	return time.Time{}
@@ -1118,7 +1156,36 @@ func buildDboxFileHeader() []byte {
 // received date, or they do not survive the move; a zero received is now.
 // origMailbox is framed as a line, safe as a folder name holds no newline.
 func buildDboxMessageRecord(body []byte, guid [16]byte, origMailbox string, hdrSize int, received time.Time) []byte {
+	return buildDboxMessageRecordSized(body, guid, origMailbox, hdrSize, received, recSizes{})
+}
+
+// recSizes are a record's V and Z as its old trailer gave them; zero derives
+// them from the body.
+type recSizes struct{ v, z uint32 }
+
+// buildDboxMessageRecordSized keeps the sizes a rewrite carries over: the body
+// alone cannot tell a reference-format plaintext size, nor V of a bare-LF one.
+func buildDboxMessageRecordSized(body []byte, guid [16]byte, origMailbox string, hdrSize int, received time.Time, keep recSizes) []byte {
 	size := uint64(len(body))
+	// V is the plaintext's size: a sealed body says it in its own header, so a
+	// purge or an alt move that rewrites the record keeps it without a key.
+	plain, sealed := size, false
+	if mailcrypt.Classify(body) == mailcrypt.Age {
+		if n, err := agestream.PlainSize(bytes.NewReader(body), int64(len(body))); err == nil {
+			plain, sealed = uint64(n), true
+		}
+	}
+	vsize := uint32(plain)
+	if keep.v != 0 {
+		vsize = keep.v
+	}
+	z := uint32(0)
+	if sealed {
+		z = uint32(plain)
+	}
+	if keep.z != 0 {
+		z = keep.z
+	}
 	now := uint32(time.Now().Unix())
 	if !received.IsZero() {
 		now = uint32(received.Unix())
@@ -1131,7 +1198,10 @@ func buildDboxMessageRecord(body []byte, guid [16]byte, origMailbox string, hdrS
 	buf.WriteString(magicPost)
 	fmt.Fprintf(&buf, "G%s\n", hex.EncodeToString(guid[:]))
 	fmt.Fprintf(&buf, "R%x\n", now)
-	fmt.Fprintf(&buf, "V%x\n", uint32(size))
+	fmt.Fprintf(&buf, "V%x\n", vsize)
+	if z != 0 {
+		fmt.Fprintf(&buf, "Z%x\n", z)
+	}
 	// Original mailbox, skipped by readers that do not know the key. Empty
 	// omits it, which no Save path produces.
 	if origMailbox != "" {
@@ -1250,17 +1320,17 @@ func readRecordBody(f *os.File, offset uint32) ([]byte, error) {
 // readRecordBodyAndTrailer reads body and trailer in one pass, for compaction:
 // the destination record must carry the source's GUID and orig-mailbox, or
 // identity and the orphan's way home break across a move.
-func readRecordBodyAndTrailer(f *os.File, offset uint32) (body []byte, guid [16]byte, origMailbox string, received time.Time, err error) {
+func readRecordBodyAndTrailer(f *os.File, offset uint32) (body []byte, tr parsedTrailer, err error) {
 	bodyOff, size, err := readRecordHeader(f, offset)
 	if err != nil {
-		return nil, guid, "", received, err
+		return nil, tr, err
 	}
 	if _, err = f.Seek(bodyOff, io.SeekStart); err != nil {
-		return nil, guid, "", received, fmt.Errorf("seek to body: %w", err)
+		return nil, tr, fmt.Errorf("seek to body: %w", err)
 	}
 	body = make([]byte, size)
 	if _, err = io.ReadFull(f, body); err != nil {
-		return nil, guid, "", received, fmt.Errorf("read body: %w", err)
+		return nil, tr, fmt.Errorf("read body: %w", err)
 	}
 	// The file position is now at the trailer; parse it. A parse error on a
 	// compaction read means the destination copy loses its GUID and orig-mailbox
@@ -1270,7 +1340,7 @@ func readRecordBodyAndTrailer(f *os.File, offset uint32) (body []byte, guid [16]
 		slog.Warn("mdbox: trailer parse failed during compaction; GUID/orig-mailbox lost for this copy",
 			"file", f.Name(), "offset", offset, "err", terr)
 	}
-	return body, parsed.guid, parsed.origMailbox, parsed.internalDate, nil
+	return body, parsed, nil
 }
 
 // readBodyCRLF reads r fully and ensures every line ends with CRLF (dbox v2

@@ -28,6 +28,8 @@ type parsedTrailer struct {
 	// Zero when the trailer carries no V, which a record this server wrote
 	// always does.
 	vsize uint32
+	// physSize is Z: the plaintext's size when the stored body is sealed.
+	physSize uint32
 }
 
 // scanTrailer reads a metadata trailer and returns the bytes consumed with the
@@ -74,6 +76,10 @@ func scanTrailer(r io.Reader, limit uint32) (uint32, parsedTrailer, error) {
 		case 'V':
 			if v, derr := strconv.ParseUint(val, 16, 32); derr == nil {
 				out.vsize = uint32(v)
+			}
+		case 'Z':
+			if v, derr := strconv.ParseUint(val, 16, 32); derr == nil {
+				out.physSize = uint32(v)
 			}
 		case metaOrigMailbox:
 			// Verbatim, not space-trimmed: a folder name may contain spaces.

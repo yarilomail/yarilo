@@ -21,17 +21,21 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	indexfile "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -137,7 +141,15 @@ func main() {
 		w.Stats = refStats
 		walker = w
 	}
-	box, err := pickBackend(*flagDst)
+	// The destination is sealed and a reference-encrypted source opened with
+	// the keys of the same storage.mail_crypt the services run with.
+	cryptCfg, err := guidConfig(*flagLocksConf)
+	if err != nil {
+		slog.Error("config", "err", err)
+		os.Exit(1)
+	}
+	crypt := mailboxbuild.CryptLayer(cryptCfg.Storage)
+	box, err := pickBackend(*flagDst, crypt)
 	if err != nil {
 		slog.Error("destination format", "err", err)
 		os.Exit(1)
@@ -152,6 +164,7 @@ func main() {
 		Driver:    destinationDriver(*flagDst),
 		IndexTmpl: *flagIndexTmpl,
 		MailTmpl:  *flagMailTmpl,
+		Crypt:     crypt,
 	}
 	slog.Info("destination layout", "driver", opts.Driver, "root", resolver.Root,
 		"home_template", resolver.HomeTemplate, "index_path", resolver.DefaultIndexDir,
@@ -218,12 +231,12 @@ func destinationDriver(dst string) string {
 	}
 }
 
-func pickBackend(dst string) (mailbox.MailboxBackend, error) {
+func pickBackend(dst string, crypt *mailcrypt.Layer) (mailbox.MailboxBackend, error) {
 	switch strings.ToLower(dst) {
 	case "sdbox", "dbox":
-		return dboxv2.New(), nil
+		return dboxv2.New(dboxv2.WithCrypt(crypt)), nil
 	case "mdbox":
-		return mdbox.New(), nil
+		return mdbox.New(mdbox.WithCrypt(crypt)), nil
 	default:
 		return nil, fmt.Errorf("unknown --dst %q (want sdbox|mdbox)", dst)
 	}
@@ -236,6 +249,9 @@ type importOpts struct {
 	Driver    string
 	IndexTmpl string
 	MailTmpl  string
+	// Crypt opens a source body the reference encrypted, before the save
+	// would refuse it as planted, and seals the destination.
+	Crypt *mailcrypt.Layer
 }
 
 // userInfoFor builds the destination account exactly as a session would see it.
@@ -309,6 +325,11 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		// live session would create, since the drivers no longer normalise on
 		// their own (#1113).
 		msg.Folder = mailbox.NormalizeName(msg.Folder, info.SkipNFCNormalize)
+		body, err := plainSource(o.Crypt, msg.Body)
+		if err != nil {
+			return fmt.Errorf("open %s/%s: %w", user, msg.Folder, err)
+		}
+		msg.Body = body
 		// Lazy folder create + index OpenFolder.
 		if !createdFolders[msg.Folder] {
 			if err := box.Create(msg.Folder); err != nil {
@@ -397,4 +418,18 @@ func maildirFlags(filename string) []string {
 		}
 	}
 	return flags
+}
+
+// plainSource is a source body as plaintext: an encrypted one decrypted with
+// the configured keys, a plaintext one as it is.
+func plainSource(crypt *mailcrypt.Layer, body []byte) ([]byte, error) {
+	if mailcrypt.Classify(body) == mailcrypt.Plain {
+		return body, nil
+	}
+	o, err := crypt.Open(bytes.NewReader(body), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer o.Close() //nolint:errcheck
+	return io.ReadAll(o)
 }
