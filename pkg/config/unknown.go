@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strconv"
@@ -83,6 +85,23 @@ func structOf(t reflect.Type) reflect.Type {
 		return t
 	}
 	return nil
+}
+
+// refuseUnknownKeys stops the load on a key nothing reads: a typo, whose
+// setting would otherwise run at its default (#2567). From a file a newer
+// chart wrote (a schema above this binary's) the keys are that version's: a
+// pod still on the older image during a rollout, or one pinned below the
+// chart, keeps starting and names them.
+func refuseUnknownKeys(unknown []string, fileSchema int) error {
+	if len(unknown) == 0 {
+		return nil
+	}
+	if fileSchema > minConfigSchema {
+		slog.Warn("config: keys this binary does not read, from a newer chart; ignored",
+			"file_schema", fileSchema, "binary_schema", minConfigSchema, "keys", strings.Join(unknown, ","))
+		return nil
+	}
+	return fmt.Errorf("config: unknown key(s), read by nothing: %s", strings.Join(unknown, ", "))
 }
 
 // UnknownKeys reads the file at path and returns its unknown keys.

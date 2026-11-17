@@ -3141,10 +3141,8 @@ func Load(path string) (*Config, error) {
 	if err := refuseRemovedKeys(k, removedKeys()); err != nil {
 		return nil, err
 	}
-	// A key no field reads is a typo or another version's: started quietly,
-	// the setting it meant would be the default (#2567).
-	if unknown := unknownKeys(k); len(unknown) > 0 {
-		return nil, fmt.Errorf("config: unknown key(s), read by nothing: %s", strings.Join(unknown, ", "))
+	if err := refuseUnknownKeys(unknownKeys(k), cfg.ConfigSchemaVersion); err != nil {
+		return nil, err
 	}
 	warnRetiredKeys(k, retiredKeys())
 	warnChartSkew(cfg.ChartVersion)
