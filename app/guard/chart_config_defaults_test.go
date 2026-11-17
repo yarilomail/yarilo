@@ -21,9 +21,18 @@ var chartDifferences = []struct {
 }{
 	{"who wrote the file", []string{"chart_version", "config_schema_version"}},
 	{"deployment topology: the chart's services, addresses and listeners", []string{
-		"mode", "services.", "auth_service.", "backend_api.", "backend_register.", "dict_service.",
+		// By name: a whole section would let a default moved into Defaults,
+		// such as a Redis prefix, drift unseen. Only the listeners and the
+		// internal TLS files are the chart's throughout.
+		"mode", "services.", "internal_tls.",
+		"auth_service.addr", "auth_service.listen", "auth_service.master_addr", "auth_service.master_listen",
+		"backend_api.auth_master_addr", "backend_api.listen",
+		"backend_register.director_addr", "backend_register.readiness_dir", "backend_register.readiness_protocols",
+		"dict_service.dict_addr", "dict_service.dict_listen",
 		"director_service.listen", "director_service.api.listen", "director_service.ring_tls_server_name",
-		"internal_tls.", "locks_client.", "locks_service.", "warden_service.",
+		"locks_client.endpoints", "locks_client.mode",
+		"locks_service.listen", "locks_service.mode", "locks_service.redis",
+		"warden_service.addr", "warden_service.listen",
 	}},
 	{"the chart's choice over the binary's", []string{
 		"auth.cache.auth_cache_size", "director_service.director_domain_rebalance_percent",
