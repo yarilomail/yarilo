@@ -65,8 +65,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := language.ValidateTokenizerConfig(fc.LanguageTokenizerAlgorithm, fc.LanguageTokenizerWB5A, fc.LanguageTokenizerExplicitPrefix); err != nil {
-		slog.Error("tokenizer config invalid", "err", err)
+	if err := cfg.CheckRole("yarilo-fts"); err != nil {
+		slog.Error("config validation failed", "err", err)
 		os.Exit(1)
 	}
 

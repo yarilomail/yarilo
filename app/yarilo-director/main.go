@@ -18,7 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yarilomail/yarilo/v2/internal/cluster/ring"
 	"github.com/yarilomail/yarilo/v2/internal/director"
 	"github.com/yarilomail/yarilo/v2/internal/drain"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
@@ -117,11 +116,11 @@ func main() {
 	// A malformed username_hash template must abort at startup, never
 	// silently mis-route. When set it governs case-folding, so warn that
 	// the legacy bool is ignored.
+	if err := cfg.CheckRole("yarilo-director"); err != nil {
+		slog.Error("config validation failed", "err", err)
+		os.Exit(1)
+	}
 	if raw := strings.TrimSpace(cfg.DirectorService.UsernameHash); raw != "" {
-		if _, err := ring.ParseHashFormat(raw); err != nil {
-			slog.Error("director: invalid director_service.username_hash", "err", err, "value", raw)
-			os.Exit(1)
-		}
 		slog.Warn("director: username_hash set - it governs case-folding; username_hash_lowercase is ignored",
 			"username_hash", raw)
 	}

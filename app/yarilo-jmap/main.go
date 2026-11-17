@@ -49,6 +49,10 @@ func main() {
 		slog.Error("config load failed", "err", err, "path", cfgPath)
 		os.Exit(1)
 	}
+	if err := cfg.CheckRole("yarilo-jmap"); err != nil {
+		slog.Error("config validation failed", "err", err)
+		os.Exit(1)
+	}
 
 	if err := config.RequireListeners(cfg, "jmap"); err != nil {
 		slog.Error("listener config", "err", err)
