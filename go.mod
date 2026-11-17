@@ -3,6 +3,7 @@ module github.com/yarilomail/yarilo/v2
 go 1.27.4
 
 require (
+	filippo.io/age v1.3.2
 	git.sr.ht/~rockorager/go-jmap v0.5.3
 	github.com/0kaba0hub/go-xapian v0.2.1
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
@@ -39,6 +40,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/MicahParks/jwkset v0.11.4 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect

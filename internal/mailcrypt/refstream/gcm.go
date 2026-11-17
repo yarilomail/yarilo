@@ -11,7 +11,7 @@ import (
 type gcmStream struct {
 	ctr    cipher.Stream
 	tagKey [16]byte // E(K, J0)
-	h      [2]uint64
+	table  [16][2]uint64
 	y      [2]uint64
 	part   [16]byte
 	nPart  int
@@ -23,7 +23,7 @@ func newGCMStream(block cipher.Block, iv, aad []byte) *gcmStream {
 	g := &gcmStream{}
 	var zero, hb [16]byte
 	block.Encrypt(hb[:], zero[:])
-	g.h = [2]uint64{binary.BigEndian.Uint64(hb[:8]), binary.BigEndian.Uint64(hb[8:])}
+	g.table = ghashTable([2]uint64{binary.BigEndian.Uint64(hb[:8]), binary.BigEndian.Uint64(hb[8:])})
 	var j0 [16]byte
 	copy(j0[:], iv)
 	j0[15] = 1
@@ -84,23 +84,54 @@ func (g *gcmStream) flush() {
 func (g *gcmStream) block(b []byte) {
 	g.y[0] ^= binary.BigEndian.Uint64(b[:8])
 	g.y[1] ^= binary.BigEndian.Uint64(b[8:16])
-	g.y = gfMul(g.y, g.h)
+	g.y = ghashMul(&g.table, g.y)
 }
 
-// gfMul multiplies in GF(2^128) with the GCM bit order, without branches on
-// secret bits.
-func gfMul(x, h [2]uint64) [2]uint64 {
+// ghashTable holds the 16 multiples of H by 4-bit values, bit-reversed as
+// GCM orders them; ghashMul then takes four bits a step.
+func ghashTable(h [2]uint64) [16][2]uint64 {
+	var t [16][2]uint64
+	t[reverse4(1)] = h
+	for i := 2; i < 16; i += 2 {
+		t[reverse4(i)] = double(t[reverse4(i/2)])
+		a, b := t[reverse4(i)], h
+		t[reverse4(i+1)] = [2]uint64{a[0] ^ b[0], a[1] ^ b[1]}
+	}
+	return t
+}
+
+func reverse4(i int) int {
+	i = (i<<2)&0xc | (i>>2)&0x3
+	return (i<<1)&0xa | (i>>1)&0x5
+}
+
+func double(x [2]uint64) [2]uint64 {
+	carry := x[1] & 1
+	x[1] = x[1]>>1 | x[0]<<63
+	x[0] >>= 1
+	x[0] ^= 0xe100000000000000 & -carry
+	return x
+}
+
+var ghashReduction = [16]uint16{
+	0x0000, 0x1c20, 0x3840, 0x2460, 0x7080, 0x6ca0, 0x48c0, 0x54e0,
+	0xe100, 0xfd20, 0xd940, 0xc560, 0x9180, 0x8da0, 0xa9c0, 0xb5e0,
+}
+
+func ghashMul(t *[16][2]uint64, y [2]uint64) [2]uint64 {
 	var z [2]uint64
-	v := h
-	for i := range 128 {
-		bit := (x[i/64] >> (63 - uint(i%64))) & 1
-		mask := -bit
-		z[0] ^= v[0] & mask
-		z[1] ^= v[1] & mask
-		lsb := v[1] & 1
-		v[1] = v[1]>>1 | v[0]<<63
-		v[0] >>= 1
-		v[0] ^= 0xe100000000000000 & -lsb
+	for i := 1; i >= 0; i-- {
+		word := y[i]
+		for range 16 {
+			msw := z[1] & 0xf
+			z[1] = z[1]>>4 | z[0]<<60
+			z[0] >>= 4
+			z[0] ^= uint64(ghashReduction[msw]) << 48
+			e := t[word&0xf]
+			z[0] ^= e[0]
+			z[1] ^= e[1]
+			word >>= 4
+		}
 	}
 	return z
 }
