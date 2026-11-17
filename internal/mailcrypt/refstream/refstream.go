@@ -35,6 +35,7 @@ const (
 
 	tagSize   = 16
 	maxHeader = 1 << 20
+	maxRounds = 65536
 )
 
 var (
@@ -189,9 +190,16 @@ func readV2(src io.Reader, keys []*ecdh.PrivateKey) (io.Reader, error) {
 	if !ok {
 		return nil, fmt.Errorf("refstream: hash %s: %w", malgOID, ErrUnsupported)
 	}
+	// The reference writes 2048; a forged count would hold the reader for hours.
+	if rounds == 0 || rounds > maxRounds {
+		return nil, fmt.Errorf("refstream: %d PBKDF2 rounds: %w", rounds, ErrCorrupt)
+	}
 	integrity := 0
 	switch {
 	case flags&flagHMAC != 0:
+		if calg.gcm {
+			return nil, fmt.Errorf("refstream: HMAC with %s: %w", calg.name, ErrUnsupported)
+		}
 		integrity = flagHMAC
 	case flags&flagAEAD != 0:
 		if !calg.gcm {

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
@@ -98,7 +99,8 @@ func TestRefused(t *testing.T) {
 	replace := func(b []byte, old, repl []byte) []byte { return bytes.Replace(b, old, repl, 1) }
 	gcmOID, _ := asn1.Marshal(asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 46})
 	ofb, _ := asn1.Marshal(asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 43})
-	keySlot := len(Magic) + 9 + len(gcmOID) + 11 + 8 + 1
+	rounds := len(Magic) + 9 + len(gcmOID) + 11
+	keySlot := rounds + 8 + 1
 
 	cases := []struct {
 		name   string
@@ -122,6 +124,9 @@ func TestRefused(t *testing.T) {
 		{"no key", gcm, nil, ErrNoKey},
 		{"RSA slot", setByte(gcm, keySlot, keyTypeRSA), []*ecdh.PrivateKey{k}, ErrUnsupported},
 		{"ML-KEM slot", setByte(gcm, keySlot, keyTypeKEM), []*ecdh.PrivateKey{k}, ErrUnsupported},
+		{"HMAC flag with GCM", setByte(gcm, len(Magic)+4, flagHMAC), []*ecdh.PrivateKey{k}, ErrUnsupported},
+		{"zero PBKDF2 rounds", setU32(gcm, rounds, 0), []*ecdh.PrivateKey{k}, ErrCorrupt},
+		{"four billion PBKDF2 rounds", setU32(gcm, rounds, 0xffffffff), []*ecdh.PrivateKey{k}, ErrCorrupt},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -144,6 +149,12 @@ func TestEmptyInputIsEmptyBody(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatalf("got %d bytes, err %v", len(got), err)
 	}
+}
+
+func setU32(b []byte, i int, v uint32) []byte {
+	c := append([]byte(nil), b...)
+	binary.BigEndian.PutUint32(c[i:], v)
+	return c
 }
 
 func setByte(b []byte, i int, v byte) []byte {
