@@ -23,6 +23,7 @@ import (
 	backendpkg "github.com/yarilomail/yarilo/v2/internal/backend"
 	"github.com/yarilomail/yarilo/v2/internal/quotastatus"
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
@@ -57,7 +58,10 @@ func main() {
 	// aggregate (the count backend), exactly as a delivery agent would - no
 	// dict. Reads need no locker.
 	resolver := backendpkg.BuildResolver(cfg)
-	mbox := backendpkg.BuildMailbox(cfg.Storage, nil)
+	// Sizes come from the index and no body is opened, so the store is built
+	// without keys and none are mounted here: the service the MTA calls holds
+	// no private key.
+	mbox := mailboxbuild.ByDriverWithoutKeys(cfg.Storage.MailDriver, cfg.Storage, nil)
 	// WithNoCreate: OpenFolder is a write path for a folder that has no index
 	// yet - it would run createFresh and the legacy migration unguarded, racing
 	// a session pod's locked create (#993). A policy service observes; it does

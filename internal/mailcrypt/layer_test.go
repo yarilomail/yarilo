@@ -363,3 +363,33 @@ func TestCorruptReferenceSizeIsUnknown(t *testing.T) {
 		t.Fatalf("size %d", n)
 	}
 }
+
+// A keyless layer reads what a size needs and nothing more: plaintext opens,
+// an age body's size comes from its header, a reference body's size is
+// unknown, and no save goes through, plaintext or not.
+func TestKeylessReadsSizesAndSavesNothing(t *testing.T) {
+	writer, _ := ageLayer(t)
+	plain := []byte("Subject: x\r\n\r\nbody\r\n")
+	kl := Keyless().ForDriver("maildir")
+
+	if got := open(t, kl, plain); !bytes.Equal(got, plain) {
+		t.Fatalf("plaintext opened as %q", got)
+	}
+	if n, err := kl.PlainSize(newBody(sealed(t, writer, plain))); err != nil || n != int64(len(plain)) {
+		t.Fatalf("age size %d %v, want %d", n, err, len(plain))
+	}
+	stream, _, _ := referenceVector(t)
+	if _, err := kl.PlainSize(newBody(stream)); err == nil {
+		t.Fatal("a reference-format size was told without its key")
+	}
+	if _, err := kl.Open(newBody(sealed(t, writer, plain)), nil); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("an age body opened without a key: %v", err)
+	}
+	var dst bytes.Buffer
+	if err := kl.Seal(&dst, bytes.NewReader(plain)); !errors.Is(err, ErrKeyless) || dst.Len() != 0 {
+		t.Fatalf("a keyless save: %v, %d bytes written", err, dst.Len())
+	}
+	if err := kl.Encrypt(&dst, bytes.NewReader(plain)); !errors.Is(err, ErrKeyless) {
+		t.Fatalf("a keyless blob save: %v", err)
+	}
+}

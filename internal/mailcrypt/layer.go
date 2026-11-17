@@ -22,6 +22,9 @@ var ErrPlanted = errors.New("mailcrypt: body already carries an encryption signa
 // ErrNoKey is a body whose key is not configured.
 var ErrNoKey = errors.New("mailcrypt: no key for this body")
 
+// ErrKeyless refuses a save in a process that holds no keys.
+var ErrKeyless = errors.New("mailcrypt: this process holds no keys and saves no body")
+
 // Options configure a Layer; the zero value writes plaintext and still
 // refuses planted ciphertext.
 type Options struct {
@@ -38,15 +41,24 @@ type Options struct {
 // Layer seals bodies on their way to a storage driver and opens them on the
 // way back. It is safe for concurrent use.
 type Layer struct {
-	o      Options
-	driver string // the metrics' driver label
+	o       Options
+	driver  string // the metrics' driver label
+	keyless bool   // Keyless: no keys read, no body saved
 }
 
 // New returns a Layer; a nil *Layer behaves as New(Options{}).
 func New(o Options) *Layer { return &Layer{o: o} }
 
+// Keyless is the layer of a process that reads sizes and never a body: it
+// reads no key file, opens plaintext, tells an age body's size from its header,
+// fails a reference-format size and refuses every save, so the configured
+// write mode cannot fall back to plaintext in it.
+func Keyless() *Layer { return &Layer{keyless: true} }
+
 // ForDriver is the same layer counting its metrics under driver.
-func (l *Layer) ForDriver(driver string) *Layer { return &Layer{o: l.opts(), driver: driver} }
+func (l *Layer) ForDriver(driver string) *Layer {
+	return &Layer{o: l.opts(), driver: driver, keyless: l != nil && l.keyless}
+}
 
 func (l *Layer) driverName() string {
 	if l == nil || l.driver == "" {
@@ -83,6 +95,9 @@ func Guard(src io.Reader) (io.Reader, error) {
 // Seal copies src into dst, encrypted when the layer writes, and refuses a
 // body that starts with either signature in both modes.
 func (l *Layer) Seal(dst io.Writer, src io.Reader) error {
+	if l != nil && l.keyless {
+		return l.countFailure("seal", ErrKeyless)
+	}
 	start := time.Now()
 	br, err := Guard(src)
 	if err != nil {
@@ -104,6 +119,9 @@ func (l *Layer) Seal(dst io.Writer, src io.Reader) error {
 // signature check: for blobs, which may be any bytes, never for message
 // bodies (Seal).
 func (l *Layer) Encrypt(dst io.Writer, src io.Reader) error {
+	if l != nil && l.keyless {
+		return ErrKeyless
+	}
 	if !l.Writes() {
 		_, err := io.Copy(dst, src)
 		return err
@@ -145,6 +163,11 @@ func (l *Layer) Open(body Body, closer io.Closer) (Opened, error) {
 	var o Opened
 	switch kind {
 	case Age:
+		// age refuses an empty identity list with an untyped error, which
+		// would count as a body that does not verify.
+		if len(l.opts().Identities) == 0 {
+			return nil, closeWith(closer, l.countFailure("open", ErrNoKey))
+		}
 		ra, size, err := agestream.NewReaderAt(body, body.Size(), l.opts().Identities...)
 		if err != nil {
 			return nil, closeWith(closer, l.countFailure("open", keyErr(err)))
