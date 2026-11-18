@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
@@ -53,6 +55,8 @@ type cryptRequest struct {
 	Folders   []string `json:"folders"`
 	DryRun    bool     `json:"dry_run"`
 	To        string   `json:"to"`
+	// Rate is the most messages a second this job rewrites; 0 is no bound.
+	Rate int `json:"rate"`
 }
 
 // cryptFolder is one folder's messages counted by state.
@@ -147,6 +151,10 @@ func (s *Server) handleCryptStart(kind cryptKind) http.HandlerFunc {
 			// swap would be excluded from nothing but this process.
 			if !req.DryRun && s.opts.Locker == nil {
 				apiError(w, "reencrypt: backend-api runs without the lock service, and a rewrite needs it; --dry-run works", http.StatusServiceUnavailable)
+				return
+			}
+			if req.Rate < 0 {
+				apiError(w, "rate: a negative rate means nothing", http.StatusBadRequest)
 				return
 			}
 			if req.To == "age" && !s.opts.Crypt.Writes() {
@@ -335,6 +343,11 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 	writing := job.Kind == cryptReencrypt && !req.DryRun
 	var rw mailbox.RecordRewriter
 	var sw mailbox.StoreRewriter
+	if writing && bundle.spec.Type != "personal" && driver != "maildir" {
+		// Its lock keys carry the accessing user, so the swap would keep out
+		// no other user's session (#2598); maildir locks by path.
+		return fmt.Errorf("crypt: namespace %s is a shared %s store, whose locks are per user (#2598); only a maildir one is rewritten", ns, driver)
+	}
 	if writing {
 		rw, _ = mailbox.Driver(bundle.box).(mailbox.RecordRewriter)
 		sw, _ = mailbox.Driver(bundle.box).(mailbox.StoreRewriter)
@@ -343,6 +356,7 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 		}
 	}
 	layer := s.opts.Crypt.WithoutCache()
+	limiter := jobLimiter(req.Rate)
 	entries, err := bundle.box.ListFolders()
 	if err != nil {
 		return fmt.Errorf("crypt: %s: list folders: %w", ns, err)
@@ -401,6 +415,9 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 			if !needsRewrite(st, req.To) {
 				continue
 			}
+			if err := limiter.Wait(ctx); err != nil {
+				return err
+			}
 			uid, folderID := m.UID, folder.ID
 			recorded := func() (bool, error) {
 				got, err := bundle.mbox.Messages(folderID, mailbox.SeqSet{{From: uid, To: uid}})
@@ -427,7 +444,15 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 	if sw == nil {
 		return nil
 	}
-	return s.rewriteStore(ctx, job, req, ns, driver, sw, layer)
+	return s.rewriteStore(ctx, job, req, ns, driver, sw, layer, limiter)
+}
+
+// jobLimiter is one token a message; a zero rate is no bound.
+func jobLimiter(perSecond int) *rate.Limiter {
+	if perSecond <= 0 {
+		return rate.NewLimiter(rate.Inf, 1)
+	}
+	return rate.NewLimiter(rate.Limit(perSecond), 1)
 }
 
 func (s *Server) countUnreferenced(ctx context.Context, job *cryptJob, req cryptRequest, ns string,

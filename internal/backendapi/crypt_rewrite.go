@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"syscall"
 
+	"golang.org/x/time/rate"
+
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -126,6 +128,18 @@ func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns
 	return rewriteFailed, nil
 }
 
+// limitedBody waits for the job's rate before each body it rewrites.
+func limitedBody(ctx context.Context, b mailbox.BodyRewrite, limiter *rate.Limiter) mailbox.BodyRewrite {
+	fill := b.Fill
+	b.Fill = func(src mailbox.RawBody, dst io.Writer) (int64, bool, error) {
+		if err := limiter.Wait(ctx); err != nil {
+			return 0, false, err
+		}
+		return fill(src, dst)
+	}
+	return b
+}
+
 var (
 	errVerify = errors.New("crypt: verification failed")
 	errRead   = errors.New("crypt: the old body could not be read")
@@ -163,7 +177,7 @@ func (c *countWriter) Write(p []byte) (int, error) {
 // rewriteStore runs a store's file-by-file rewrite; a file the map moved
 // under is taken again on the next pass, up to three.
 func (s *Server) rewriteStore(ctx context.Context, job *cryptJob, req cryptRequest, ns, driver string,
-	sw mailbox.StoreRewriter, layer *mailcrypt.Layer) error {
+	sw mailbox.StoreRewriter, layer *mailcrypt.Layer, limiter *rate.Limiter) error {
 	row := job.addFolder(ns, "(store files)")
 	for pass := 0; pass < 3; pass++ {
 		changed := 0
@@ -180,7 +194,7 @@ func (s *Server) rewriteStore(ctx context.Context, job *cryptJob, req cryptReque
 				from = st
 				return needsRewrite(st, req.To), nil
 			},
-			Body:        bodyRewrite(layer, req.To),
+			Body:        limitedBody(ctx, bodyRewrite(layer, req.To), limiter),
 			Stop:        ctx.Err,
 			LeftoverAge: 2 * cryptJobLease,
 		}
