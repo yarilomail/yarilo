@@ -156,6 +156,8 @@ func (s *Server) handle(ctx context.Context, sess *session, line string, conn ne
 		return s.commit(sess, line)
 	case proxy.OpRollback:
 		return s.rollback(sess, line)
+	case proxy.OpIncr:
+		return s.incr(ctx, sess, line)
 	}
 	return fmt.Sprintf("%c unknown command\n", proxy.ReplyFail)
 }
@@ -194,6 +196,32 @@ func (s *Server) lookup(ctx context.Context, sess *session, line string) string 
 		parts = append(parts, proxy.EscapeValue(v))
 	}
 	return fmt.Sprintf("%c%s\n", proxy.ReplyMulti, strings.Join(parts, "\t"))
+}
+
+// incr answers OpIncr through the dict's Counter; a driver without one is
+// refused by name, so the client knows the limit it serves cannot count.
+func (s *Server) incr(ctx context.Context, sess *session, line string) string {
+	if !sess.valid {
+		return fmt.Sprintf("%c no hello\n", proxy.ReplyFail)
+	}
+	f := strings.Split(strings.TrimSuffix(line[1:], "\n"), "\t")
+	if len(f) != 4 {
+		return fmt.Sprintf("%c malformed incr\n", proxy.ReplyFail)
+	}
+	delta, derr := strconv.ParseInt(f[1], 10, 64)
+	secs, terr := strconv.ParseInt(f[2], 10, 64)
+	if derr != nil || terr != nil || secs < 0 {
+		return fmt.Sprintf("%c malformed incr\n", proxy.ReplyFail)
+	}
+	c, ok := sess.d.(dict.Counter)
+	if !ok {
+		return fmt.Sprintf("%c no counter: dict %s, driver %s\n", proxy.ReplyFail, sess.name, sess.d.Name())
+	}
+	n, err := c.Incr(ctx, opSet(f[3]), f[0], delta, time.Duration(secs)*time.Second)
+	if err != nil {
+		return fmt.Sprintf("%c%s\n", proxy.ReplyFail, err)
+	}
+	return fmt.Sprintf("%c%d\n", proxy.ReplyOK, n)
 }
 
 func (s *Server) iterate(ctx context.Context, sess *session, line string, conn net.Conn) {

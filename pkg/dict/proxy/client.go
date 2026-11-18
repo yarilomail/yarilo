@@ -225,6 +225,37 @@ func (c *Client) Lookup(ctx context.Context, set *dict.OpSettings, key string) (
 	return nil, false, fmt.Errorf("dict/proxy: unexpected reply %q", reply)
 }
 
+// Incr implements dict.Counter through the service's OpIncr. A refusal,
+// whether the service predates the operation or its driver cannot count, is
+// dict.ErrNoCounter with the service's words.
+func (c *Client) Incr(ctx context.Context, set *dict.OpSettings, key string, delta int64, ttl time.Duration) (int64, error) {
+	user := userOf(set)
+	secs := int64(0)
+	if ttl > 0 {
+		secs = int64((ttl + time.Second - 1) / time.Second)
+	}
+	reply, err := c.roundTrip(ctx, user, fmt.Sprintf("%c%s\t%d\t%d\t%s\n", OpIncr, key, delta, secs, user))
+	if err != nil {
+		return 0, err
+	}
+	reply = strings.TrimSuffix(reply, "\n")
+	switch {
+	case reply == "":
+		return 0, fmt.Errorf("dict/proxy: empty reply")
+	case reply[0] == ReplyOK:
+		n, perr := strconv.ParseInt(reply[1:], 10, 64)
+		if perr != nil {
+			return 0, fmt.Errorf("dict/proxy: incr: value %q", reply[1:])
+		}
+		return n, nil
+	case reply[0] == ReplyFail:
+		return 0, fmt.Errorf("%w: %s: %s", dict.ErrNoCounter, c.addr, strings.TrimSpace(reply[1:]))
+	}
+	return 0, fmt.Errorf("dict/proxy: unexpected reply %q", reply)
+}
+
+var _ dict.Counter = (*Client)(nil)
+
 // Iterate implements dict.Dict. Rows stream until the empty line.
 func (c *Client) Iterate(ctx context.Context, set *dict.OpSettings, path string, flags dict.IterFlag) (dict.Iterator, error) {
 	user := userOf(set)
