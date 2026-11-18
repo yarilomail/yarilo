@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -249,4 +250,54 @@ func TestReferenceVectors(t *testing.T) {
 		t.Fatal("MANIFEST lists no vectors")
 	}
 	t.Logf("%d reference vectors", n)
+}
+
+// TestServedDigests holds the stand's reference check to the vector: an IMAP
+// server sends the plaintext with every bare LF as CRLF, so SERVED records
+// that body's size, its SHA-256 and the SHA-256 of one partial range.
+func TestServedDigests(t *testing.T) {
+	dir := filepath.Join("testdata", "reference")
+	raw, err := os.ReadFile(filepath.Join(dir, "SERVED"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 7 {
+			t.Fatalf("SERVED line %q: want 7 fields", line)
+		}
+		keyPEM, err := os.ReadFile(filepath.Join(dir, f[1]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := ParsePrivateKeyPEM(keyPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream, err := os.ReadFile(filepath.Join(dir, f[0]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, err := decryptAll(stream, []*ecdh.PrivateKey{key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var served []byte
+		for i, b := range plain {
+			if b == '\n' && (i == 0 || plain[i-1] != '\r') {
+				served = append(served, '\r')
+			}
+			served = append(served, b)
+		}
+		var off, n int
+		if _, err := fmt.Sscan(f[4]+" "+f[5], &off, &n); err != nil {
+			t.Fatal(err)
+		}
+		whole := sha256.Sum256(served)
+		part := sha256.Sum256(served[off : off+n])
+		got := fmt.Sprintf("%d %x %x", len(served), whole, part)
+		if want := f[2] + " " + f[3] + " " + f[6]; got != want {
+			t.Errorf("%s served: got %s, want %s", f[0], got, want)
+		}
+	}
 }

@@ -8,14 +8,19 @@
 #   check     yarctl config check exits 0 in yarilo-imap: the keys read
 #   metrics   mailbox_crypt_sealed_total grew, mailbox_crypt_failed_total is 0
 #             (the pod started with this arm, so the counters are the arm's)
-#   files     no message file of this arm is plaintext: a maildir file starts
+#   files     no message file the arm filled is plaintext (its account ranges
+#             only: other accounts on these domains predate the window); a
+#             maildir file starts
 #             with the age signature; an sdbox or mdbox file, whose record
 #             starts after the dbox header, carries the signature and no line
 #             of a message header
 #   disk      disk = index for the maildir and sdbox accounts filled
 #   size      RFC822.SIZE of a filled message is its plaintext size
 #   reference a reference-format file put in a maildir INBOX reads whole and in
-#             part through FETCH, against the vector's plaintext digest
+#             part through FETCH; the server sends the plaintext with CRLF line
+#             ends, so size and digests come from testdata SERVED, which a unit
+#             test holds to the vector. The literal is found on the runner, as
+#             the image's grep has no byte offsets; a marker not found is FAIL
 
 set -uo pipefail
 
@@ -65,14 +70,16 @@ else
   verdict metrics fail "sealed ${sealed:-?}, failed ${failures:-?}"
 fi
 
-# files: the arm wiped and filled these accounts, so every message file is its own.
+# files: the arm wiped and filled these ranges (ab-arm.sh type_domain), so
+# every message file in them is its own; accounts outside them are older.
 files=$(in_pod '
   sig="age-encryption.org/v1"
   md=0; mdbad=0; db=0; dbbad=0
-  for f in $(find /var/mail/vhosts/d00002.test -path "*/Maildir/cur/*" -type f -o -path "*/Maildir/new/*" -type f); do
+  users() { for n in $(seq "$2" "$3"); do echo "/var/mail/vhosts/$1/u$n@$1"; done; }
+  for f in $(find $(users d00002.test 51 100) -path "*/Maildir/cur/*" -type f -o -path "*/Maildir/new/*" -type f 2>/dev/null); do
     md=$((md + 1)); [ "$(head -c 21 "$f")" = "$sig" ] || mdbad=$((mdbad + 1))
   done
-  for f in $(find /var/mail/vhosts/d00003.test -path "*/dbox-Mails/u.*" -type f; find /var/mail/vhosts/d00001.test -path "*/storage/m.*" -type f); do
+  for f in $(find $(users d00003.test 101 150) -path "*/dbox-Mails/u.*" -type f 2>/dev/null; find $(users d00001.test 1 50) -path "*/storage/m.*" -type f 2>/dev/null); do
     db=$((db + 1))
     if ! grep -q "$sig" "$f" || grep -qiE "^(Subject|From|Message-ID):" "$f"; then dbbad=$((dbbad + 1)); fi
   done
@@ -113,28 +120,37 @@ else
 fi
 
 # reference: the vector into u99's INBOX (filled, outside every run's range),
-# then FETCH whole and a slice; the server's plaintext is digested in the pod.
+# then FETCH whole and a slice; the response comes back to the runner whole.
 vec="X25519-gcm-1000.bin"
-digest=$(awk -v f="$vec" '$1 == f { print $3 }' "$VEC/MANIFEST")
+set -- $(awk -v f="$vec" '$1 == f { print $3, $4, $5, $6, $7 }' "$VEC/SERVED")
+want_size="${1:-}" want_whole="${2:-}" s_off="${3:-}" s_len="${4:-}" want_slice="${5:-}"
 home=/var/mail/vhosts/d00002.test/u99@d00002.test/Maildir
 kube exec -i "$POD" -c yarilo-imap -- sh -c "cat > $home/new/reference-window.$ARM" < "$VEC/$vec"
-ref=$(in_pod "
-  printf 'a LOGIN u99@d00002.test $PASSWORD\r\nb SELECT INBOX\r\nc UID SEARCH ALL\r\nd LOGOUT\r\n' | nc -w 15 yarilo-imap-login 143 > /tmp/ref.s
-  uid=\$(tr -d '\r' < /tmp/ref.s | sed -n 's/^\* SEARCH .* \([0-9]*\)\$/\1/p')
-  printf \"a LOGIN u99@d00002.test $PASSWORD\r\nb SELECT INBOX\r\nc UID FETCH \$uid (RFC822.SIZE BODY.PEEK[])\r\nd UID FETCH \$uid (BODY.PEEK[]<100.50>)\r\ne LOGOUT\r\n\" | nc -w 15 yarilo-imap-login 143 > /tmp/ref.f
-  off() { grep -abo \"\$1\" /tmp/ref.f | head -1 | cut -d: -f1; }
-  w=\$(off 'BODY\[\] {1000}'); p=\$(off 'BODY\[\]<100> {50}')
-  whole=\$(dd if=/tmp/ref.f bs=1 skip=\$((w + 15)) count=1000 2>/dev/null | sha256sum | cut -d' ' -f1)
-  slice=\$(dd if=/tmp/ref.f bs=1 skip=\$((p + 18)) count=50 2>/dev/null | sha256sum | cut -d' ' -f1)
-  ref=\$(dd if=/tmp/ref.f bs=1 skip=\$((w + 15 + 100)) count=50 2>/dev/null | sha256sum | cut -d' ' -f1)
-  size=\$(tr -d '\r' < /tmp/ref.f | sed -n 's/.*RFC822.SIZE \([0-9]*\).*/\1/p' | head -1)
-  rm -f /tmp/ref.s /tmp/ref.f
-  echo \"\$size \$whole \$slice \$ref\"")
-set -- $ref
-if [ "${1:-}" = 1000 ] && [ "${2:-}" = "$digest" ] && [ -n "${3:-}" ] && [ "$3" = "${4:-}" ]; then
-  verdict reference pass "RFC822.SIZE 1000, BODY[] digest is the vector's, BODY[]<100.50> is bytes 100-149 of it"
+resp="$OUT/reference-$ARM.imap"
+in_pod "
+  uid=\$(printf 'a LOGIN u99@d00002.test $PASSWORD\r\nb SELECT INBOX\r\nc UID SEARCH ALL\r\nd LOGOUT\r\n' | nc -w 15 yarilo-imap-login 143 | tr -d '\r' | sed -n 's/^\* SEARCH .* \([0-9]*\)\$/\1/p')
+  printf \"a LOGIN u99@d00002.test $PASSWORD\r\nb SELECT INBOX\r\nc UID FETCH \$uid (RFC822.SIZE BODY.PEEK[])\r\nd UID FETCH \$uid (BODY.PEEK[]<$s_off.$s_len>)\r\ne LOGOUT\r\n\" | nc -w 15 yarilo-imap-login 143" > "$resp"
+size=$(tr -d '\r' < "$resp" | sed -n 's/.*RFC822.SIZE \([0-9]*\).*/\1/p' | head -1)
+# The literal starts after "{n}" and its CRLF; the offset is GNU grep's.
+literal_at() { # <marker>
+  local at
+  at=$(LC_ALL=C grep -abo -F "$1" "$resp" | head -1 | cut -d: -f1)
+  [ -n "$at" ] && echo $((at + ${#1} + 2))
+}
+w=$(literal_at "BODY[] {$want_size}")
+p=$(literal_at "BODY[]<$s_off> {$s_len}")
+if [ -z "$want_size" ]; then
+  verdict reference fail "$vec is not in $VEC/SERVED"
+elif [ -z "$w" ] || [ -z "$p" ]; then
+  verdict reference fail "size ${size:-?}: marker not found (BODY[] {$want_size}: ${w:-none}, BODY[]<$s_off> {$s_len}: ${p:-none}), response in $resp"
 else
-  verdict reference fail "size ${1:-?}, digest ${2:-?} (want $digest), slice ${3:-?} vs ${4:-?}"
+  whole=$(tail -c +$((w + 1)) "$resp" | head -c "$want_size" | sha256sum | cut -d' ' -f1)
+  slice=$(tail -c +$((p + 1)) "$resp" | head -c "$s_len" | sha256sum | cut -d' ' -f1)
+  if [ "$size" = "$want_size" ] && [ "$whole" = "$want_whole" ] && [ "$slice" = "$want_slice" ]; then
+    verdict reference pass "RFC822.SIZE $size, BODY[] and BODY[]<$s_off.$s_len> digests are the served vector's"
+  else
+    verdict reference fail "size ${size:-?} (want $want_size), whole $whole (want $want_whole), slice $slice (want $want_slice)"
+  fi
 fi
 in_pod "rm -f $home/new/reference-window.$ARM $home/cur/reference-window.$ARM*" || true
 
