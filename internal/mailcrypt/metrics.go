@@ -34,6 +34,10 @@ var (
 		Name: "mailbox_crypt_cache_bytes",
 		Help: "Decrypted reference-format bodies held in storage.mail_temp_dir by this process.",
 	})
+	metricKeyCache = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mailbox_crypt_key_cache_total",
+		Help: "age file keys looked up in this process's key cache, by result: hit, or miss (unwrapped with the private key).",
+	}, []string{"result"})
 	metricCacheBypass = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "mailbox_crypt_cache_bypass_total",
 		Help: "Reference-format bodies read as a stream because storage.mail_crypt.reference_cache_size was full.",

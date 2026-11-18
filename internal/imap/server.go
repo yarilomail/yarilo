@@ -3250,6 +3250,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			continue
 		}
 		mw := w.CreateMessage(seqNum)
+		msgBody := &fetchBody{s: s, m: m}
 		// What this response could not produce, gathered per message rather
 		// than per attribute: one message the server answered short is one
 		// event, whether it lost the envelope, the structure, or the body.
@@ -3342,7 +3343,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			// the client as the message wrote them (#1714).
 			if text, ok := envCache.EnvelopeText(m); ok {
 				mw.WriteEnvelopeRaw(text)
-			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
+			} else if rc, ferr := msgBody.open(); ferr == nil {
 				rd := &missReader{r: rc}
 				hdr, _ := textproto.ReadHeader(bufio.NewReader(rd))
 				rc.Close()
@@ -3364,7 +3365,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		} else if opts.BodyStructure != nil {
 			if bs := envCache.BodyStructure(m); bs != nil {
 				mw.WriteBodyStructure(bs)
-			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
+			} else if rc, ferr := msgBody.open(); ferr == nil {
 				rd := &missReader{r: rc}
 				bs := imaptext.Canonical(imapserver.ExtractBodyStructure(rd))
 				rerr := rd.missedWhole(m)
@@ -3392,7 +3393,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				}
 				break
 			}
-			rc, ferr := s.fetchSelected(m)
+			rc, ferr := msgBody.open()
 			if ferr != nil {
 				if slog.Default().Enabled(context.Background(), slog.LevelDebug) &&
 					section.Specifier == imaplib.PartSpecifierNone && len(section.Part) == 0 {
@@ -3453,7 +3454,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			if !s.readableSelected(m) {
 				break
 			}
-			rc, ferr := s.fetchSelected(m)
+			rc, ferr := msgBody.open()
 			if ferr != nil {
 				mark("binary[]", ferr)
 				break
@@ -3476,7 +3477,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			if !s.readableSelected(m) {
 				break
 			}
-			rc, ferr := s.fetchSelected(m)
+			rc, ferr := msgBody.open()
 			if ferr != nil {
 				break
 			}
@@ -3496,6 +3497,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				"uid", m.UID, "reason", reason,
 				"missing", strings.Join(unreadable, ","), "err", reasonErr)
 		}
+		msgBody.close()
 		mw.Close() //nolint:errcheck
 	}
 	if len(seenWrites) > 0 {

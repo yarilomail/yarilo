@@ -14,10 +14,11 @@ hostname: ""
 ## move on develop (#1528).
 config_schema_version: 32
 
-## Size limit of the /tmp emptyDir in every pod, e.g. "1Gi"; empty: none.
-## Past it kubelet evicts the pod. storage.mail_temp_dir lives there, with its
-## reference_cache_size, which must stay below it.
-tmpSizeLimit: ""
+## Size limit of the /tmp emptyDir in every pod; empty: none. Past it kubelet
+## evicts the pod. storage.mail_temp_dir lives there, with its
+## reference_cache_size (256M), which must stay below it; the rest of /tmp
+## peaked at 6 MB in a backend pod under load, so 320Mi leaves a margin.
+tmpSizeLimit: "320Mi"
 
 ## Mail encryption keys (storage.mail_crypt): an existing Secret, mounted
 ## read-only at /etc/yarilo/mail-crypt in every container that opens mail.
