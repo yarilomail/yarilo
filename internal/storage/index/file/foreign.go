@@ -237,6 +237,16 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	if err := fsyncDir(fs.indexDir); err != nil {
 		return false, fmt.Errorf("fileindex/convert: folder %q: %w", fs.folder, err)
 	}
+	// A full-text hit resolves through the GUID store; appended here and not
+	// by AppendMessage, the adopted messages need their rows (#2589).
+	adopted := make([]mailbox.GUIDRecord, 0, len(metas))
+	for _, meta := range metas {
+		if meta.GUID != ([16]byte{}) {
+			adopted = append(adopted, mailbox.GUIDRecord{GUID: meta.GUID, FolderGUID: fs.hdr.MailboxGUID,
+				UID: meta.UID, InternalDate: meta.InternalDate.Unix()})
+		}
+	}
+	u.applyGUIDTracking(fs, guidBatch{add: adopted})
 	if err := dboxconv.RemoveForeignFolder(dir); err != nil {
 		return false, err
 	}
