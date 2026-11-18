@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
@@ -574,4 +576,43 @@ func TestRewriteGetsThroughUnderConstantStores(t *testing.T) {
 		}
 	}
 	t.Logf("%d swaps landed against four storing sessions", done)
+}
+
+// On a volume with no room the lock file cannot be made, and a STORE, an
+// unlink and an expunge still go, unheld and counted; a swap there refuses.
+func TestAFullVolumeStillLetsMailGo(t *testing.T) {
+	box, _ := twoHandles(t)
+	if err := box.Create("Other"); err != nil {
+		t.Fatal(err)
+	}
+	a := saveFlagged(t, box, "INBOX", "Subject: a\r\n\r\nx\r\n", 1)
+	b := saveFlagged(t, box, "INBOX", "Subject: b\r\n\r\ny\r\n", 2)
+	undo := filelock.SetNoRoomForLockFiles()
+	defer undo()
+	before := testutil.ToFloat64(metricCryptLock.WithLabelValues("shared", "no-room"))
+	if _, err := box.WriteFlags("INBOX", a, []string{`\Deleted`}, nil); err != nil {
+		t.Fatalf("STORE: %v", err)
+	}
+	cur, _, _ := box.currentName("INBOX", maildirBase(a))
+	if err := box.HoldFolder("INBOX", "expunge", func() error { return box.RemoveHeld("INBOX", cur) }); err != nil {
+		t.Fatalf("expunge: %v", err)
+	}
+	if err := box.Remove("INBOX", b); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if files := filesOf(t, box, "INBOX"); len(files) != 0 {
+		t.Fatalf("left %v", files)
+	}
+	if got := testutil.ToFloat64(metricCryptLock.WithLabelValues("shared", "no-room")) - before; got != 3 {
+		t.Fatalf("counted %v unheld takes, want 3", got)
+	}
+	c := func() string {
+		undo()
+		defer func() { undo = filelock.SetNoRoomForLockFiles() }()
+		return saveFlagged(t, box, "Other", "Subject: c\r\n\r\nz\r\n", 1)
+	}()
+	_ = c
+	if err := box.RewriteRecord("Other", &mailbox.MessageMeta{UID: 1}, markRewrite("X: 1\r\n")); err == nil {
+		t.Fatal("a swap ran where its lock file could not be made")
+	}
 }

@@ -15,6 +15,10 @@ import (
 // form.
 var ErrNoSharedLock = errors.New("filelock: no shared lock here (flock is needed)")
 
+// ErrNoSpaceForLock is a lock file that does not exist and cannot be made: the
+// volume is out of space or inodes.
+var ErrNoSpaceForLock = errors.New("filelock: no room on the volume to create the lock file")
+
 // Mode is a hold's kind under TakeMode.
 type Mode int
 
@@ -40,7 +44,15 @@ func TakeMode(path string, method Method, mode Mode, wait time.Duration) (*ModeH
 	if method != MethodFlock || volumeRefused(path) {
 		return nil, ErrNoSharedLock
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	// An existing file first, which needs no room: a full volume must still
+	// lock where the file was made before.
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		f, err = openCreateFn(path)
+		if errors.Is(err, unix.ENOSPC) || errors.Is(err, unix.EDQUOT) {
+			return nil, fmt.Errorf("filelock: create %s: %w: %w", path, ErrNoSpaceForLock, err)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("filelock: open %s: %w", path, err)
 	}
@@ -70,8 +82,22 @@ func TakeMode(path string, method Method, mode Mode, wait time.Duration) (*ModeH
 	}
 }
 
-// flockFn is the seam a row uses to make the kernel refuse flock.
-var flockFn = unix.Flock
+// flockFn is the seam a row uses to make the kernel refuse flock, and
+// openCreateFn the one for a volume with no room left.
+var (
+	flockFn      = unix.Flock
+	openCreateFn = func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	}
+)
+
+// SetNoRoomForLockFiles makes every lock-file creation fail as a full volume
+// does, and returns the undo. Test seam for packages above this one.
+func SetNoRoomForLockFiles() func() {
+	prev := openCreateFn
+	openCreateFn = func(string) (*os.File, error) { return nil, &os.PathError{Op: "open", Err: unix.ENOSPC} }
+	return func() { openCreateFn = prev }
+}
 
 // Release gives the hold back; closing the descriptor is what releases it.
 func (h *ModeHold) Release() error {

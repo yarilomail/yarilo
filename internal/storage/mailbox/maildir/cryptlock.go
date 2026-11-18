@@ -23,13 +23,19 @@ func (u *userMailbox) cryptLockPath(folder string) string {
 }
 
 // sharedCrypt holds the folder's crypt lock shared for a rename or an unlink
-// of a message file. A volume without flock holds nothing: no swap runs there.
+// of a message file. A volume without flock holds nothing: no swap runs
+// there. Nor does a full volume where the lock file was never made: an
+// unlink must still go, and a swap needs the same room for its temp.
 func (u *userMailbox) sharedCrypt(folder, site string) (func(), error) {
 	forget := u.noteHold("crypt:"+folder, site)
 	h, err := filelock.TakeMode(u.cryptLockPath(folder), u.b.lockMethod, filelock.Shared, uidListLockWait)
 	switch {
 	case errors.Is(err, filelock.ErrNoSharedLock):
 		forget()
+		return func() {}, nil
+	case errors.Is(err, filelock.ErrNoSpaceForLock):
+		forget()
+		metricCryptLock.WithLabelValues("shared", "no-room").Inc()
 		return func() {}, nil
 	case err != nil:
 		forget()

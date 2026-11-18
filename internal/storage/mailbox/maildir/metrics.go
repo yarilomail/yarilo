@@ -86,7 +86,7 @@ const (
 // had to wait: sessions take it shared and should never wait for each other.
 var metricCryptLock = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_crypt_lock_total",
-	Help: "Holds of a folder's re-encryption lock by mode (shared by renames and unlinks, exclusive by a re-encryption's swap) and whether the take waited.",
+	Help: "Holds of a folder's re-encryption lock by mode (shared by renames and unlinks, exclusive by a re-encryption's swap) and whether the take waited; waited=no-room is a rename or unlink that went unheld because the volume had no room to create the lock file.",
 }, []string{"mode", "waited"})
 
 // Where a listing's cost comes from: the uid list, read whole or by its tail,

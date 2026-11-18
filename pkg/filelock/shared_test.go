@@ -61,3 +61,25 @@ func TestTakeModeRefusesWithoutFlock(t *testing.T) {
 		t.Fatalf("a volume refusing flock: %v", err)
 	}
 }
+
+// A full volume still locks an existing file; only a missing one cannot be made.
+func TestTakeModeOnAFullVolume(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "crypt.lock")
+	undo := SetNoRoomForLockFiles()
+	if _, err := TakeMode(path, MethodFlock, Shared, time.Second); !errors.Is(err, ErrNoSpaceForLock) {
+		t.Fatalf("a missing file on a full volume: %v", err)
+	}
+	undo()
+	h, err := TakeMode(path, MethodFlock, Shared, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = h.Release()
+	undo = SetNoRoomForLockFiles()
+	defer undo()
+	h, err = TakeMode(path, MethodFlock, Exclusive, time.Second)
+	if err != nil {
+		t.Fatalf("an existing file on a full volume: %v", err)
+	}
+	_ = h.Release()
+}
