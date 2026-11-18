@@ -44,19 +44,19 @@ func (t *DictDuplicateTracker) IsDuplicate(ctx context.Context, handle, id strin
 	}
 	if found {
 		if last {
-			if err := t.mark(ctx, key, seconds); err != nil {
+			if err := t.mark0(ctx, key, seconds); err != nil {
 				return true, err
 			}
 		}
 		return true, nil
 	}
-	if err := t.mark(ctx, key, seconds); err != nil {
+	if err := t.mark0(ctx, key, seconds); err != nil {
 		return false, err
 	}
 	return false, nil
 }
 
-func (t *DictDuplicateTracker) mark(ctx context.Context, key string, seconds uint32) error {
+func (t *DictDuplicateTracker) mark0(ctx context.Context, key string, seconds uint32) error {
 	tx, err := t.d.Begin(ctx, &dict.OpSettings{Username: t.username, ExpireSecs: seconds})
 	if err != nil {
 		return fmt.Errorf("sieve/duplicate: begin: %w", err)
