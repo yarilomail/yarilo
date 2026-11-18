@@ -5,6 +5,8 @@
 #   KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/crypt-checks.sh <arm> <out-dir>
 #
 # PASS/FAIL lines in <out-dir>/crypt-<arm>.txt; exit 1 when any fails.
+# CRYPT_CHECKS=reference runs the reference check alone, for a stand that
+# reads the reference format and writes nothing encrypted.
 #   check     yarctl config check exits 0 in yarilo-imap: the keys read
 #   metrics   mailbox_crypt_sealed_total grew, mailbox_crypt_failed_total is 0,
 #             summed over every backend pod
@@ -51,6 +53,7 @@ imap_session() {
   in_pod "printf '$1' | nc -w 15 yarilo-imap-login 143"
 }
 
+if [ "${CRYPT_CHECKS:-all}" = all ]; then
 # check
 if out=$(in_pod 'yarctl config check' 2>&1); then
   verdict check pass "exit 0 in $POD/yarilo-imap"
@@ -143,16 +146,18 @@ else
   verdict size fail "RFC822.SIZE ${want:-?}, body ${got:-?}"
 fi
 
+fi
+
 # reference: the vector into u99's INBOX (filled, outside every run's range),
 # then FETCH whole and a slice; the response comes back to the runner whole.
 vec="X25519-gcm-1000.bin"
 set -- $(awk -v f="$vec" '$1 == f { print $3, $4, $5, $6, $7 }' "$VEC/SERVED")
 want_size="${1:-}" want_whole="${2:-}" s_off="${3:-}" s_len="${4:-}" want_slice="${5:-}"
 home=/var/mail/vhosts/d00002.test/u99@d00002.test/Maildir
-kube exec -i "$POD" -c yarilo-imap -- sh -c "cat > $home/new/reference-window.$ARM" < "$VEC/$vec"
+kube exec -i "$POD" -c yarilo-imap -- sh -c "mkdir -p $home/new && cat > $home/new/reference-window.$ARM" < "$VEC/$vec"
 resp="$OUT/reference-$ARM.imap"
 in_pod "
-  uid=\$(printf 'a LOGIN u99@d00002.test $PASSWORD\r\nb SELECT INBOX\r\nc UID SEARCH ALL\r\nd LOGOUT\r\n' | nc -w 15 yarilo-imap-login 143 | tr -d '\r' | sed -n 's/^\* SEARCH .* \([0-9]*\)\$/\1/p')
+  uid=\$(printf 'a LOGIN u99@d00002.test $PASSWORD\r\nb SELECT INBOX\r\nc UID SEARCH ALL\r\nd LOGOUT\r\n' | nc -w 15 yarilo-imap-login 143 | tr -d '\r' | sed -n 's/^\* SEARCH.* \([0-9][0-9]*\)\$/\1/p')
   printf \"a LOGIN u99@d00002.test $PASSWORD\r\nb SELECT INBOX\r\nc UID FETCH \$uid (RFC822.SIZE BODY.PEEK[])\r\nd UID FETCH \$uid (BODY.PEEK[]<$s_off.$s_len>)\r\ne LOGOUT\r\n\" | nc -w 15 yarilo-imap-login 143" > "$resp"
 size=$(tr -d '\r' < "$resp" | sed -n 's/.*RFC822.SIZE \([0-9]*\).*/\1/p' | head -1)
 # The literal starts after "{n}" and its CRLF; the offset is GNU grep's.
