@@ -504,24 +504,28 @@ done
 # throughput further than anything under test, and an arm that starts bigger
 # than the one before it is not a comparison (#1875).
 start_inventory() {
-  local pod f=0 k=0 out
-  pod=$(first_pod backend)
+  local f=0 k=0 t
   for t in $TYPES; do
-    set -- $(type_domain "$t")
-    out=$(kube exec "$pod" -c yarilo-imap -- sh -c "
-      f=0; k=0
-      for n in \$(seq $2 $3); do
-        d=\"/var/mail/vhosts/$1/u\${n}@$1\"
-        [ -d \"\$d\" ] || continue
-        f=\$((f+\$(find \"\$d\" -type f 2>/dev/null | wc -l)))
-        k=\$((k+\$(du -sk \"\$d\" 2>/dev/null | cut -f1)))
-      done
-      echo \"\$f \$k\"" 2>/dev/null)
-    set -- $out
+    set -- $(type_inventory "$t")
     f=$((f + ${1:-0}))
     k=$((k + ${2:-0}))
   done
   echo "files=$f du_kb=$k"
+}
+# type_inventory prints "<files> <du_kb>" over one type's filled accounts.
+type_inventory() {
+  local pod
+  pod=$(first_pod backend)
+  set -- $(type_domain "$1")
+  kube exec "$pod" -c yarilo-imap -- sh -c "
+    f=0; k=0
+    for n in \$(seq $2 $3); do
+      d=\"/var/mail/vhosts/$1/u\${n}@$1\"
+      [ -d \"\$d\" ] || continue
+      f=\$((f+\$(find \"\$d\" -type f 2>/dev/null | wc -l)))
+      k=\$((k+\$(du -sk \"\$d\" 2>/dev/null | cut -f1)))
+    done
+    echo \"\$f \$k\"" 2>/dev/null
 }
 # probe_inventory counts the one mailbox the seed itself fills.
 probe_inventory() {
@@ -608,6 +612,11 @@ if [ "$KEEP_STORE" = "1" ]; then
 else
   seeded=$(start_inventory)
   echo "-- start after seed: ${seeded:-unreadable}" | tee "$OUT/start-$ARM-seeded.txt"
+  # Per type, as one type's growth hides in another's block rounding.
+  for t in $TYPES; do
+    set -- $(type_inventory "$t")
+    echo "-- start after seed: type=$t files=${1:-?} du_kb=${2:-?}"
+  done | tee "$OUT/start-$ARM-seeded-types.txt"
 fi
 # u1-150 are empty at the start by design: the seed puts them in the database
 # and imaptest fills them during the run. What the seed does deliver is the
