@@ -8,6 +8,7 @@
 #   check     yarctl config check exits 0 in yarilo-imap: the keys read
 #   metrics   mailbox_crypt_sealed_total grew, mailbox_crypt_failed_total is 0
 #             (the pod started with this arm, so the counters are the arm's)
+#   (info)    key cache hits and misses over the backend pods
 #   files     no message file the arm filled is plaintext (its account ranges
 #             only: other accounts on these domains predate the window); a
 #             maildir file starts
@@ -69,6 +70,18 @@ if [ "${sealed:-0}" -gt 0 ] && [ "${failures:-1}" = 0 ]; then
 else
   verdict metrics fail "sealed ${sealed:-?}, failed ${failures:-?}"
 fi
+
+# key cache: hits and misses over both backend pods (the arm's sessions
+# land on either), since each started with this arm. A line, not a verdict.
+hits=0; misses=0
+for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+  set -- $(POD="$pod" in_pod 'for p in $(seq 8080 8090); do wget -qO- -T 5 http://127.0.0.1:$p/metrics 2>/dev/null; done' |
+    awk '$1 == "mailbox_crypt_key_cache_total{result=\"hit\"}" { h += $2 } $1 == "mailbox_crypt_key_cache_total{result=\"miss\"}" { m += $2 } END { printf "%d %d", h, m }')
+  hits=$((hits + ${1:-0})); misses=$((misses + ${2:-0}))
+done
+share="-"
+[ $((hits + misses)) -gt 0 ] && share="$((hits * 100 / (hits + misses)))%"
+echo "INFO key cache: hit $hits, miss $misses ($share hits)" | tee -a "$RESULT"
 
 # files: the arm wiped and filled these ranges (ab-arm.sh type_domain), so
 # every message file in them is its own; accounts outside them are older.
