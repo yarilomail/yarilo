@@ -266,6 +266,40 @@ type RecordRewriter interface {
 	SweepRewriteTemps(folder string, age time.Duration) (int, error)
 }
 
+// StoreRewrite is a re-encryption of a store whose messages share files.
+type StoreRewrite struct {
+	// Needs says whether a record's stored body is to be rewritten.
+	Needs func(RawBody) (bool, error)
+	// Body rewrites one record; Recorded is not used, the map answers it.
+	Body BodyRewrite
+	// File reports each file the pass took: records rewritten, records
+	// carried over as they were, and why the file was left, if it was.
+	File func(FileRewrite)
+	// Stop is asked before each file; an error ends the pass with it.
+	Stop func() error
+	// LeftoverAge sweeps, before the pass, the rewrite's own temp files
+	// older than it: what a pass killed between its holds left. Zero sweeps
+	// nothing; no storage file is ever swept.
+	LeftoverAge time.Duration
+}
+
+// FileRewrite is one shared file's outcome.
+type FileRewrite struct {
+	FileID    uint32
+	Rewritten int
+	Copied    int
+	// Err leaves the file as it was: ErrRecordChanged when the map moved
+	// under it, a Fill or Verify error naming the record otherwise.
+	Err error
+	// Record is the storage key of the record Err is about, when one is.
+	Record uint32
+}
+
+// StoreRewriter rewrites such a store one file at a time.
+type StoreRewriter interface {
+	RewriteStore(rw StoreRewrite) error
+}
+
 // UnreferencedRawReader is a store that keeps messages no folder refers to
 // (mdbox records with no references, until purge).
 type UnreferencedRawReader interface {
