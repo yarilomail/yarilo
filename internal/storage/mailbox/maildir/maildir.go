@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/crlf"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxmetrics"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
@@ -1168,7 +1169,22 @@ func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, err
 	if err != nil {
 		return nil, fmt.Errorf("maildir: fetch %s: %w", filename, err)
 	}
-	return o, nil
+	// RFC822.SIZE is the virtual size, every bare LF counted as CRLF. A name
+	// whose two sizes agree says the body is CRLF already: it is served as it
+	// lies, with random access. Otherwise, or when the name carries no sizes,
+	// the body is served through crlf.New and offsets count the stream that
+	// goes on the wire (#2581).
+	if size, vsize, ok := sizesFromName(filename); ok && size == vsize {
+		return o, nil
+	}
+	return crlfBody{Reader: crlf.New(o), Closer: o}, nil
+}
+
+// crlfBody is a body served with CRLF line ends; it has no random access, as
+// its offsets are not the file's.
+type crlfBody struct {
+	io.Reader
+	io.Closer
 }
 
 // fileBody is an open message file as a mailcrypt.Body.

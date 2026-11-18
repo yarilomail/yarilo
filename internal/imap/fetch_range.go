@@ -34,3 +34,25 @@ func readRange(r mailbox.RangeReader, p *imaplib.SectionPartial) []byte {
 	}
 	return buf[:got]
 }
+
+// readStreamRange is readRange over a body with no random access: the bytes
+// before the range are read and dropped, nothing is parsed, so the range of a
+// body that is not a parsable message is still the range (#2581).
+func readStreamRange(r io.Reader, p *imaplib.SectionPartial) []byte {
+	skipped, err := io.CopyN(io.Discard, r, p.Offset)
+	if skipped < p.Offset {
+		return nil
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil
+	}
+	src := r
+	if p.Size >= 0 {
+		src = io.LimitReader(r, p.Size)
+	}
+	out, err := io.ReadAll(src)
+	if err != nil {
+		return nil
+	}
+	return out
+}

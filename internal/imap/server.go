@@ -3410,6 +3410,8 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			var extracted []byte
 			if rr, ok := rc.(mailbox.RangeReader); ok && wholeMessageRange(section) {
 				extracted = readRange(rr, section.Partial)
+			} else if wholeMessageRange(section) {
+				extracted = readStreamRange(rc, section.Partial)
 			} else {
 				extracted = imapserver.ExtractBodySection(rc, section)
 			}
