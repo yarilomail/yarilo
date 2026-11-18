@@ -81,6 +81,16 @@ is crossed twice in each direction.
   plaintext size, and a reference-format file in a maildir INBOX reads whole
   and in part through FETCH. PASS/FAIL lines in `crypt-<arm>.txt`.
 
+The reference check alone, without a window, on the `mailcrypt-keys` overlay
+(reference keys set, nothing written encrypted), with the same one-time Secret
+and the same restore:
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/mailcrypt-reference-check.sh <image-tag> <out-dir>
+```
+
+Result in `crypt-reference.txt`.
+
 ## The acceptance run
 
 ```
