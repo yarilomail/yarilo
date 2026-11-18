@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
@@ -21,6 +24,8 @@ var _ mailbox.StoreRewriter = (*userMailbox)(nil)
 var (
 	testBetweenRewriteHolds func()
 	testBeforeRewriteMove   func()
+	testAfterRewriteMove    func() error
+	removeOldFile           = os.Remove
 )
 
 // RewriteStore re-encrypts the store one m.<N> at a time, with purge's
@@ -35,6 +40,11 @@ func (u *userMailbox) RewriteStore(rw mailbox.StoreRewrite) error {
 	m, err := u.openMap()
 	if err != nil {
 		return err
+	}
+	if rw.LeftoverAge > 0 {
+		if err := u.sweepLeftovers(m, rw.LeftoverAge); err != nil {
+			return err
+		}
 	}
 	recs, err := m.RecordsReloaded()
 	if err != nil {
@@ -120,7 +130,10 @@ func (u *userMailbox) rewriteFile(m *mdboxmap.Map, fileID uint32, rw mailbox.Sto
 		testBetweenRewriteHolds()
 	}
 
-	// Second hold: the file must be as the snapshot saw it.
+	// Second hold: the file must be as the snapshot saw it. From the repoint
+	// on, the output may be what the map names, whatever error follows: it
+	// is never removed after that, as purge never removes its new file.
+	repointed := false
 	err = m.Place(func(p *mdboxmap.Placement) error {
 		now := p.RecordsInFile(fileID)
 		st, serr := os.Stat(srcPath)
@@ -130,22 +143,36 @@ func (u *userMailbox) rewriteFile(m *mdboxmap.Map, fileID uint32, rw mailbox.Sto
 		if testBeforeRewriteMove != nil {
 			testBeforeRewriteMove()
 		}
+		repointed = true
 		if err := p.AppendMove(moved, nil); err != nil {
 			return err
 		}
-		return os.Remove(srcPath)
+		if testAfterRewriteMove != nil {
+			if err := testAfterRewriteMove(); err != nil {
+				return err
+			}
+		}
+		if err := removeOldFile(srcPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			// The map no longer names it: a leftover the next pass sweeps.
+			slog.Warn("mdbox/rewrite: the old file stays, the map no longer names it",
+				"user", u.username, "file", srcPath, "err", err)
+		}
+		return nil
 	})
 	switch {
+	case repointed && err != nil:
+		return out, fmt.Errorf("mdbox/rewrite m.%d: after the repoint, output m.%d kept: %w", fileID, dstID, err)
+	case repointed:
+		return out, nil
 	case errors.Is(err, mailbox.ErrRecordChanged):
 		_ = os.Remove(dstPath)
 		out.Err = fmt.Errorf("mdbox/rewrite m.%d: %w", fileID, err)
 		out.Rewritten, out.Copied = 0, 0
 		return out, nil
-	case err != nil:
+	default:
 		_ = os.Remove(dstPath)
 		return out, fmt.Errorf("mdbox/rewrite m.%d: second hold: %w", fileID, err)
 	}
-	return out, nil
 }
 
 // tierPath is where m.<id> lies, and whether that is alt.
@@ -292,4 +319,51 @@ func sameRecords(a, b []mdboxmap.MapEntry) bool {
 		}
 	}
 	return true
+}
+
+// sweepLeftovers removes, under the map lock, every m.<N> in either tier that
+// no record names, past age and not the append target. Under the lock no save
+// or purge is between writing a file and naming it, so such a file is what a
+// rewrite or purge killed mid-way left; the scan of a rebuild leaves its
+// records unnamed, as their GUIDs are the live copies' (pairWithMap).
+func (u *userMailbox) sweepLeftovers(m *mdboxmap.Map, age time.Duration) error {
+	return m.Place(func(p *mdboxmap.Placement) error {
+		dirs := []string{u.storagePath()}
+		if u.AltEnabled() {
+			dirs = append(dirs, u.altStoragePath())
+		}
+		for _, dir := range dirs {
+			entries, err := os.ReadDir(dir)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("mdbox/rewrite: sweep %s: %w", dir, err)
+			}
+			for _, e := range entries {
+				id, ok := mfileID(e.Name())
+				if !ok || id == p.HighestFileID() || len(p.RecordsInFile(id)) > 0 {
+					continue
+				}
+				info, err := e.Info()
+				if err != nil || time.Since(info.ModTime()) < age {
+					continue
+				}
+				path := filepath.Join(dir, e.Name())
+				if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("mdbox/rewrite: sweep %s: %w", path, err)
+				}
+				slog.Info("mdbox/rewrite: removed a file no record names", "user", u.username, "file", path)
+			}
+		}
+		return nil
+	})
+}
+
+func mfileID(name string) (uint32, bool) {
+	if !strings.HasPrefix(name, "m.") {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(name[2:], 10, 32)
+	return uint32(n), err == nil
 }

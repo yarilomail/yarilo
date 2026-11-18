@@ -180,8 +180,9 @@ func (s *Server) rewriteStore(ctx context.Context, job *cryptJob, req cryptReque
 				from = st
 				return needsRewrite(st, req.To), nil
 			},
-			Body: bodyRewrite(layer, req.To),
-			Stop: ctx.Err,
+			Body:        bodyRewrite(layer, req.To),
+			Stop:        ctx.Err,
+			LeftoverAge: 2 * cryptJobLease,
 		}
 		rw.File = func(f mailbox.FileRewrite) {
 			if f.Err == nil {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
 	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -382,5 +383,117 @@ func TestRewriteStoreStaysInItsTier(t *testing.T) {
 	}
 	if got := bodyOf(t, u, name); got != "Subject: s\r\n\r\nx\r\n" {
 		t.Fatalf("body %q", got)
+	}
+}
+
+// Once the map is repointed the output is never removed: an old file that
+// will not go stays as a leftover the next pass sweeps, and an error after
+// the repoint keeps the output the map names. Every body still reads.
+func TestRewriteStoreKeepsTheOutputAfterTheRepoint(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T)
+		fails bool
+	}{
+		{"the old file cannot be unlinked", func(t *testing.T) {
+			removeOldFile = func(string) error { return &os.PathError{Op: "remove", Err: os.ErrPermission} }
+			t.Cleanup(func() { removeOldFile = os.Remove })
+		}, false},
+		{"an error after the map write", func(t *testing.T) {
+			testAfterRewriteMove = func() error { return errors.New("the lease was lost on the way out") }
+			t.Cleanup(func() { testAfterRewriteMove = nil })
+		}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			k := newRewriteKeys(t)
+			u := lockedMdbox(t, t.TempDir(), "", lockstest.Server(t)(), k.server)
+			names := []string{
+				saveVia(t, u, nil, "Subject: a\r\n\r\none\r\n"),
+				saveVia(t, u, []agelib.Recipient{k.oldID.Recipient()}, "Subject: b\r\n\r\ntwo\r\n"),
+			}
+			want := map[string]string{}
+			for _, n := range names {
+				want[n] = bodyOf(t, u, n)
+			}
+			c.setup(t)
+			err := u.RewriteStore(storeRewrite(k.server))
+			if c.fails != (err != nil) {
+				t.Fatalf("err %v", err)
+			}
+			m, _ := u.openMap()
+			if _, err := m.RecordsReloaded(); err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range names {
+				if got := bodyOf(t, u, n); got != want[n] {
+					t.Fatalf("%s reads %q after the repoint", n, got)
+				}
+			}
+		})
+	}
+}
+
+// What a pass killed between its holds leaves, a file no record names, is
+// swept by the next pass once it is old enough; a young one stays.
+func TestRewriteStoreSweepsLeftovers(t *testing.T) {
+	k := newRewriteKeys(t)
+	u := lockedMdbox(t, t.TempDir(), "", lockstest.Server(t)(), k.server)
+	name := saveVia(t, u, nil, "Subject: a\r\n\r\none\r\n")
+	file, _ := os.ReadFile(u.mfilePath(1))
+	old, young := u.mfilePath(50), u.mfilePath(51)
+	for _, p := range []string{old, young} {
+		if err := os.WriteFile(p, file, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(old, past, past)
+	rw := storeRewrite(k.server)
+	rw.LeftoverAge = time.Minute
+	if err := u.RewriteStore(rw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("the old leftover is still there")
+	}
+	if _, err := os.Stat(young); err != nil {
+		t.Error("a young file no record names was taken")
+	}
+	if got := bodyOf(t, u, name); got != "Subject: a\r\n\r\none\r\n" {
+		t.Fatalf("body %q", got)
+	}
+}
+
+// A leftover carrying copies of live records is not brought back by a
+// rebuild that restores orphans: its records' GUIDs are the live copies',
+// which the scan pairs with the map first, so no message appears twice.
+func TestALeftoverIsNotRestoredTwice(t *testing.T) {
+	box, idx := newBoxAndIndex(t, filepath.Join(t.TempDir(), "home"))
+	deliverMsg(t, box, idx, "INBOX", "Subject: a\r\n\r\none\r\n")
+	deliverMsg(t, box, idx, "INBOX", "Subject: b\r\n\r\ntwo\r\n")
+	file, err := os.ReadFile(box.mfilePath(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(box.mfilePath(77), file, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, true); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := idx.OpenFolder("INBOX", 0)
+	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("INBOX holds %d messages after the rebuild, want the 2 delivered", len(msgs))
+	}
+	seen := map[[16]byte]bool{}
+	for _, m := range msgs {
+		if seen[m.GUID] {
+			t.Fatalf("GUID %x twice", m.GUID)
+		}
+		seen[m.GUID] = true
 	}
 }
