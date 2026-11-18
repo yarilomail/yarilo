@@ -17,10 +17,9 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
-// Two sessions storing flags on different messages both finish, each taking
-// the folder's list once for its rename: a re-encryption's swap renames onto
-// these names under it (yarilo#2591); before, a flag write took none (#1840).
-func TestTwoSessionsStoreTakingTheListOnce(t *testing.T) {
+// Two sessions storing flags on different messages never wait for each other:
+// a flag write is a rename, and a rename excludes nobody (#1840).
+func TestTwoSessionsStoreWithoutWaiting(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home}
 	a := maildir.New().OpenUser(info)
@@ -58,8 +57,8 @@ func TestTwoSessionsStoreTakingTheListOnce(t *testing.T) {
 			t.Fatalf("session %d: %v", i, err)
 		}
 	}
-	if got := fileLockHolds(t) - before; got != 2 {
-		t.Errorf("two stores took %d file locks, want one each", got)
+	if got := fileLockHolds(t) - before; got != 0 {
+		t.Errorf("two stores took %d file locks, want 0", got)
 	}
 }
 
