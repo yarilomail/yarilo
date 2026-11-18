@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/dict"
 )
 
 type forwarded struct {
@@ -161,13 +164,18 @@ func TestRedirectDuplicate(t *testing.T) {
 	}
 }
 
-// A send that failed records nothing: the next delivery forwards it.
+// A send that failed keeps the message and records nothing: the next delivery
+// forwards it.
 func TestRedirectFailedSendRecordsNoDuplicate(t *testing.T) {
 	e, out, fail := redirectEngine(t, nil)
 	home := withScript(t, "u1", `redirect "dest@x.test";`)
 	*fail = true
-	if _, err := e.Filter(context.Background(), parityOpts("u1", home, parityMsg)); err != nil {
+	res, err := e.Filter(context.Background(), parityOpts("u1", home, parityMsg))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !inInbox(res) {
+		t.Fatal("a redirect that failed to send left the message nowhere")
 	}
 	*fail = false
 	if _, err := e.Filter(context.Background(), parityOpts("u1", home, parityMsg)); err != nil {
@@ -183,5 +191,54 @@ func TestDropHeaderStopsAtTheBody(t *testing.T) {
 	in := "A: 1\r\nReturn-Path: <x>\r\n\tcont\r\nB: 2\r\n\r\nReturn-Path: body\r\n"
 	if got := string(dropHeader([]byte(in), "Return-Path")); got != "A: 1\r\nB: 2\r\n\r\nReturn-Path: body\r\n" {
 		t.Fatalf("%q", got)
+	}
+}
+
+// noTouchDict fails the test on any read or write: the duplicate store of a
+// period of 0 must not be used.
+type noTouchDict struct {
+	dict.Dict
+	t *testing.T
+}
+
+func (d noTouchDict) Lookup(context.Context, *dict.OpSettings, string) ([][]byte, bool, error) {
+	d.t.Fatal("redirect record read with sieve_redirect_duplicate_period 0")
+	return nil, false, nil
+}
+
+func (d noTouchDict) Begin(context.Context, *dict.OpSettings) (dict.Tx, error) {
+	d.t.Fatal("redirect record written with sieve_redirect_duplicate_period 0")
+	return nil, nil
+}
+
+// A period of 0 remembers nothing on any store: the same message goes out
+// again, and no record is read or written.
+func TestRedirectPeriodZeroRemembersNothing(t *testing.T) {
+	for _, driver := range []string{"file", "memory", "redis"} {
+		t.Run(driver, func(t *testing.T) {
+			cfg := config.Defaults().Sieve
+			cfg.Enabled, cfg.SubmissionHost = true, "submit.invalid:587"
+			cfg.RedirectDuplicatePeriod, cfg.DuplicateDriver = 0, driver
+			e := New(cfg, nil, nil, noTouchDict{t: t})
+			sent := 0
+			e.sender.send = func(context.Context, string, []string, *bytes.Reader) error { sent++; return nil }
+			home := withScript(t, "u1", `redirect "dest@x.test";`)
+			for range 2 {
+				if _, err := e.Filter(context.Background(), parityOpts("u1", home, parityMsg)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if sent != 2 {
+				t.Fatalf("%d sent, want 2", sent)
+			}
+			if _, err := os.Stat(filepath.Join(home, DefaultDuplicateFileName)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("duplicate file written: %v", err)
+			}
+			n := 0
+			e.memForwards.Range(func(any, any) bool { n++; return true })
+			if n != 0 {
+				t.Fatalf("%d in-process stores made", n)
+			}
+		})
 	}
 }

@@ -120,20 +120,27 @@ func (t *DictDuplicateTracker) mark(ctx context.Context, id string, seconds uint
 // redirectOne sends one redirect, unless the message was already forwarded to
 // that address (duplicate), carries this mailbox's trace header (loop) or is
 // over the send limit; the checks run in that order, so a skipped redirect
-// takes no slot of the limit. It reports whether the redirect went out.
+// takes no slot of the limit. It reports whether the redirect went out; a
+// send that failed did not.
 func (e *Engine) redirectOne(ctx context.Context, opts FilterOptions, hdr textproto.MIMEHeader, to string) bool {
 	msgID, newID := strings.TrimSpace(hdr.Get("Message-Id")), ""
 	if msgID == "" {
 		newID = newMessageID(opts.Username)
 		msgID = newID
 	}
+	// A period of 0 remembers nothing: no record is read or written, since
+	// a record without a lifetime would be kept for good.
+	period := e.cfg.RedirectDuplicatePeriod
 	id := forwardID(opts, hdr, msgID, to)
-	store := e.forwards(opts.Username, opts.HomeDir)
-	if dup, err := store.seen(ctx, id); err != nil {
-		slog.Warn("sieve: redirect duplicate check failed, sending", "user", opts.Username, "to", to, "err", err)
-	} else if dup {
-		slog.Info("sieve: discarded duplicate redirect", "user", opts.Username, "to", to)
-		return false
+	var store forwardStore
+	if period > 0 {
+		store = e.forwards(opts.Username, opts.HomeDir)
+		if dup, err := store.seen(ctx, id); err != nil {
+			slog.Warn("sieve: redirect duplicate check failed, sending", "user", opts.Username, "to", to, "err", err)
+		} else if dup {
+			slog.Info("sieve: discarded duplicate redirect", "user", opts.Username, "to", to)
+			return false
+		}
 	}
 	if redirectLoop(opts, hdr) {
 		slog.Warn("sieve: not redirecting, X-Sieve-Redirected-From shows a mail loop", "user", opts.Username, "to", to)
@@ -143,12 +150,16 @@ func (e *Engine) redirectOne(ctx context.Context, opts FilterOptions, hdr textpr
 		return false
 	}
 	raw := redirectMessage(opts.MsgRaw, opts.EnvTo, newID)
+	// A send that failed is a redirect that did not go out: the message
+	// stays, as for any other skipped redirect, rather than going nowhere.
 	if err := e.sender.sendRedirect(ctx, opts.EnvFrom, to, raw); err != nil {
-		slog.Error("sieve: redirect failed", "user", opts.Username, "to", to, "err", err)
-		return true
+		slog.Error("sieve: redirect failed, message kept", "user", opts.Username, "to", to, "err", err)
+		return false
 	}
-	if err := store.mark(ctx, id, uint32(e.cfg.RedirectDuplicatePeriod)); err != nil { //nolint:gosec
-		slog.Warn("sieve: redirect duplicate record failed", "user", opts.Username, "to", to, "err", err)
+	if store != nil {
+		if err := store.mark(ctx, id, uint32(period)); err != nil { //nolint:gosec
+			slog.Warn("sieve: redirect duplicate record failed", "user", opts.Username, "to", to, "err", err)
+		}
 	}
 	return true
 }
