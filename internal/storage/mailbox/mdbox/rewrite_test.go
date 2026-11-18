@@ -16,6 +16,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxref"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox/mdboxmap"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
 	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
@@ -433,40 +434,76 @@ func TestRewriteStoreKeepsTheOutputAfterTheRepoint(t *testing.T) {
 	}
 }
 
-// What a pass killed between its holds leaves, a file no record names, is
-// swept by the next pass once it is old enough; a young one stays.
-func TestRewriteStoreSweepsLeftovers(t *testing.T) {
+// A pass that died between its holds leaves its output under the temp name;
+// the next pass sweeps it when old and keeps a young one, and an m.<N> the
+// map does not know is never touched.
+func TestRewriteStoreSweepsOnlyItsTemps(t *testing.T) {
 	k := newRewriteKeys(t)
 	u := lockedMdbox(t, t.TempDir(), "", lockstest.Server(t)(), k.server)
 	name := saveVia(t, u, nil, "Subject: a\r\n\r\none\r\n")
 	file, _ := os.ReadFile(u.mfilePath(1))
-	old, young := u.mfilePath(50), u.mfilePath(51)
-	for _, p := range []string{old, young} {
+	old := filepath.Join(u.storagePath(), rewritePrefix+"50")
+	young := filepath.Join(u.storagePath(), rewritePrefix+"51")
+	unknown := u.mfilePath(52)
+	for _, p := range []string{old, young, unknown} {
 		if err := os.WriteFile(p, file, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	past := time.Now().Add(-time.Hour)
-	_ = os.Chtimes(old, past, past)
+	for _, p := range []string{old, unknown} {
+		_ = os.Chtimes(p, past, past)
+	}
 	rw := storeRewrite(k.server)
 	rw.LeftoverAge = time.Minute
 	if err := u.RewriteStore(rw); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(old); err == nil {
-		t.Error("the old leftover is still there")
-	}
-	if _, err := os.Stat(young); err != nil {
-		t.Error("a young file no record names was taken")
+	for p, want := range map[string]bool{old: false, young: true, unknown: true} {
+		if _, err := os.Stat(p); (err == nil) != want {
+			t.Errorf("%s: present %v, want %v", filepath.Base(p), err == nil, want)
+		}
 	}
 	if got := bodyOf(t, u, name); got != "Subject: a\r\n\r\none\r\n" {
 		t.Fatalf("body %q", got)
 	}
 }
 
-// A leftover carrying copies of live records is not brought back by a
-// rebuild that restores orphans: its records' GUIDs are the live copies',
-// which the scan pairs with the map first, so no message appears twice.
+// With the map file gone the m.<N> files are the only copy of the mail; a
+// rewrite run before the rebuild leaves every one of them where it was.
+func TestRewriteStoreWithoutAMapLeavesTheStore(t *testing.T) {
+	k := newRewriteKeys(t)
+	home := t.TempDir()
+	u := lockedMdbox(t, home, "", lockstest.Server(t)(), k.server)
+	saveVia(t, u, nil, "Subject: a\r\n\r\none\r\n")
+	saveVia(t, u, nil, "Subject: b\r\n\r\n"+strings.Repeat("x", 20<<20)+"\r\n")
+	before := storeFiles(t, u.storagePath())
+	if len(before) < 1 {
+		t.Fatal("no m.<N> to lose")
+	}
+	past := time.Now().Add(-time.Hour)
+	for _, f := range before {
+		_ = os.Chtimes(filepath.Join(u.storagePath(), f), past, past)
+	}
+	if err := os.Remove(filepath.Join(u.mapStoragePath(), mdboxmap.MapIndexFileName)); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(filepath.Join(u.mapStoragePath(), mdboxmap.MapIndexFileName+".log"))
+	v := lockedMdbox(t, home, "", u.b.locker, k.server)
+	rw := storeRewrite(k.server)
+	rw.LeftoverAge = time.Minute
+	if err := v.RewriteStore(rw); err != nil {
+		t.Fatal(err)
+	}
+	if after := storeFiles(t, u.storagePath()); len(after) != len(before) {
+		t.Fatalf("m.<N> files %v became %v", before, after)
+	}
+}
+
+// Neither a leftover m.<N> carrying copies of live records nor a rewrite temp
+// is brought back by a rebuild that restores orphans: the m.<N>'s GUIDs are
+// the live copies', which the scan pairs with the map first, and the temp is
+// no storage file to the scan; no message appears twice.
 func TestALeftoverIsNotRestoredTwice(t *testing.T) {
 	box, idx := newBoxAndIndex(t, filepath.Join(t.TempDir(), "home"))
 	deliverMsg(t, box, idx, "INBOX", "Subject: a\r\n\r\none\r\n")
@@ -475,8 +512,10 @@ func TestALeftoverIsNotRestoredTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(box.mfilePath(77), file, 0o600); err != nil {
-		t.Fatal(err)
+	for _, p := range []string{box.mfilePath(77), filepath.Join(box.storagePath(), rewritePrefix+"78")} {
+		if err := os.WriteFile(p, file, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := box.RebuildStorage(mailboxbase.Open(box, idx), idx, true); err != nil {
 		t.Fatal(err)

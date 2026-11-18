@@ -277,9 +277,9 @@ type StoreRewrite struct {
 	File func(FileRewrite)
 	// Stop is asked before each file; an error ends the pass with it.
 	Stop func() error
-	// LeftoverAge sweeps, before the pass, files no map record names and
+	// LeftoverAge sweeps, before the pass, the rewrite's own temp files
 	// older than it: what a pass killed between its holds left. Zero sweeps
-	// nothing.
+	// nothing; no storage file is ever swept.
 	LeftoverAge time.Duration
 }
 
