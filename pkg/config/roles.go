@@ -34,6 +34,9 @@ var roleChecks = map[string]func(c *Config) error{
 		if err := c.LocksClient.Check(false); err != nil {
 			return err
 		}
+		if err := c.checkSieveSendRate(); err != nil {
+			return err
+		}
 		return c.Storage.checkCryptKeys()
 	},
 	"yarilo-director": func(c *Config) error {
@@ -294,4 +297,32 @@ func (s StorageConfig) checkCryptKeys() error {
 		return fmt.Errorf("storage.mail_crypt.%w", err)
 	}
 	return nil
+}
+
+// checkSieveSendRate refuses a send limit its counter store cannot keep: the
+// count lives where the duplicate test keeps its state, a home-dir file or the
+// sieve_duplicate dict, and only the redis driver counts in one step there.
+// The memory driver counts per process, so each pod would allow the limit.
+func (c *Config) checkSieveSendRate() error {
+	n := c.Sieve.SendRateLimit
+	if n < 0 {
+		return fmt.Errorf("sieve.sieve_send_rate_limit %d: want 0 (off) or more", n)
+	}
+	if n == 0 {
+		return nil
+	}
+	switch c.Sieve.DuplicateDriver {
+	case "", "file":
+		return nil
+	case "redis":
+		dc, ok := c.Dicts["sieve_duplicate"]
+		if !ok {
+			return errors.New("sieve.sieve_send_rate_limit with sieve_duplicate_driver redis needs dicts.sieve_duplicate")
+		}
+		if dc.Driver != "redis" {
+			return fmt.Errorf("sieve.sieve_send_rate_limit needs dicts.sieve_duplicate on the redis driver, which counts in one step; it is on %q", dc.Driver)
+		}
+		return nil
+	}
+	return fmt.Errorf("sieve.sieve_send_rate_limit with sieve_duplicate_driver %q would count per process; use file or redis", c.Sieve.DuplicateDriver)
 }

@@ -76,6 +76,7 @@ func offKeys(cfg *Config) []intKey {
 		{"protocol.managesieve.max_invalid_commands", &cfg.Protocol.ManageSieve.MaxInvalidCommands},
 		{"sieve.sieve_max_script_size", &cfg.Sieve.MaxScriptSize},
 		{"sieve.sieve_max_redirects", &cfg.Sieve.MaxRedirects},
+		{"sieve.sieve_send_rate_limit", &cfg.Sieve.SendRateLimit},
 		{"sieve.sieve_max_num_scripts", &cfg.Sieve.MaxScripts},
 		{"sieve.sieve_max_storage", &cfg.Sieve.MaxStorage},
 		{"sieve.sieve_max_actions", &cfg.Sieve.MaxActions},

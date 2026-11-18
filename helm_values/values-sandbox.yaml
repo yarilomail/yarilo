@@ -241,6 +241,8 @@ sieve:
   sieve_spamtest_status_header: "X-Spam-Score"
   ## redis: the duplicate test dedups across both backend pods (dict sieve_duplicate).
   sieve_duplicate_driver: redis
+  ## The send limit on, so the stand runs with it as an operator would.
+  sieve_send_rate_limit: 500
   sieve_vacation_enabled: true
   sieve_vacation_use_original_recipient: true
   ## relay-fwd:587, verified against the internal CA that issues its certificate.

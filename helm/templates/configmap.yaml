@@ -316,6 +316,7 @@ data:
       {{- end }}
       sieve_max_script_size: {{ $sieve.sieve_max_script_size | int64 }}
       sieve_max_redirects: {{ $sieve.sieve_max_redirects }}
+      sieve_send_rate_limit: {{ $sieve.sieve_send_rate_limit | default 0 }}
       sieve_max_num_scripts: {{ $sieve.sieve_max_num_scripts }}
       sieve_max_storage: {{ $sieve.sieve_max_storage | int64 }}
       sieve_max_actions: {{ $sieve.sieve_max_actions }}

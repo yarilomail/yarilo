@@ -33,6 +33,7 @@ type Engine struct {
 	sender       *Sender
 	dupTrackers  sync.Map
 	dupDict      dict.Dict    // when non-nil, duplicate dedup is dict-backed (cross-pod with redis)
+	sendLimit    *sendLimit   // sieve_send_rate_limit; counts nothing at 0
 	locker       locks.Locker // coordinates the file-backed duplicate dedup
 	globalBefore []*gosieve.Script
 	globalAfter  []*gosieve.Script
@@ -58,6 +59,10 @@ func New(cfg config.SieveConfig, locker locks.Locker, d dict.Dict, dupDict dict.
 		sender:  s,
 		dupDict: dupDict,
 		locker:  locker,
+	}
+	e.sendLimit = newSendLimit(cfg.SendRateLimit, cfg.DuplicateDriver, dupDict, locker)
+	if s != nil {
+		s.limit = e.sendLimit
 	}
 	admin := AdminExtensions(cfg)
 	e.globalBefore = loadGlobalScripts(cfg.GlobalBefore, admin, cfg.MaxRedirects)
@@ -337,10 +342,22 @@ func (e *Engine) runScript(ctx context.Context, script *gosieve.Script, opts Fil
 	}
 
 	if e.sender != nil {
+		// A redirect over the send limit is not sent. When any redirect that
+		// cancelled the implicit keep is refused, the keep comes back and the
+		// message stays where it is, so a refused address still has a copy
+		// even when the redirects before it went out.
+		refusedMove := false
 		for _, r := range result.Redirects {
+			if !e.sendLimit.allow(ctx, opts.Username, opts.HomeDir, "redirect") {
+				refusedMove = refusedMove || !r.Copy
+				continue
+			}
 			if err := e.sender.sendRedirect(ctx, opts.EnvFrom, r.Address, opts.MsgRaw); err != nil {
 				slog.Error("sieve: redirect failed", "user", opts.Username, "to", r.Address, "err", err)
 			}
+		}
+		if refusedMove && !result.discarded && len(result.Deliveries) == 0 {
+			result.Deliveries = append(result.Deliveries, Delivery{Folder: "INBOX", Implicit: true, FromKeep: true})
 		}
 		for _, resp := range result.VacationReplies {
 			if err := e.sender.sendVacation(ctx, e.store, opts, hdr, resp); err != nil {
@@ -353,6 +370,9 @@ func (e *Engine) runScript(ctx context.Context, script *gosieve.Script, opts Fil
 			}
 		}
 		for _, rep := range result.Reports {
+			if !e.sendLimit.allow(ctx, opts.Username, opts.HomeDir, "report") {
+				continue
+			}
 			if err := e.sender.sendReport(ctx, opts, rep); err != nil {
 				slog.Error("sieve: report failed", "user", opts.Username, "to", rep.Target, "err", err)
 			}
@@ -591,6 +611,7 @@ func buildResult(d *interp.RuntimeData) *FilterResult {
 		case interp.ActionEReject:
 			return &FilterResult{Reject: &RejectErr{Enhanced: true, Reason: a.Reason}}
 		case interp.ActionDiscard:
+			result.discarded = true
 		case interp.ActionFileInto:
 			result.Deliveries = append(result.Deliveries, Delivery{
 				Folder:     a.Mailbox,
