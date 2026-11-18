@@ -53,8 +53,8 @@ func renderWorkloads(t *testing.T, args ...string) []podWorkload {
 }
 
 // The mail encryption keys reach every container that opens mail and no
-// other; /tmp is bounded in every pod when tmpSizeLimit is set, and nothing
-// changes when neither is set.
+// other; /tmp is bounded in every pod by tmpSizeLimit, 320Mi when the values
+// leave it alone, and no key is mounted when mailCrypt is not set.
 func TestMailCryptKeysAndTmpLimitInTheChart(t *testing.T) {
 	opensMail := map[string]bool{"yarilo-imap": true, "yarilo-pop3": true, "yarilo-lmtp": true, "yarilo-jmap": true,
 		"yarilo-managesieve": true, "yarilo-fts": true, "yarilo-backend-api": true}
@@ -95,8 +95,11 @@ func TestMailCryptKeysAndTmpLimitInTheChart(t *testing.T) {
 	}
 	for _, w := range renderWorkloads(t, "-f", "../../helm_values/values-sandbox.yaml") {
 		for _, v := range w.Spec.Template.Spec.Volumes {
-			if v.Name == "mail-crypt" || (v.Name == "tmp" && len(v.EmptyDir) != 0) {
-				t.Errorf("%s: %s %v without the values set", w.Metadata.Name, v.Name, v.EmptyDir)
+			if v.Name == "mail-crypt" {
+				t.Errorf("%s: mail-crypt mounted without mailCrypt set", w.Metadata.Name)
+			}
+			if v.Name == "tmp" && v.EmptyDir["sizeLimit"] != "320Mi" {
+				t.Errorf("%s: /tmp %v by default, want sizeLimit 320Mi", w.Metadata.Name, v.EmptyDir)
 			}
 		}
 	}

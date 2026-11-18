@@ -46,8 +46,14 @@ type Layer struct {
 	keyless bool   // Keyless: no keys read, no body saved
 }
 
-// New returns a Layer; a nil *Layer behaves as New(Options{}).
-func New(o Options) *Layer { return &Layer{o: o} }
+// New returns a Layer; a nil *Layer behaves as New(Options{}). The
+// identities are wrapped in one key cache, which every ForDriver copy shares.
+func New(o Options) *Layer {
+	if len(o.Identities) > 0 {
+		o.Identities = []age.Identity{newKeyCache(o.Identities, keyCacheSize, cacheTTL)}
+	}
+	return &Layer{o: o}
+}
 
 // Keyless is the layer of a process that reads sizes and never a body: it
 // reads no key file, opens plaintext, tells an age body's size from its header,
