@@ -17,6 +17,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
 	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
@@ -251,4 +252,82 @@ func TestReencryptNeedsTheLockService(t *testing.T) {
 	if job := pollCryptJob(t, ts.URL, user); job.State != "done" || job.Rewritten != 0 {
 		t.Fatalf("dry run %+v", job)
 	}
+}
+
+// An mdbox account: plain and old-key records become current (an expunged
+// record is the driver's row), bodies read the same, a second run rewrites nothing, and a run naming
+// folders is refused, since files are shared between folders.
+func TestReencryptMdbox(t *testing.T) {
+	oldID, _ := age.GenerateX25519Identity()
+	newID, _ := age.GenerateX25519Identity()
+	server := mailcrypt.New(mailcrypt.Options{
+		Recipients: []age.Recipient{newID.Recipient()},
+		Identities: []age.Identity{oldID, newID},
+	})
+	locker := lockstest.Server(t)()
+	ts, root := storageTestServer(t, func(o *Options) {
+		o.Crypt = server
+		o.Locker = locker
+		o.Mailbox = mailbox.Validating(mdbox.New(mdbox.WithCrypt(server), mdbox.WithLocker(locker)), mailbox.DefaultNameRules())
+	})
+	const user = "alice@example.com"
+	materialiseHome(t, ts, user)
+	info := &mailbox.UserInfo{Username: user, Home: maildirHome(root, user)}
+	sealer := func(r ...age.Recipient) mailbox.MailboxBackend {
+		return mdbox.New(mdbox.WithCrypt(mailcrypt.New(mailcrypt.Options{Recipients: r})))
+	}
+	saveWith(t, sealer(), info, "Subject: plain\r\n\r\none\r\n")
+	saveWith(t, sealer(oldID.Recipient()), info, "Subject: old\r\n\r\ntwo\r\n")
+	saveWith(t, sealer(newID.Recipient()), info, "Subject: new\r\n\r\nthree\r\n")
+	before := mdboxBodies(t, server, info)
+
+	run := func(kind string, req map[string]any) cryptJobView {
+		req["user"] = user
+		if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/"+kind, "", req); st != http.StatusAccepted {
+			t.Fatalf("start: %d %s", st, body)
+		}
+		return waitCryptJob(t, ts.URL, user)
+	}
+	if job := run("reencrypt", map[string]any{}); job.State != "done" || job.Rewritten != 2 || job.Failed != 0 {
+		t.Fatalf("to age: %+v", job)
+	}
+	if got := mdboxBodies(t, server, info); !sameMap(before, got) {
+		t.Fatalf("bodies changed:\n%v\n%v", before, got)
+	}
+	if st := run("status", map[string]any{}); st.Totals["current"] != 3 {
+		t.Fatalf("after: %v", st.Totals)
+	}
+	if again := run("reencrypt", map[string]any{}); again.Rewritten != 0 {
+		t.Fatalf("second run rewrote %d", again.Rewritten)
+	}
+	if named := run("reencrypt", map[string]any{"folders": []string{"INBOX"}}); named.State != "failed" {
+		t.Fatalf("a run naming folders on mdbox: %+v", named)
+	}
+}
+
+func mdboxBodies(t *testing.T, l *mailcrypt.Layer, info *mailbox.UserInfo) map[string]string {
+	t.Helper()
+	box := mdbox.New(mdbox.WithCrypt(l)).OpenUser(info)
+	defer box.Close() //nolint:errcheck
+	idx := file.New().OpenUser(info)
+	defer idx.Close() //nolint:errcheck
+	folder, err := idx.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := idx.GetMessages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, m := range msgs {
+		rc, err := box.(mailbox.UIDAddressable).OpenRecord("INBOX", m)
+		if err != nil {
+			t.Fatalf("uid %d: %v", m.UID, err)
+		}
+		b, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		out[fmt.Sprint(m.UID)] = string(b)
+	}
+	return out
 }

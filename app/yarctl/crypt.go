@@ -57,8 +57,9 @@ Commands:
         Rewrite every message that is not under the current key (--to age,
         the default) or that is sealed (--to plain), one at a time: the new
         body is verified by hash before it replaces the old one. A message
-        no key opens is left and counted. maildir and sdbox stores; mdbox
-        is refused for now. --dry-run reports and writes nothing.
+        no key opens is left and counted. An mdbox store is rewritten
+        whole, one shared file at a time, so folders cannot be named.
+        --dry-run reports and writes nothing.
 
   job <user>
         The user's running or last finished job.

@@ -2,6 +2,7 @@ package backendapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -28,15 +29,12 @@ const (
 	rewriteFailed
 )
 
-// rewriteBody re-encrypts one message through the driver: plaintext hashed on
-// the way out of the old body, compared with the hash of the new body read
-// back, and only then put in place by the driver under its lock.
-func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns, folder string,
-	m *mailbox.MessageMeta, from mailcrypt.State, to string, recorded func() (bool, error)) (rewriteOutcome, error) {
+// bodyRewrite is Fill and Verify for one body: the plaintext hashed on the way
+// out of the old body, compared with the hash of the new body read back.
+func bodyRewrite(l *mailcrypt.Layer, to string) mailbox.BodyRewrite {
 	var want []byte
 	var wantLen int64
-	rw := mailbox.BodyRewrite{
-		Recorded: recorded,
+	return mailbox.BodyRewrite{
 		Fill: func(src mailbox.RawBody, dst io.Writer) (int64, bool, error) {
 			o, err := l.Open(src, nil)
 			if err != nil {
@@ -86,6 +84,14 @@ func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns
 			return nil
 		},
 	}
+}
+
+// rewriteBody re-encrypts one message through the driver, which puts it in
+// place under its lock once Verify has passed.
+func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns, folder string,
+	m *mailbox.MessageMeta, from mailcrypt.State, to string, recorded func() (bool, error)) (rewriteOutcome, error) {
+	rw := bodyRewrite(l, to)
+	rw.Recorded = recorded
 	err := rr.RewriteRecord(folder, m, rw)
 	reason := ""
 	switch {
@@ -152,4 +158,66 @@ type countWriter struct {
 func (c *countWriter) Write(p []byte) (int, error) {
 	c.n += int64(len(p))
 	return c.h.Write(p)
+}
+
+// rewriteStore runs a store's file-by-file rewrite; a file the map moved
+// under is taken again on the next pass, up to three.
+func (s *Server) rewriteStore(ctx context.Context, job *cryptJob, req cryptRequest, ns, driver string,
+	sw mailbox.StoreRewriter, layer *mailcrypt.Layer) error {
+	row := job.addFolder(ns, "(store files)")
+	for pass := 0; pass < 3; pass++ {
+		changed := 0
+		var from mailcrypt.State
+		rw := mailbox.StoreRewrite{
+			Needs: func(b mailbox.RawBody) (bool, error) {
+				st, err := layer.Probe(b)
+				if err != nil {
+					return false, fmt.Errorf("%w: %w", errRead, err)
+				}
+				if st == mailcrypt.StateNoKey {
+					return false, nil
+				}
+				from = st
+				return needsRewrite(st, req.To), nil
+			},
+			Body: bodyRewrite(layer, req.To),
+			Stop: ctx.Err,
+		}
+		rw.File = func(f mailbox.FileRewrite) {
+			if f.Err == nil {
+				for range f.Rewritten {
+					mailcrypt.CountReencrypted(driver, from)
+				}
+				job.rewroteMany(f.Rewritten)
+				return
+			}
+			reason := "write"
+			switch {
+			case errors.Is(f.Err, mailbox.ErrRecordChanged):
+				reason = "changed"
+				changed++
+			case errors.Is(f.Err, errVerify):
+				reason = "verify"
+			case errors.Is(f.Err, errRead):
+				reason = "read"
+			}
+			mailcrypt.CountReencryptFailed(driver, reason)
+			if reason != "changed" {
+				job.rewrote(row, rewriteFailed)
+			}
+			slog.Error("backendapi/crypt: store file left as it was", "user", req.User, "namespace", ns,
+				"file_id", f.FileID, "map_uid", f.Record, "reason", reason, "err", f.Err)
+		}
+		if err := sw.RewriteStore(rw); err != nil {
+			if errors.Is(err, syscall.ENOSPC) {
+				mailcrypt.CountReencryptFailed(driver, "nospace")
+				return errNoSpace
+			}
+			return err
+		}
+		if changed == 0 {
+			return nil
+		}
+	}
+	return errors.New("crypt: store files kept changing under the rewrite; run it again")
 }

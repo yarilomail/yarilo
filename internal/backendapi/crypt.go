@@ -334,8 +334,11 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 	}
 	writing := job.Kind == cryptReencrypt && !req.DryRun
 	var rw mailbox.RecordRewriter
+	var sw mailbox.StoreRewriter
 	if writing {
-		if rw, ok = mailbox.Driver(bundle.box).(mailbox.RecordRewriter); !ok {
+		rw, _ = mailbox.Driver(bundle.box).(mailbox.RecordRewriter)
+		sw, _ = mailbox.Driver(bundle.box).(mailbox.StoreRewriter)
+		if rw == nil && sw == nil {
 			return fmt.Errorf("crypt: re-encryption of %s stores is not implemented yet", driver)
 		}
 	}
@@ -349,7 +352,7 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 			continue
 		}
 		row := job.addFolder(ns, e.Name)
-		if writing {
+		if rw != nil {
 			if n, err := rw.SweepRewriteTemps(e.Name, 2*cryptJobLease); err != nil {
 				return fmt.Errorf("crypt: %s %s: %w", ns, e.Name, err)
 			} else if n > 0 {
@@ -392,6 +395,9 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 				mailcrypt.CountReencryptNoKey(driver)
 				continue
 			}
+			if rw == nil {
+				continue // rewritten by the store, file by file, below
+			}
 			if !needsRewrite(st, req.To) {
 				continue
 			}
@@ -408,18 +414,30 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 		}
 	}
 	if len(req.Folders) > 0 {
+		if sw != nil {
+			return fmt.Errorf("crypt: %s stores share files between folders, so a run takes the whole store, not chosen folders", driver)
+		}
 		return nil
 	}
-	ur, ok := mailbox.Driver(bundle.box).(mailbox.UnreferencedRawReader)
-	if !ok {
+	if ur, ok := mailbox.Driver(bundle.box).(mailbox.UnreferencedRawReader); ok {
+		if err := s.countUnreferenced(ctx, job, req, ns, ur, layer); err != nil {
+			return err
+		}
+	}
+	if sw == nil {
 		return nil
 	}
+	return s.rewriteStore(ctx, job, req, ns, driver, sw, layer)
+}
+
+func (s *Server) countUnreferenced(ctx context.Context, job *cryptJob, req cryptRequest, ns string,
+	ur mailbox.UnreferencedRawReader, layer *mailcrypt.Layer) error {
 	row := job.addFolder(ns, unreferencedFolder)
 	return ur.RawUnreferenced(func(key uint32, b mailbox.RawBody) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		st, perr := s.opts.Crypt.Probe(b)
+		st, perr := layer.Probe(b)
 		if perr != nil {
 			slog.Warn("backendapi/crypt: record unreadable", "user", req.User, "namespace", ns, "map_uid", key, "err", perr)
 		}
@@ -438,6 +456,12 @@ func (j *cryptJob) addFolder(ns, name string) *cryptFolder {
 	f := &cryptFolder{Namespace: ns, Folder: name, States: map[string]int{}}
 	j.Folders = append(j.Folders, f)
 	return f
+}
+
+func (j *cryptJob) rewroteMany(n int) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.Rewritten += n
 }
 
 func (j *cryptJob) rewrote(f *cryptFolder, out rewriteOutcome) {
