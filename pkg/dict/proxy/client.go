@@ -225,9 +225,10 @@ func (c *Client) Lookup(ctx context.Context, set *dict.OpSettings, key string) (
 	return nil, false, fmt.Errorf("dict/proxy: unexpected reply %q", reply)
 }
 
-// Incr implements dict.Counter through the service's OpIncr. A refusal,
-// whether the service predates the operation or its driver cannot count, is
-// dict.ErrNoCounter with the service's words.
+// Incr implements dict.Counter through the service's OpIncr. The two
+// refusals that mean the dict cannot count (a service that predates the
+// operation, a driver with no Counter) are dict.ErrNoCounter; any other
+// failure, such as the store unreachable, is an ordinary error.
 func (c *Client) Incr(ctx context.Context, set *dict.OpSettings, key string, delta int64, ttl time.Duration) (int64, error) {
 	user := userOf(set)
 	secs := int64(0)
@@ -248,8 +249,10 @@ func (c *Client) Incr(ctx context.Context, set *dict.OpSettings, key string, del
 			return 0, fmt.Errorf("dict/proxy: incr: value %q", reply[1:])
 		}
 		return n, nil
-	case reply[0] == ReplyFail:
+	case reply[0] == ReplyFail && (reply[1:] == UnknownCommandReply || strings.HasPrefix(reply[1:], NoCounterReply)):
 		return 0, fmt.Errorf("%w: %s: %s", dict.ErrNoCounter, c.addr, strings.TrimSpace(reply[1:]))
+	case reply[0] == ReplyFail:
+		return 0, fmt.Errorf("dict/proxy: incr: %s", strings.TrimSpace(reply[1:]))
 	}
 	return 0, fmt.Errorf("dict/proxy: unexpected reply %q", reply)
 }

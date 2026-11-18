@@ -37,6 +37,17 @@ const (
 	ReplyUncert  = 'W'
 )
 
+// The two F replies that mean a dict cannot count, which the client reads as
+// dict.ErrNoCounter. Any other F (the store unreachable, a malformed line) is
+// an ordinary error with the service's words.
+const (
+	// UnknownCommandReply is a service's answer to a letter it does not know,
+	// so OpIncr to one that predates it.
+	UnknownCommandReply = " unknown command"
+	// NoCounterReply starts the answer to OpIncr on a driver with no Counter.
+	NoCounterReply = " no counter:"
+)
+
 // MaxLine bounds one line; a value larger than this is refused rather than
 // buffered, because a dict value is a mailbox's data, not a stream.
 const MaxLine = 64 << 10

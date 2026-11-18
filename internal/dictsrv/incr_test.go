@@ -135,3 +135,17 @@ func TestIncrOnAServiceThatPredatesIt(t *testing.T) {
 		t.Fatalf("err %v, want dict.ErrNoCounter with the service's words", err)
 	}
 }
+
+// A store the service cannot reach is an ordinary error with the service's
+// words, not dict.ErrNoCounter: the dict can count, it just failed this time.
+func TestIncrOnAnUnreachableStore(t *testing.T) {
+	d, _, mr := serveRedis(t)
+	mr.Close()
+	_, err := counterOf(t, d).Incr(context.Background(), &dict.OpSettings{Username: "u1@d.test"}, "k", 1, time.Hour)
+	if err == nil || errors.Is(err, dict.ErrNoCounter) {
+		t.Fatalf("err %v, want an error that is not dict.ErrNoCounter", err)
+	}
+	if !strings.Contains(err.Error(), "redis incr") {
+		t.Fatalf("err %v, want the service's words", err)
+	}
+}

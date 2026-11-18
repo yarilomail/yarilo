@@ -231,6 +231,9 @@ func (d *Dict) trim(set *dict.OpSettings, k string) string {
 // is made, counted and given its lifetime in one step, with the prefix and
 // the indexes of every other write.
 func (d *Dict) Incr(ctx context.Context, set *dict.OpSettings, key string, delta int64, ttl time.Duration) (int64, error) {
+	if d.closed.Load() {
+		return 0, dict.ErrClosed
+	}
 	full := d.key(set, key)
 	var sum *redis.IntCmd
 	_, err := d.client.TxPipelined(ctx, func(p redis.Pipeliner) error {

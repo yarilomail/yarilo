@@ -159,7 +159,7 @@ func (s *Server) handle(ctx context.Context, sess *session, line string, conn ne
 	case proxy.OpIncr:
 		return s.incr(ctx, sess, line)
 	}
-	return fmt.Sprintf("%c unknown command\n", proxy.ReplyFail)
+	return fmt.Sprintf("%c%s\n", proxy.ReplyFail, proxy.UnknownCommandReply)
 }
 
 func (s *Server) hello(sess *session, line string) string {
@@ -215,7 +215,7 @@ func (s *Server) incr(ctx context.Context, sess *session, line string) string {
 	}
 	c, ok := sess.d.(dict.Counter)
 	if !ok {
-		return fmt.Sprintf("%c no counter: dict %s, driver %s\n", proxy.ReplyFail, sess.name, sess.d.Name())
+		return fmt.Sprintf("%c%s dict %s, driver %s\n", proxy.ReplyFail, proxy.NoCounterReply, sess.name, sess.d.Name())
 	}
 	n, err := c.Incr(ctx, opSet(f[3]), f[0], delta, time.Duration(secs)*time.Second)
 	if err != nil {
