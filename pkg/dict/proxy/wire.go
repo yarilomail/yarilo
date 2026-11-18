@@ -8,28 +8,44 @@ import (
 	"strings"
 )
 
-// Protocol version on the wire. Minor 2 is what carries multi-value replies.
+// Protocol version on the wire. Minor 2 is what carries multi-value replies;
+// minor 3 adds OpIncr, which the reference protocol does not have.
 const (
 	VersionMajor = 3
-	VersionMinor = 2
+	VersionMinor = 3
 )
 
 // Opcodes, as INTERNALS.md §32 records them.
 const (
-	OpHello      = 'H'
-	OpLookup     = 'L'
-	OpIterate    = 'I'
-	OpBegin      = 'B'
-	OpCommit     = 'C'
-	OpRollback   = 'R'
-	OpSet        = 'S'
-	OpUnset      = 'U'
-	OpAtomicInc  = 'A'
+	OpHello     = 'H'
+	OpLookup    = 'L'
+	OpIterate   = 'I'
+	OpBegin     = 'B'
+	OpCommit    = 'C'
+	OpRollback  = 'R'
+	OpSet       = 'S'
+	OpUnset     = 'U'
+	OpAtomicInc = 'A'
+	// OpIncr is yarilo's own, outside a transaction: X<key>\t<delta>\t<ttl
+	// seconds>\t<user>, answered O<new value>. A server that predates it
+	// answers F, which the client reads as dict.ErrNoCounter.
+	OpIncr       = 'X'
 	ReplyOK      = 'O'
 	ReplyMulti   = 'M'
 	ReplyNoMatch = 'N'
 	ReplyFail    = 'F'
 	ReplyUncert  = 'W'
+)
+
+// The two F replies that mean a dict cannot count, which the client reads as
+// dict.ErrNoCounter. Any other F (the store unreachable, a malformed line) is
+// an ordinary error with the service's words.
+const (
+	// UnknownCommandReply is a service's answer to a letter it does not know,
+	// so OpIncr to one that predates it.
+	UnknownCommandReply = " unknown command"
+	// NoCounterReply starts the answer to OpIncr on a driver with no Counter.
+	NoCounterReply = " no counter:"
 )
 
 // MaxLine bounds one line; a value larger than this is refused rather than

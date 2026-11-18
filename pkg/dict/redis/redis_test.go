@@ -250,3 +250,30 @@ func (r *roundTrips) ProcessHook(next goredis.ProcessHook) goredis.ProcessHook {
 func (r *roundTrips) ProcessPipelineHook(next goredis.ProcessPipelineHook) goredis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []goredis.Cmder) error { r.n.Add(1); return next(ctx, cmds) }
 }
+
+// Incr makes a missing key, returns each sum, keeps to the prefix and the
+// user's scope, sets the lifetime and indexes the key as every write does.
+func TestIncr(t *testing.T) {
+	mr := miniredis.RunT(t)
+	d := openIndexed(t, mr, "p:")
+	ctx := context.Background()
+	set := &dict.OpSettings{Username: "u1@d.test"}
+	for want := int64(1); want <= 2; want++ {
+		if got, err := d.Incr(ctx, set, "priv/n", 1, time.Hour); err != nil || got != want {
+			t.Fatalf("incr: got %d, %v, want %d", got, err, want)
+		}
+	}
+	key := "p:" + dict.ScopedKey(set, "priv/n")
+	if !mr.Exists(key) || mr.TTL(key) != time.Hour {
+		t.Fatalf("key %q exists %v ttl %v, want 1h; keys %v", key, mr.Exists(key), mr.TTL(key), mr.Keys())
+	}
+	if _, err := d.Incr(ctx, nil, "shared/n", 1, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got := listed(t, d, "shared/"); len(got) != 1 || got[0] != "shared/n" {
+		t.Fatalf("iterate lists %v, want the counter", got)
+	}
+	if got, err := d.Incr(ctx, set, "priv/m", 5, 0); err != nil || got != 5 || mr.TTL("p:"+dict.ScopedKey(set, "priv/m")) != 0 {
+		t.Fatalf("incr without ttl: %d, %v, ttl %v", got, err, mr.TTL("p:"+dict.ScopedKey(set, "priv/m")))
+	}
+}
