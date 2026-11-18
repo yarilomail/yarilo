@@ -9,8 +9,8 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
-// Only a call that writes a shared file takes a hold: a create, a flag write
-// and a move each rename or mkdir, which excludes nobody (#1840).
+// A create excludes nobody and takes no hold (#1840); a flag write takes the
+// folder's list, which a re-encryption's swap renames under (yarilo#2591).
 func TestLockAcquisitionsAreCountedByCaller(t *testing.T) {
 	box := batchBox(t)
 	body := "From: a@b\r\n\r\nx\r\n"
@@ -50,7 +50,7 @@ func TestLockAcquisitionsAreCountedByCaller(t *testing.T) {
 	for site, want := range map[string]float64{
 		lockSiteSave:           1,
 		lockSiteCreate:         0,
-		lockSiteWriteFlagsBulk: 0,
+		lockSiteWriteFlagsBulk: 1,
 		lockSiteMove:           0,
 	} {
 		got := testutil.ToFloat64(metricLockAcquired.WithLabelValues(site)) - before[site]

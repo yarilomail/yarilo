@@ -31,10 +31,11 @@ const (
 // the way out of the old body, compared with the hash of the new body read
 // back, and only then put in place by the driver under its lock.
 func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns, folder string,
-	m *mailbox.MessageMeta, from mailcrypt.State, to string) (rewriteOutcome, error) {
+	m *mailbox.MessageMeta, from mailcrypt.State, to string, recorded func() (bool, error)) (rewriteOutcome, error) {
 	var want []byte
 	var wantLen int64
 	rw := mailbox.BodyRewrite{
+		Recorded: recorded,
 		Fill: func(src mailbox.RawBody, dst io.Writer) (int64, bool, error) {
 			o, err := l.Open(src, nil)
 			if err != nil {

@@ -191,14 +191,17 @@ func measureSizes(l *mailcrypt.Layer, path string) (psize, vsize uint32, err err
 // holdList takes the list's lock for site and returns its release, which
 // records how long the site held it.
 func (u *userMailbox) holdList(folder, site string) (func(), error) {
+	forget := u.noteListHold(folder, site)
 	unlock, err := u.dotlock(u.uidListPath(folder))
 	if err != nil {
+		forget()
 		return nil, err
 	}
 	heldFrom := time.Now()
 	metricLockAcquired.WithLabelValues(site).Inc()
 	return func() {
 		unlock()
+		forget()
 		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
 	}, nil
 }

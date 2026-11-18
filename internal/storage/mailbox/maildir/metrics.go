@@ -77,6 +77,9 @@ const (
 	lockSiteReconcileApply = "reconcile-apply" // the index write a reconcile decided on
 	lockSiteMigrateNames   = "migrate-names"   // the pass that puts records in the list
 	lockSiteRename         = "rename"          // a folder rename, both locks
+	lockSiteRemove         = "remove"          // an unlink outside an expunge's hold
+	lockSiteExpunge        = "expunge"         // an expunge's records and unlinks
+	lockSiteRewrite        = "rewrite"         // re-encryption replacing a body
 )
 
 // Where a listing's cost comes from: the uid list, read whole or by its tail,

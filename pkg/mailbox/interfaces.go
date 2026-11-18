@@ -244,6 +244,9 @@ type BodyRewrite struct {
 	Fill func(src RawBody, dst io.Writer) (plainLen int64, sealed bool, err error)
 	// Verify reads the written body back before it replaces the old one.
 	Verify func(written RawBody) error
+	// Recorded asks the index, under the driver's lock, whether the record
+	// still stands; nil for a driver whose lock already answers it.
+	Recorded func() (bool, error)
 }
 
 // ErrRecordChanged is a rewrite given up because the record's file changed

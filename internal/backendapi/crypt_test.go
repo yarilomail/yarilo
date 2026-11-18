@@ -118,24 +118,92 @@ func TestCryptStatusCountsEveryState(t *testing.T) {
 	}
 }
 
-// maildir has no swap yet: its writers take no cross-process lock, and the
-// way in waits on a decision (MAILCRYPT §13.5). A run fails, writing nothing.
-func TestReencryptRefusesMaildirForNow(t *testing.T) {
+// A maildir account, mixed and with a bare-LF message, re-encrypted, back to
+// plain, and a second run that rewrites nothing; bodies read the same and
+// keep the bytes that lay on disk.
+func TestReencryptMaildir(t *testing.T) {
+	oldID, _ := age.GenerateX25519Identity()
+	newID, _ := age.GenerateX25519Identity()
+	server := mailcrypt.New(mailcrypt.Options{
+		Recipients: []age.Recipient{newID.Recipient()},
+		Identities: []age.Identity{oldID, newID},
+	})
 	ts, root := storageTestServer(t, func(o *Options) {
-		o.Crypt = mailcrypt.New(mailcrypt.Options{})
+		o.Crypt = server
 		o.Locker = lockstest.Server(t)()
 	})
 	const user = "alice@example.com"
 	materialiseHome(t, ts, user)
-	saveThrough(t, root, user, nil, "Subject: a\r\n\r\nb\r\n")
-	if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
-		map[string]any{"user": user, "to": "plain"}); st != http.StatusAccepted {
-		t.Fatalf("start: %d %s", st, body)
+	sealer := func(r ...age.Recipient) *mailcrypt.Layer { return mailcrypt.New(mailcrypt.Options{Recipients: r}) }
+	saveThrough(t, root, user, nil, "Subject: plain\r\n\r\none\r\n")
+	saveThrough(t, root, user, nil, "Subject: bare\n\nlf\n")
+	saveThrough(t, root, user, sealer(oldID.Recipient()), "Subject: old\r\n\r\ntwo\r\n")
+	saveThrough(t, root, user, sealer(newID.Recipient()), "Subject: new\r\n\r\nthree\r\n")
+	home := maildirHome(root, user)
+	before := maildirPlain(t, server, home)
+
+	run := func(req map[string]any, kind string) cryptJobView {
+		req["user"] = user
+		if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/"+kind, "", req); st != http.StatusAccepted {
+			t.Fatalf("start: %d %s", st, body)
+		}
+		return pollCryptJob(t, ts.URL, user)
 	}
-	job := waitCryptJob(t, ts.URL, user)
-	if job.State != "failed" || !strings.Contains(job.Error, "not implemented") || job.Rewritten != 0 {
-		t.Fatalf("job %+v", job)
+	if job := run(map[string]any{}, "reencrypt"); job.Rewritten != 3 || job.Failed != 0 {
+		t.Fatalf("to age: %+v", job)
 	}
+	if got := maildirPlain(t, server, home); !sameMap(before, got) {
+		t.Fatalf("bodies changed:\n%v\n%v", before, got)
+	}
+	if st := run(map[string]any{}, "status"); st.Totals["current"] != 4 {
+		t.Fatalf("after: %v", st.Totals)
+	}
+	if again := run(map[string]any{}, "reencrypt"); again.Rewritten != 0 {
+		t.Fatalf("second run rewrote %d", again.Rewritten)
+	}
+	if back := run(map[string]any{"to": "plain"}, "reencrypt"); back.Rewritten != 4 || back.Failed != 0 {
+		t.Fatalf("to plain: %+v", back)
+	}
+	if got := maildirPlain(t, server, home); !sameMap(before, got) {
+		t.Fatalf("bodies changed on the way back")
+	}
+}
+
+// maildirPlain is every message file's plaintext by name: the name carries
+// S= and W=, so an equal map is also unchanged sizes and flags.
+func maildirPlain(t *testing.T, l *mailcrypt.Layer, home string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	_ = filepath.WalkDir(home, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.Contains(p, string(filepath.Separator)+"cur"+string(filepath.Separator)) &&
+			!strings.Contains(p, string(filepath.Separator)+"new"+string(filepath.Separator)) {
+			return nil
+		}
+		o, err := l.OpenFile(p)
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		b, _ := io.ReadAll(o)
+		_ = o.Close()
+		out[d.Name()] = string(b)
+		return nil
+	})
+	if len(out) == 0 {
+		t.Fatal("no message files")
+	}
+	return out
+}
+
+func sameMap(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 type cryptJobView struct {
