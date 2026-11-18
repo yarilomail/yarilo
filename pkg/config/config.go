@@ -92,6 +92,12 @@ type SieveConfig struct {
 	MaxScriptSize int `koanf:"sieve_max_script_size"`
 	// MaxRedirects caps a message's redirects, :copy and :list included; 0 forbids redirect. Default: 32.
 	MaxRedirects int `koanf:"sieve_max_redirects"`
+	// SendRateLimit caps the mail a mailbox's Sieve sends in a clock hour,
+	// every recipient of redirect, vacation and notify counted; over it the
+	// send is refused. 0 = off. Default: 0. Counted where the duplicate test
+	// keeps its state: a home-dir file, or the sieve_duplicate dict on the
+	// redis driver.
+	SendRateLimit int `koanf:"sieve_send_rate_limit"`
 	// MaxScripts caps a user's stored scripts; replacing one adds none. 0 = unlimited.
 	MaxScripts int `koanf:"sieve_max_num_scripts"`
 	// MaxStorage caps the bytes of a user's stored scripts. 0 = unlimited.
@@ -3040,6 +3046,7 @@ func Defaults() *Config {
 	c.Protocol.ManageSieve.MaxInvalidCommands = 3
 	c.Sieve.MaxScriptSize = 65536
 	c.Sieve.MaxRedirects = 32
+	c.Sieve.SendRateLimit = 0
 	c.Sieve.MaxActions = 32
 	c.Sieve.DuplicateMaxPeriod = 604800
 	c.Sieve.VacationMinPeriod = 86400
@@ -4039,7 +4046,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 32
+const minConfigSchema = 33
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -4090,6 +4097,7 @@ var schemaAdditions = map[int][]string{
 		"services.managesieve_login.auth_allow_cleartext", "services.jmap_login.auth_allow_cleartext"},
 	31: {"sieve.sieve_submission_ssl_verify", "sieve.sieve_submission_ssl_ca"},
 	32: {"storage.mail_crypt", "storage.mail_temp_dir"},
+	33: {"sieve.sieve_send_rate_limit"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart
