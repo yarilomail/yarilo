@@ -6,7 +6,8 @@
 #
 # PASS/FAIL lines in <out-dir>/crypt-<arm>.txt; exit 1 when any fails.
 #   check     yarctl config check exits 0 in yarilo-imap: the keys read
-#   metrics   mailbox_crypt_sealed_total grew, mailbox_crypt_failed_total is 0
+#   metrics   mailbox_crypt_sealed_total grew, mailbox_crypt_failed_total is 0,
+#             summed over every backend pod
 #             (the pod started with this arm, so the counters are the arm's)
 #   (info)    key cache hits and misses over the backend pods
 #   files     no message file the arm filled is plaintext (its account ranges
@@ -57,31 +58,41 @@ else
   verdict check fail "$(echo "$out" | tail -1)"
 fi
 
-# metrics: every container's telemetry port, from one, since a pod shares
-# its network namespace.
-metric_sum() {
-  in_pod 'for p in $(seq 8080 8090); do wget -qO- -T 5 http://127.0.0.1:$p/metrics 2>/dev/null; done' |
-    awk -v m="$1" 'index($0, m) == 1 && ($1 == m || substr($1, length(m) + 1, 1) == "{") { s += $NF } END { printf "%d", s }'
+# Every backend pod's exposition, every container's telemetry port from one
+# per pod (a pod shares its network namespace): an arm's sessions land on
+# either pod, and each pod started with this arm, so the sums are the arm's.
+backend_metrics() {
+  local pod
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    POD="$pod" in_pod 'for p in $(seq 8080 8090); do wget -qO- -T 5 http://127.0.0.1:$p/metrics 2>/dev/null; done' || true
+  done
 }
-sealed=$(metric_sum mailbox_crypt_sealed_total)
-failures=$(metric_sum mailbox_crypt_failed_total)
+# metric_sum <exposition file> <name> [<label selector>]: the sum of the
+# series of name, of those carrying the selector when one is given.
+metric_sum() {
+  awk -v m="$2" -v sel="${3:-}" '
+    index($0, m) == 1 && ($1 == m || substr($1, length(m) + 1, 1) == "{") && (sel == "" || index($1, sel) > 0) { s += $NF }
+    END { printf "%d", s }' "$1"
+}
+exposition="$OUT/metrics-$ARM.txt"
+backend_metrics > "$exposition"
+pods=$(kube get pods -l app.kubernetes.io/component=backend -o name | wc -l | tr -d ' ')
+
+# metrics
+sealed=$(metric_sum "$exposition" mailbox_crypt_sealed_total)
+failures=$(metric_sum "$exposition" mailbox_crypt_failed_total)
 if [ "${sealed:-0}" -gt 0 ] && [ "${failures:-1}" = 0 ]; then
-  verdict metrics pass "sealed $sealed, failed 0"
+  verdict metrics pass "sealed $sealed, failed 0, over $pods backend pods"
 else
-  verdict metrics fail "sealed ${sealed:-?}, failed ${failures:-?}"
+  verdict metrics fail "sealed ${sealed:-?}, failed ${failures:-?}, over $pods backend pods"
 fi
 
-# key cache: hits and misses over both backend pods (the arm's sessions
-# land on either), since each started with this arm. A line, not a verdict.
-hits=0; misses=0
-for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
-  set -- $(POD="$pod" in_pod 'for p in $(seq 8080 8090); do wget -qO- -T 5 http://127.0.0.1:$p/metrics 2>/dev/null; done' |
-    awk '$1 == "mailbox_crypt_key_cache_total{result=\"hit\"}" { h += $2 } $1 == "mailbox_crypt_key_cache_total{result=\"miss\"}" { m += $2 } END { printf "%d %d", h, m }')
-  hits=$((hits + ${1:-0})); misses=$((misses + ${2:-0}))
-done
+# key cache: a line, not a verdict.
+hits=$(metric_sum "$exposition" mailbox_crypt_key_cache_total 'result="hit"')
+misses=$(metric_sum "$exposition" mailbox_crypt_key_cache_total 'result="miss"')
 share="-"
 [ $((hits + misses)) -gt 0 ] && share="$((hits * 100 / (hits + misses)))%"
-echo "INFO key cache: hit $hits, miss $misses ($share hits)" | tee -a "$RESULT"
+echo "INFO key cache: hit $hits, miss $misses ($share hits), over $pods backend pods" | tee -a "$RESULT"
 
 # files: the arm wiped and filled these ranges (ab-arm.sh type_domain), so
 # every message file in them is its own; accounts outside them are older.
