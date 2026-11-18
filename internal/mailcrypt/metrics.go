@@ -38,6 +38,18 @@ var (
 		Name: "mailbox_crypt_key_cache_total",
 		Help: "age file keys looked up in this process's key cache, by result: hit, or miss (unwrapped with the private key).",
 	}, []string{"result"})
+	metricReencrypted = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mailbox_crypt_reencrypted_total",
+		Help: "Messages re-encryption rewrote, by driver and the state they were in: plain, other_key, current (to plain), reference.",
+	}, []string{"driver", "from"})
+	metricReencryptFailed = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mailbox_crypt_reencrypt_failed_total",
+		Help: "Messages re-encryption left as they were, by driver and reason: verify, read, write, nospace, vanished, changed.",
+	}, []string{"driver", "reason"})
+	metricReencryptNoKey = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "mailbox_crypt_reencrypt_nokey_total",
+		Help: "Messages re-encryption left untouched because no configured key opens them, by driver.",
+	}, []string{"driver"})
 	metricCacheBypass = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "mailbox_crypt_cache_bypass_total",
 		Help: "Reference-format bodies read as a stream because storage.mail_crypt.reference_cache_size was full.",
@@ -122,3 +134,16 @@ func (c *countingOpened) ReadAt(p []byte, off int64) (int, error) {
 	c.note(err)
 	return n, err
 }
+
+// CountReencrypted counts one message rewritten from state from.
+func CountReencrypted(driver string, from State) {
+	metricReencrypted.WithLabelValues(driver, from.String()).Inc()
+}
+
+// CountReencryptFailed counts one message re-encryption left as it was.
+func CountReencryptFailed(driver, reason string) {
+	metricReencryptFailed.WithLabelValues(driver, reason).Inc()
+}
+
+// CountReencryptNoKey counts one message no configured key opens.
+func CountReencryptNoKey(driver string) { metricReencryptNoKey.WithLabelValues(driver).Inc() }

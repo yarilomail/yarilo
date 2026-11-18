@@ -222,6 +222,27 @@ type UIDAddressable interface {
 	RecordPath(folder string, m *MessageMeta) (string, error)
 }
 
+// RawBody is a stored body exactly as it lies on disk: still encrypted when it
+// was saved so, with its line ends untouched.
+type RawBody interface {
+	io.ReaderAt
+	io.Closer
+	Size() int64
+}
+
+// RawReader reads a record's stored bytes, which Fetch and OpenRecord never
+// return: they decrypt and serve bare LF as CRLF (#2582). For re-encryption,
+// which must write back the bytes it read.
+type RawReader interface {
+	RawRecord(folder string, m *MessageMeta) (RawBody, error)
+}
+
+// UnreferencedRawReader is a store that keeps messages no folder refers to
+// (mdbox records with no references, until purge).
+type UnreferencedRawReader interface {
+	RawUnreferenced(fn func(storageKey uint32, b RawBody) error) error
+}
+
 // StorageKeyer is a driver whose messages have a storage key of their own: the
 // mdbox map_uid, which the mailbox index carries per record as the reference does.
 type StorageKeyer interface {

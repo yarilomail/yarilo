@@ -27,6 +27,10 @@ func MdboxMapKey(user string) string { return "mdboxmap:" + user }
 // Acquire after IndexKey, before DeliverKey.
 func MailboxKey(user, folder string) string { return "mbox:" + user + ":" + folder }
 
+// CryptJobKey is held for the length of one user's crypt status or
+// re-encryption job, so two cannot run for the same user.
+func CryptJobKey(user string) string { return "crypt:" + user }
+
 // FTSKey returns the lock key serialising full-text index writes for one
 // mailbox. It is deliberately NOT MailboxKey: the mail index and the full-text
 // index are different resources with different writers. The FTS index has a

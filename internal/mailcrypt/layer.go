@@ -36,6 +36,10 @@ type Options struct {
 	ReferenceKeys []*ecdh.PrivateKey
 	// Cache holds decrypted reference-format bodies; nil streams them.
 	Cache *Cache
+
+	// ids are Identities as configured, outside the key cache: Probe asks
+	// which one opens a stanza, which the cache does not answer.
+	ids []age.Identity
 }
 
 // Layer seals bodies on their way to a storage driver and opens them on the
@@ -50,6 +54,7 @@ type Layer struct {
 // identities are wrapped in one key cache, which every ForDriver copy shares.
 func New(o Options) *Layer {
 	if len(o.Identities) > 0 {
+		o.ids = o.Identities
 		o.Identities = []age.Identity{newKeyCache(o.Identities, keyCacheSize, cacheTTL)}
 	}
 	return &Layer{o: o}
