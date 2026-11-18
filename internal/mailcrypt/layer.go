@@ -318,3 +318,16 @@ func (l *Layer) PlainFileSize(path string, size int64) (int64, error) {
 	defer f.Close()
 	return l.PlainSize(fileBody{File: f, size: size})
 }
+
+// WithoutCache is the same layer reading the reference format as a stream: a
+// bulk pass through every message must not fill the sessions' cache.
+func (l *Layer) WithoutCache() *Layer {
+	o := l.opts()
+	o.Cache = nil
+	keyless := l != nil && l.keyless
+	driver := ""
+	if l != nil {
+		driver = l.driver
+	}
+	return &Layer{o: o, driver: driver, keyless: keyless}
+}

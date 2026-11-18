@@ -29,7 +29,13 @@ func saveThrough(t *testing.T, root, user string, l *mailcrypt.Layer, body strin
 
 func saveInto(t *testing.T, info *mailbox.UserInfo, l *mailcrypt.Layer, body string) {
 	t.Helper()
-	box := maildir.New(maildir.WithCrypt(l)).OpenUser(info)
+	saveWith(t, maildir.New(maildir.WithCrypt(l)), info, body)
+}
+
+// saveWith stores one message in INBOX through be and records it in the index.
+func saveWith(t *testing.T, be mailbox.MailboxBackend, info *mailbox.UserInfo, body string) {
+	t.Helper()
+	box := be.OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
 	}
@@ -111,12 +117,20 @@ func TestCryptStatusCountsEveryState(t *testing.T) {
 	}
 }
 
-func TestCryptReencryptWritesNothingYet(t *testing.T) {
-	ts, _ := storageTestServer(t)
-	st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
-		map[string]any{"user": "alice@example.com", "to": "plain"})
-	if st != http.StatusNotImplemented {
-		t.Fatalf("status %d %s", st, body)
+// maildir has no swap yet: its writers take no cross-process lock, and the
+// way in waits on a decision (MAILCRYPT §13.5). A run fails, writing nothing.
+func TestReencryptRefusesMaildirForNow(t *testing.T) {
+	ts, root := storageTestServer(t, func(o *Options) { o.Crypt = mailcrypt.New(mailcrypt.Options{}) })
+	const user = "alice@example.com"
+	materialiseHome(t, ts, user)
+	saveThrough(t, root, user, nil, "Subject: a\r\n\r\nb\r\n")
+	if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
+		map[string]any{"user": user, "to": "plain"}); st != http.StatusAccepted {
+		t.Fatalf("start: %d %s", st, body)
+	}
+	job := waitCryptJob(t, ts.URL, user)
+	if job.State != "failed" || !strings.Contains(job.Error, "not implemented") || job.Rewritten != 0 {
+		t.Fatalf("job %+v", job)
 	}
 }
 
@@ -126,12 +140,24 @@ type cryptJobView struct {
 	Seen          int            `json:"seen"`
 	Totals        map[string]int `json:"totals"`
 	WouldRewrite  int            `json:"would_rewrite"`
+	Rewritten     int            `json:"rewritten"`
+	Skipped       int            `json:"skipped"`
 	NoKey         int            `json:"no_key"`
 	Failed        int            `json:"failed"`
 	FoldersFailed int            `json:"folders_failed"`
 }
 
 func pollCryptJob(t *testing.T, base, user string) cryptJobView {
+	t.Helper()
+	v := waitCryptJob(t, base, user)
+	if v.Error != "" {
+		t.Fatalf("job failed: %s", v.Error)
+	}
+	return v
+}
+
+// waitCryptJob waits for the user's job to end and returns it as it ended.
+func waitCryptJob(t *testing.T, base, user string) cryptJobView {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/api/backend/crypt/job?user="+user+"&wait=10s", nil)
 	if err != nil {
@@ -148,9 +174,6 @@ func pollCryptJob(t *testing.T, base, user string) cryptJobView {
 	}
 	if v.State == "running" {
 		t.Fatal("job still running after the wait")
-	}
-	if v.Error != "" {
-		t.Fatalf("job failed: %s", v.Error)
 	}
 	return v
 }

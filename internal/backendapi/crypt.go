@@ -80,8 +80,11 @@ type cryptJob struct {
 	Seen      int
 	Folders   []*cryptFolder
 	Totals    map[string]int
-	// WouldRewrite and NoKey are what a re-encryption does and leaves.
+	// WouldRewrite and NoKey are what a re-encryption does and leaves;
+	// Rewritten and Skipped (expunged meanwhile) what a real run did.
 	WouldRewrite int
+	Rewritten    int
+	Skipped      int
 	NoKey        int
 	Failed       int
 	// FoldersFailed are folders that could not be opened.
@@ -107,7 +110,8 @@ func (j *cryptJob) snapshot() map[string]any {
 		"kind": j.Kind, "user": j.User, "namespace": j.Namespace, "dry_run": j.DryRun, "to": j.To,
 		"state": j.State, "error": j.Error, "started": j.Started, "finished": j.Finished,
 		"seen": j.Seen, "folders": folders, "totals": copyCounts(j.Totals),
-		"would_rewrite": j.WouldRewrite, "no_key": j.NoKey, "failed": j.Failed,
+		"would_rewrite": j.WouldRewrite, "rewritten": j.Rewritten, "skipped": j.Skipped,
+		"no_key": j.NoKey, "failed": j.Failed,
 		"folders_failed": j.FoldersFailed,
 	}
 }
@@ -141,10 +145,6 @@ func (s *Server) handleCryptStart(kind cryptKind) http.HandlerFunc {
 			}
 			if req.To == "age" && !s.opts.Crypt.Writes() {
 				apiError(w, "to age: storage.mail_crypt.write is off, there is no key to write to", http.StatusBadRequest)
-				return
-			}
-			if !req.DryRun {
-				apiError(w, "reencrypt: only --dry-run is implemented in this release", http.StatusNotImplemented)
 				return
 			}
 		}
@@ -247,7 +247,7 @@ func (s *Server) runCryptJob(ctx context.Context, job *cryptJob, req cryptReques
 		job.State = "done"
 	}
 	line := []any{"user", job.User, "kind", job.Kind, "state", job.State, "seen", job.Seen,
-		"would_rewrite", job.WouldRewrite, "no_key", job.NoKey, "failed", job.Failed, "folders_failed", job.FoldersFailed,
+		"would_rewrite", job.WouldRewrite, "rewritten", job.Rewritten, "skipped", job.Skipped, "no_key", job.NoKey, "failed", job.Failed, "folders_failed", job.FoldersFailed,
 		"duration_ms", now.Sub(job.Started).Milliseconds()}
 	job.mu.Unlock()
 	close(job.done)
@@ -321,10 +321,19 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 	if isVirtualNamespace(bundle.spec) {
 		return nil // its folders name messages that live in other folders
 	}
+	driver := mailbox.DriverNameOf(bundle.box)
 	rr, ok := mailbox.Driver(bundle.box).(mailbox.RawReader)
 	if !ok {
-		return fmt.Errorf("crypt: driver %s reads no raw records", mailbox.DriverNameOf(bundle.box))
+		return fmt.Errorf("crypt: driver %s reads no raw records", driver)
 	}
+	writing := job.Kind == cryptReencrypt && !req.DryRun
+	var rw mailbox.RecordRewriter
+	if writing {
+		if rw, ok = mailbox.Driver(bundle.box).(mailbox.RecordRewriter); !ok {
+			return fmt.Errorf("crypt: re-encryption of %s stores is not implemented yet", driver)
+		}
+	}
+	layer := s.opts.Crypt.WithoutCache()
 	entries, err := bundle.box.ListFolders()
 	if err != nil {
 		return fmt.Errorf("crypt: %s: list folders: %w", ns, err)
@@ -334,6 +343,13 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 			continue
 		}
 		row := job.addFolder(ns, e.Name)
+		if writing {
+			if n, err := rw.SweepRewriteTemps(e.Name, 2*cryptJobLease); err != nil {
+				return fmt.Errorf("crypt: %s %s: %w", ns, e.Name, err)
+			} else if n > 0 {
+				slog.Info("backendapi/crypt: removed what an interrupted run left", "user", req.User, "namespace", ns, "folder", e.Name, "files", n)
+			}
+		}
 		folder, err := bundle.mbox.Folder(e.Name, 0)
 		var msgs []*mailbox.MessageMeta
 		if err == nil {
@@ -357,12 +373,27 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 				job.count(row, 0, err, req.To)
 				continue
 			}
-			st, perr := s.opts.Crypt.Probe(b)
+			st, perr := layer.Probe(b)
 			_ = b.Close()
 			if perr != nil {
 				slog.Warn("backendapi/crypt: message unreadable", "user", req.User, "namespace", ns, "folder", e.Name, "uid", m.UID, "err", perr)
 			}
 			job.count(row, st, perr, req.To)
+			if perr != nil || !writing {
+				continue
+			}
+			if st == mailcrypt.StateNoKey {
+				mailcrypt.CountReencryptNoKey(driver)
+				continue
+			}
+			if !needsRewrite(st, req.To) {
+				continue
+			}
+			out, err := rewriteBody(layer, rw, driver, req.User, ns, e.Name, m, st, req.To)
+			job.rewrote(row, out)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if len(req.Folders) > 0 {
@@ -396,6 +427,20 @@ func (j *cryptJob) addFolder(ns, name string) *cryptFolder {
 	f := &cryptFolder{Namespace: ns, Folder: name, States: map[string]int{}}
 	j.Folders = append(j.Folders, f)
 	return f
+}
+
+func (j *cryptJob) rewrote(f *cryptFolder, out rewriteOutcome) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	switch out {
+	case rewriteDone:
+		j.Rewritten++
+	case rewriteSkipped:
+		j.Skipped++
+	case rewriteFailed:
+		f.Failed++
+		j.Failed++
+	}
 }
 
 // folderFailed marks a folder that could not be opened: its messages are not
