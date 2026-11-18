@@ -86,3 +86,63 @@ func TestNoCallerOfTheHardlinkCopy(t *testing.T) {
 		})
 	}
 }
+
+// Re-encryption reads the stored bytes (RawRecord) and writes them back only
+// through the driver: Fetch and OpenRecord serve bare LF as CRLF (#2582), so a
+// body read through them and written back would no longer match its sizes, and
+// a file written by path would bypass the layer and the locks.
+func TestReencryptionReadsRawAndWritesThroughTheDriver(t *testing.T) {
+	fset := token.NewFileSet()
+	raw := 0
+	for _, path := range goFiles(t, "../..") {
+		name := rel(path)
+		if strings.HasSuffix(name, "_test.go") || strings.HasPrefix(name, "internal/storage/") ||
+			strings.HasPrefix(name, "pkg/mailbox/") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		inCrypt := strings.HasPrefix(name, "internal/backendapi/crypt")
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				switch sel.Sel.Name {
+				case "RawRecord", "RawUnreferenced":
+					raw++
+					if !inCrypt {
+						t.Errorf("%s: %s reads raw records; only the crypt jobs do", name, fn.Name.Name)
+					}
+				}
+				if !inCrypt {
+					return true
+				}
+				if sel.Sel.Name == "Fetch" || sel.Sel.Name == "OpenRecord" {
+					t.Errorf("%s: %s reads a body through %s, which rewrites line ends; use RawRecord", name, fn.Name.Name, sel.Sel.Name)
+				}
+				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "os" {
+					switch sel.Sel.Name {
+					case "Open", "OpenFile", "Create", "WriteFile", "ReadFile", "Rename", "Remove":
+						t.Errorf("%s: %s calls os.%s; message files are read and replaced only through the driver", name, fn.Name.Name, sel.Sel.Name)
+					}
+				}
+				return true
+			})
+		}
+	}
+	if raw == 0 {
+		t.Fatal("nothing reads a raw record: the walk saw nothing")
+	}
+}

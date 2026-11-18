@@ -237,6 +237,7 @@ func main() {
 		},
 		FTSClient: ftsClient,
 		FTSChain:  ftsChain,
+		Crypt:     mailboxbuild.CryptLayer(cfg.Storage),
 	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

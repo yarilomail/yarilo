@@ -229,6 +229,8 @@ func dispatchBackend(args []string) error {
 		return dispatchQuota(args[1:])
 	case "fts":
 		return dispatchFTS(args[1:])
+	case "crypt":
+		return dispatchCrypt(args[1:])
 	case "warden":
 		// warden introspection runs against the backend plane, so it must resolve
 		// here too: the backend-api container sets YARILO_ADMIN_TYPE=backend, which
@@ -236,7 +238,7 @@ func dispatchBackend(args []string) error {
 		// top-level shorthand.
 		return dispatchWarden(args[1:])
 	default:
-		return fmt.Errorf("unknown backend service %q - available: dict, folder, user, index, mdbox, subscriptions, specialuse, metadata, acl, who, sessions, quota, fts, warden", args[0])
+		return fmt.Errorf("unknown backend service %q - available: dict, folder, user, index, mdbox, subscriptions, specialuse, metadata, acl, who, sessions, quota, fts, crypt, warden", args[0])
 	}
 }
 
@@ -310,6 +312,7 @@ Services:
   mailbox       - message retrieval (mailbox message get mime|raw)
   who           - active session listing
   sessions      - session management (kick)
+  crypt         - mail encryption at rest: status, re-encryption, keys
 
 Run 'yarctl backend <service>' with no command for that service's usage.`)
 }
