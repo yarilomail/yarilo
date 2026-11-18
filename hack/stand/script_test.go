@@ -600,3 +600,22 @@ func TestMailCryptOverlaysDifferInWriteAlone(t *testing.T) {
 		t.Error("ab-arm.sh does not name the mailcrypt overlays")
 	}
 }
+
+// The window's disk growth is B's message bytes against A's, per type, after
+// the same fill: every arm must write them, quoted so the pod's shell does not
+// expand the patterns against the domain's own directory.
+func TestEveryArmWritesItsMessageBytes(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	if !strings.Contains(s, `"disk: arm=$ARM type=$t message_bytes=`) {
+		t.Error("ab-arm.sh writes no per-type message bytes after the fill")
+	}
+	for _, p := range []string{`'*/Maildir/cur/*'`, `'*/Maildir/new/*'`, `'*/dbox-Mails/u.*'`, `'*/storage/m.*'`} {
+		if !strings.Contains(s, p) {
+			t.Errorf("pattern %s is not quoted for the pod's shell", p)
+		}
+	}
+}

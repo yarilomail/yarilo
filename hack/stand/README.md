@@ -75,6 +75,10 @@ is crossed twice in each direction.
   only.
 - `watch-tmp.sh` samples `/tmp` in every pod, one container a pod, every 15 s,
   through all five arms alike; `tmp-peak.txt` is each pod's peak.
+- Every arm writes `disk-<arm>.txt` after the fill: per type, the message
+  files' bytes and count (maildir `cur/` and `new/`, sdbox `u.*`, mdbox `m.*`,
+  no indexes) and the accounts' du. B's bytes less A's over the messages filled
+  is what age costs a message.
 - `crypt-checks.sh` after each B arm: `yarctl config check` exits 0,
   `mailbox_crypt_sealed_total` grew and `mailbox_crypt_failed_total` is 0, no
   message file of the arm is plaintext, disk = index, RFC822.SIZE is the
