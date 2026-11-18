@@ -396,3 +396,17 @@ the client's decisions and body fields against wforce, then logins through the
 stand's IMAP (`YARILO_IMAP_ADDR`, else a forward to `yarilo-imap-login`), each row reading
 back from wforce's log what the server sent and checking what it did with the
 answer. Needs go and a route to the stand.
+
+## flock across backend pods
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/flock-rwx.sh <out-dir>
+```
+
+Whether the RWX mail volume gives flock's shared and exclusive holds
+between two backend pods on two nodes, which the maildir crypt lock needs
+(MAILCRYPT section 13.5): shared beside shared, exclusive refused beside
+shared and shared beside exclusive, one closed hold leaving another of the
+same pod in place, and the cost of a shared take. Nothing of yarilo is
+restarted; a scratch directory on the volume is made and removed. Rows in
+`<out-dir>/flock-rwx.txt`.
