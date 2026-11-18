@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -31,10 +32,11 @@ const (
 // the way out of the old body, compared with the hash of the new body read
 // back, and only then put in place by the driver under its lock.
 func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns, folder string,
-	m *mailbox.MessageMeta, from mailcrypt.State, to string) (rewriteOutcome, error) {
+	m *mailbox.MessageMeta, from mailcrypt.State, to string, recorded func() (bool, error)) (rewriteOutcome, error) {
 	var want []byte
 	var wantLen int64
 	rw := mailbox.BodyRewrite{
+		Recorded: recorded,
 		Fill: func(src mailbox.RawBody, dst io.Writer) (int64, bool, error) {
 			o, err := l.Open(src, nil)
 			if err != nil {
@@ -97,8 +99,14 @@ func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns
 	case errors.Is(err, mailbox.ErrExpunged):
 		mailcrypt.CountReencryptFailed(driver, "vanished")
 		return rewriteSkipped, nil
+	case errors.Is(err, filelock.ErrNoSharedLock):
+		mailcrypt.CountReencryptFailed(driver, "nolock")
+		return rewriteFailed, fmt.Errorf("crypt: %s needs flock on the mail volume to keep the sessions' renames out "+
+			"(storage_lock_method: flock, and a mount that locks on the server): %w", driver, err)
 	case errors.Is(err, mailbox.ErrRecordChanged):
 		reason = "changed"
+	case errors.Is(err, mailbox.ErrRecordBusy):
+		reason = "busy"
 	case errors.Is(err, errVerify):
 		reason = "verify"
 	case errors.Is(err, errRead):

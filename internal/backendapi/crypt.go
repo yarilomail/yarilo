@@ -395,7 +395,12 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 			if !needsRewrite(st, req.To) {
 				continue
 			}
-			out, err := rewriteBody(layer, rw, driver, req.User, ns, e.Name, m, st, req.To)
+			uid, folderID := m.UID, folder.ID
+			recorded := func() (bool, error) {
+				got, err := bundle.mbox.Messages(folderID, mailbox.SeqSet{{From: uid, To: uid}})
+				return len(got) == 1, err
+			}
+			out, err := rewriteBody(layer, rw, driver, req.User, ns, e.Name, m, st, req.To, recorded)
 			job.rewrote(row, out)
 			if err != nil {
 				return err

@@ -42,6 +42,7 @@ func TestTwoSessionsStoreWithoutWaiting(t *testing.T) {
 	}
 
 	before := fileLockHolds(t)
+	waitedBefore := cryptLockWaits(t)
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	for i, box := range []mailbox.UserMailbox{a, b} {
@@ -60,6 +61,33 @@ func TestTwoSessionsStoreWithoutWaiting(t *testing.T) {
 	if got := fileLockHolds(t) - before; got != 0 {
 		t.Errorf("two stores took %d file locks, want 0", got)
 	}
+	// The re-encryption lock they share does not queue them either.
+	if got := cryptLockWaits(t) - waitedBefore; got != 0 {
+		t.Errorf("a store waited %d times for the crypt lock, want 0", got)
+	}
+}
+
+// cryptLockWaits counts the crypt lock's takes that found it held.
+func cryptLockWaits(t *testing.T) int {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0.0
+	for _, f := range fams {
+		if f.GetName() != "maildir_crypt_lock_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "waited" && l.GetValue() == "true" {
+					total += m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return int(total)
 }
 
 // Two processes appending at once keep every row: without the hold over

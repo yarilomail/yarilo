@@ -77,7 +77,17 @@ const (
 	lockSiteReconcileApply = "reconcile-apply" // the index write a reconcile decided on
 	lockSiteMigrateNames   = "migrate-names"   // the pass that puts records in the list
 	lockSiteRename         = "rename"          // a folder rename, both locks
+	lockSiteRemove         = "remove"          // an unlink outside an expunge's hold
+	lockSiteExpunge        = "expunge"         // an expunge's records and unlinks
+	lockSiteRewrite        = "rewrite"         // re-encryption replacing a body
 )
+
+// metricCryptLock counts the folder crypt lock's holds by mode, and how many
+// had to wait: sessions take it shared and should never wait for each other.
+var metricCryptLock = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_crypt_lock_total",
+	Help: "Holds of a folder's re-encryption lock by mode (shared by renames and unlinks, exclusive by a re-encryption's swap) and whether the take waited; waited=no-room is a rename or unlink that went unheld because the volume had no room to create the lock file.",
+}, []string{"mode", "waited"})
 
 // Where a listing's cost comes from: the uid list, read whole or by its tail,
 // and cur/, by whoever asked for it (#1875).

@@ -65,6 +65,11 @@ func (u *userMailbox) DiscardSaved(folder, saved string, _ *mailbox.MessageMeta)
 // destination's naming put it.
 func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, _ *mailbox.MessageMeta) error {
 	u.takeGUID(dstFolder, moved)
+	release, err := u.sharedCrypt(srcFolder, lockSiteMove)
+	if err != nil {
+		return fmt.Errorf("maildir/restore: %w", err)
+	}
+	defer release()
 	return u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
 		from, ok := u.locate(dstFolder, moved)
 		if !ok {

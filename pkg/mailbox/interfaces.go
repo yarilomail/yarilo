@@ -244,11 +244,18 @@ type BodyRewrite struct {
 	Fill func(src RawBody, dst io.Writer) (plainLen int64, sealed bool, err error)
 	// Verify reads the written body back before it replaces the old one.
 	Verify func(written RawBody) error
+	// Recorded asks the index, under the driver's lock, whether the record
+	// still stands; nil for a driver whose lock already answers it.
+	Recorded func() (bool, error)
 }
 
 // ErrRecordChanged is a rewrite given up because the record's file changed
 // between the read and the replace; the file is left as it was.
 var ErrRecordChanged = errors.New("mailbox: the record changed during the rewrite")
+
+// ErrRecordBusy is a rewrite that could not get the record's lock within its
+// bound; the file is left as it was, for a rerun.
+var ErrRecordBusy = errors.New("mailbox: the record stayed busy for the rewrite")
 
 // RecordRewriter replaces a record's stored body under its own name, with its
 // sizes, identity and date unchanged, after Verify has passed.

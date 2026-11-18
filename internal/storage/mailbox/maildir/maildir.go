@@ -697,6 +697,7 @@ type userMailbox struct {
 	owner            string     // <process>/<pid>/<user> - passed to yarilo-locks for BUSY diagnostics
 	listUTF8         bool       // mirrors Backend.listUTF8
 	mu               sync.Mutex // orders this pod's sessions; other processes are excluded at the file
+	listHolds        sync.Map   // folder -> goroutine holding its list, kept under test only
 	cacheMu          sync.Mutex // guards cache; the scan reaches it holding no mailbox lock
 	listUseSeq       atomic.Uint64
 	// inSection is non-zero while a reconcile's apply phase holds the folder
@@ -1015,7 +1016,14 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 	if outGUID == noGUID {
 		outGUID = guidFromBase(filename)
 	}
-	err := u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
+	// The source's alone: the file leaves it, and the destination's name is
+	// fresh, which a swap never renames onto.
+	release, err := u.sharedCrypt(srcFolder, lockSiteMove)
+	if err != nil {
+		return "", noGUID, fmt.Errorf("maildir: move: %w", err)
+	}
+	defer release()
+	err = u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
 		srcPath, found := u.locate(srcFolder, filename)
 		if !found {
 			srcPath = filepath.Join(u.folderPath(srcFolder), "cur", filename)
@@ -1211,6 +1219,11 @@ func (u *userMailbox) plainSize(path string, size int64) uint32 {
 // Remove unlinks one message. A name that is not there is not "already gone":
 // the listing is re-read and the file taken under the name it wears (#1797).
 func (u *userMailbox) Remove(folder, filename string) error {
+	release, err := u.sharedCrypt(folder, lockSiteRemove)
+	if err != nil {
+		return fmt.Errorf("maildir: remove %s: %w", filename, err)
+	}
+	defer release()
 	return u.removeFile(folder, filename, false)
 }
 
@@ -1636,11 +1649,19 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 	}
 	var arrivals []string
 	if movedNew {
-		if err := u.withMailboxLockSite(folder.Name, lockSiteReconcileMove, func() error {
+		// Shared: the swap looks names up in new/ as well, where delivered and
+		// never opened mail lies.
+		release, cerr := u.sharedCrypt(folder.Name, lockSiteReconcileMove)
+		if cerr != nil {
+			return st, cerr
+		}
+		err := u.withMailboxLockSite(folder.Name, lockSiteReconcileMove, func() error {
 			var merr error
 			arrivals, merr = u.moveNewToCurLocked(folder.Name)
 			return merr
-		}); err != nil {
+		})
+		release()
+		if err != nil {
 			return st, err
 		}
 	}
@@ -2416,8 +2437,13 @@ func (u *userMailbox) controlFolderPath(folder string) string {
 // maildir keeps them. Within one directory, so the rename is atomic; a new
 // keyword takes the first free letter and never renumbers one in use.
 func (u *userMailbox) WriteFlags(folder, filename string, flags, keywords []string) (string, error) {
+	release, err := u.sharedCrypt(folder, lockSiteWriteFlags)
+	if err != nil {
+		return filename, err
+	}
+	defer release()
 	var newName string
-	err := u.withMailboxLockSite(folder, lockSiteWriteFlags, func() error {
+	err = u.withMailboxLockSite(folder, lockSiteWriteFlags, func() error {
 		letters, lerr := u.keywordLettersLocked(folder, keywords)
 		if lerr != nil {
 			return lerr
@@ -2446,41 +2472,47 @@ func (u *userMailbox) WriteFlagsMulti(folder string, writes []mailbox.FlagWrite)
 	whole := time.Now()
 	var lockMS, keywordsMS, renamesMS int64
 	renamed := 0
-	err := u.withMailboxLockSite(folder, lockSiteWriteFlagsBulk, func() error {
-		lockMS = time.Since(whole).Milliseconds()
-		kwStart := time.Now()
-		t := u.loadKeywordTableLocked(folder)
-		added := false
-		for i := range writes {
-			if t.allocate(u, folder, writes[i].Keywords) {
-				added = true
+	// Shared, before the mutex: a re-encryption's swap renames onto these
+	// names holding it exclusive (MAILCRYPT section 13.5).
+	release, err := u.sharedCrypt(folder, lockSiteWriteFlagsBulk)
+	if err == nil {
+		defer release()
+		err = u.withMailboxLockSite(folder, lockSiteWriteFlagsBulk, func() error {
+			lockMS = time.Since(whole).Milliseconds()
+			kwStart := time.Now()
+			t := u.loadKeywordTableLocked(folder)
+			added := false
+			for i := range writes {
+				if t.allocate(u, folder, writes[i].Keywords) {
+					added = true
+				}
 			}
-		}
-		if added {
-			if werr := u.writeKeywordFileLocked(folder, t.names); werr != nil {
-				return werr
+			if added {
+				if werr := u.writeKeywordFileLocked(folder, t.names); werr != nil {
+					return werr
+				}
 			}
-		}
-		keywordsMS = time.Since(kwStart).Milliseconds()
-		renStart := time.Now()
-		defer func() { renamesMS = time.Since(renStart).Milliseconds() }()
-		for i := range writes {
-			if beforeFlagRename != nil {
-				beforeFlagRename()
+			keywordsMS = time.Since(kwStart).Milliseconds()
+			renStart := time.Now()
+			defer func() { renamesMS = time.Since(renStart).Milliseconds() }()
+			for i := range writes {
+				if beforeFlagRename != nil {
+					beforeFlagRename()
+				}
+				name, werr := u.writeFlagsLocked(folder, writes[i].Filename,
+					writes[i].Flags, t.letters(writes[i].Keywords))
+				if werr != nil {
+					out[i].Err = werr
+					continue
+				}
+				if name != writes[i].Filename {
+					renamed++
+				}
+				out[i].Filename = name
 			}
-			name, werr := u.writeFlagsLocked(folder, writes[i].Filename,
-				writes[i].Flags, t.letters(writes[i].Keywords))
-			if werr != nil {
-				out[i].Err = werr
-				continue
-			}
-			if name != writes[i].Filename {
-				renamed++
-			}
-			out[i].Filename = name
-		}
-		return nil
-	})
+			return nil
+		})
+	}
 	slog.Debug("maildir: flags timing",
 		"user", u.username, "folder", folder, "writes", len(writes), "renamed", renamed,
 		"lock_ms", lockMS, "keywords_ms", keywordsMS, "renames_ms", renamesMS,
@@ -3074,6 +3106,11 @@ func (u *userMailbox) Username() string { return u.username }
 
 // HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
 func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
+	release, err := u.sharedCrypt(folder, lockSiteExpunge)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return u.withMailboxLockSite(folder, site, fn)
 }
 
