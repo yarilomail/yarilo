@@ -34,6 +34,7 @@ type Engine struct {
 	dupTrackers  sync.Map
 	dupDict      dict.Dict    // when non-nil, duplicate dedup is dict-backed (cross-pod with redis)
 	sendLimit    *sendLimit   // sieve_send_rate_limit; counts nothing at 0
+	memForwards  sync.Map     // memory driver: per-user redirect records
 	locker       locks.Locker // coordinates the file-backed duplicate dedup
 	globalBefore []*gosieve.Script
 	globalAfter  []*gosieve.Script
@@ -342,18 +343,14 @@ func (e *Engine) runScript(ctx context.Context, script *gosieve.Script, opts Fil
 	}
 
 	if e.sender != nil {
-		// A redirect over the send limit is not sent. When any redirect that
-		// cancelled the implicit keep is refused, the keep comes back and the
-		// message stays where it is, so a refused address still has a copy
-		// even when the redirects before it went out.
+		// A redirect skipped as a duplicate or a loop, or over the send limit,
+		// is not sent. When any redirect that cancelled the implicit keep is
+		// skipped, the keep comes back and the message stays where it is, so
+		// a skipped address still has a copy even when others went out.
 		refusedMove := false
 		for _, r := range result.Redirects {
-			if !e.sendLimit.allow(ctx, opts.Username, opts.HomeDir, "redirect") {
+			if !e.redirectOne(ctx, opts, hdr, r.Address) {
 				refusedMove = refusedMove || !r.Copy
-				continue
-			}
-			if err := e.sender.sendRedirect(ctx, opts.EnvFrom, r.Address, opts.MsgRaw); err != nil {
-				slog.Error("sieve: redirect failed", "user", opts.Username, "to", r.Address, "err", err)
 			}
 		}
 		if refusedMove && !result.discarded && len(result.Deliveries) == 0 {

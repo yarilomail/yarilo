@@ -93,11 +93,15 @@ type SieveConfig struct {
 	// MaxRedirects caps a message's redirects, :copy and :list included; 0 forbids redirect. Default: 32.
 	MaxRedirects int `koanf:"sieve_max_redirects"`
 	// SendRateLimit caps the mail a mailbox's Sieve sends in a clock hour,
-	// every recipient of redirect, vacation and notify counted; over it the
+	// every recipient of redirect, vacation, notify and report counted; over it the
 	// send is refused. 0 = off. Default: 0. Counted where the duplicate test
 	// keeps its state: a home-dir file, or the sieve_duplicate dict on the
 	// redis driver.
 	SendRateLimit int `koanf:"sieve_send_rate_limit"`
+	// RedirectDuplicatePeriod is how long, in seconds, a forward is
+	// remembered: the same message to the same address within it is not
+	// sent again. 0 = not remembered. Default: 43200 (12 hours).
+	RedirectDuplicatePeriod int `koanf:"sieve_redirect_duplicate_period"`
 	// MaxScripts caps a user's stored scripts; replacing one adds none. 0 = unlimited.
 	MaxScripts int `koanf:"sieve_max_num_scripts"`
 	// MaxStorage caps the bytes of a user's stored scripts. 0 = unlimited.
@@ -3047,6 +3051,7 @@ func Defaults() *Config {
 	c.Sieve.MaxScriptSize = 65536
 	c.Sieve.MaxRedirects = 32
 	c.Sieve.SendRateLimit = 0
+	c.Sieve.RedirectDuplicatePeriod = 43200
 	c.Sieve.MaxActions = 32
 	c.Sieve.DuplicateMaxPeriod = 604800
 	c.Sieve.VacationMinPeriod = 86400
@@ -4046,7 +4051,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 33
+const minConfigSchema = 34
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -4098,6 +4103,7 @@ var schemaAdditions = map[int][]string{
 	31: {"sieve.sieve_submission_ssl_verify", "sieve.sieve_submission_ssl_ca"},
 	32: {"storage.mail_crypt", "storage.mail_temp_dir"},
 	33: {"sieve.sieve_send_rate_limit"},
+	34: {"sieve.sieve_redirect_duplicate_period"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

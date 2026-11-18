@@ -12,7 +12,7 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 33
+config_schema_version: 34
 
 ## Size limit of the /tmp emptyDir in every pod; empty: none. Past it kubelet
 ## evicts the pod. storage.mail_temp_dir lives there, with its
@@ -2430,13 +2430,17 @@ sieve:
   sieve_max_script_size: 65536
   sieve_max_redirects: 32
   ## sieve_send_rate_limit caps the mail one mailbox's Sieve sends in a clock
-  ## hour: every recipient of redirect, vacation and notify counts. Over it a
+  ## hour: every recipient of redirect, vacation, notify and report counts. Over it a
   ## redirect is not sent and the message stays in INBOX; vacation and notify
   ## are not sent. Up to twice the limit can pass across the turn of an hour.
   ## sieve_max_redirects counts within one message, this key within an hour.
   ## Counted where the duplicate test keeps its state (sieve_duplicate_driver
   ## file or redis). 0 = off.
   sieve_send_rate_limit: 0
+  ## sieve_redirect_duplicate_period: seconds a redirect is remembered, so the
+  ## same message to the same address is not forwarded twice within it (the
+  ## message stays in INBOX instead). 0 = not remembered. Default: 12 hours.
+  sieve_redirect_duplicate_period: 43200
   ## sieve_max_num_scripts caps the scripts one user may store; replacing a
   ## stored script adds none. ManageSieve refuses past it. 0 = unlimited.
   sieve_max_num_scripts: 0
