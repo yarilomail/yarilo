@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -20,7 +24,11 @@ import (
 // saveThrough stores one message in INBOX through a maildir sealing with l.
 func saveThrough(t *testing.T, root, user string, l *mailcrypt.Layer, body string) {
 	t.Helper()
-	info := &mailbox.UserInfo{Username: user, Home: maildirHome(root, user)}
+	saveInto(t, &mailbox.UserInfo{Username: user, Home: maildirHome(root, user)}, l, body)
+}
+
+func saveInto(t *testing.T, info *mailbox.UserInfo, l *mailcrypt.Layer, body string) {
+	t.Helper()
 	box := maildir.New(maildir.WithCrypt(l)).OpenUser(info)
 	if err := box.Init(); err != nil {
 		t.Fatal(err)
@@ -113,13 +121,14 @@ func TestCryptReencryptWritesNothingYet(t *testing.T) {
 }
 
 type cryptJobView struct {
-	State        string         `json:"state"`
-	Error        string         `json:"error"`
-	Seen         int            `json:"seen"`
-	Totals       map[string]int `json:"totals"`
-	WouldRewrite int            `json:"would_rewrite"`
-	NoKey        int            `json:"no_key"`
-	Failed       int            `json:"failed"`
+	State         string         `json:"state"`
+	Error         string         `json:"error"`
+	Seen          int            `json:"seen"`
+	Totals        map[string]int `json:"totals"`
+	WouldRewrite  int            `json:"would_rewrite"`
+	NoKey         int            `json:"no_key"`
+	Failed        int            `json:"failed"`
+	FoldersFailed int            `json:"folders_failed"`
 }
 
 func pollCryptJob(t *testing.T, base, user string) cryptJobView {
@@ -172,5 +181,100 @@ func TestCryptKeysCarryNoPrivateKey(t *testing.T) {
 	}
 	if bytes.Contains(body, []byte(id.String())) || bytes.Contains(body, []byte("AGE-SECRET-KEY")) {
 		t.Fatal("the private key is in the answer")
+	}
+}
+
+// A user's second namespace with a store of its own is walked without a
+// flag: a zero that left it out would not be a zero.
+func TestCryptStatusWalksEveryNamespaceWithAStore(t *testing.T) {
+	oldID, _ := age.GenerateX25519Identity()
+	newID, _ := age.GenerateX25519Identity()
+	server := mailcrypt.New(mailcrypt.Options{
+		Recipients: []age.Recipient{newID.Recipient()},
+		Identities: []age.Identity{oldID, newID},
+	})
+	archive := config.NamespaceConfig{Type: "personal", Prefix: "Archive/", Separator: "/", List: "yes", Location: "maildir:%h/archive"}
+	ts, root := storageTestServer(t, func(o *Options) {
+		o.Crypt = server
+		o.Namespaces = append(o.Namespaces, archive)
+	})
+	const user = "alice@example.com"
+	materialiseHome(t, ts, user)
+	saveThrough(t, root, user, mailcrypt.New(mailcrypt.Options{Recipients: []age.Recipient{newID.Recipient()}}), "Subject: a\r\n\r\nb\r\n")
+
+	base := &mailbox.UserInfo{Username: user, Home: maildirHome(root, user)}
+	loc, _, err := mailbox.ParseLocation(archive.Location, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := mailbox.NamespaceUserInfo(base, loc, archive.Separator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveInto(t, info, mailcrypt.New(mailcrypt.Options{Recipients: []age.Recipient{oldID.Recipient()}}), "Subject: old\r\n\r\nb\r\n")
+
+	for _, c := range []struct {
+		ns       string
+		current  int
+		otherKey int
+	}{
+		{"", 1, 1},
+		{"personal", 1, 0},
+		{"archive", 0, 1},
+	} {
+		t.Run("namespace="+c.ns, func(t *testing.T) {
+			if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/status", "",
+				map[string]any{"user": user, "namespace": c.ns}); st != http.StatusAccepted {
+				t.Fatalf("start: %d %s", st, body)
+			}
+			job := pollCryptJob(t, ts.URL, user)
+			if job.Totals["current"] != c.current || job.Totals["other_key"] != c.otherKey {
+				t.Fatalf("totals %v, want current %d other_key %d", job.Totals, c.current, c.otherKey)
+			}
+		})
+	}
+}
+
+// A folder whose index cannot be read is a row with its error and a failed
+// count, never a folder that silently has no messages.
+func TestCryptStatusReportsAFolderItCouldNotOpen(t *testing.T) {
+	ts, root := storageTestServer(t, func(o *Options) { o.Crypt = mailcrypt.New(mailcrypt.Options{}) })
+	const user = "alice@example.com"
+	materialiseHome(t, ts, user)
+	saveThrough(t, root, user, nil, "Subject: a\r\n\r\nb\r\n")
+	if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/folder/create", "",
+		map[string]any{"user": user, "folder": "Broken"}); st != 200 {
+		t.Fatalf("create: %d %s", st, body)
+	}
+	breakFolderIndex(t, maildirHome(root, user), "Broken")
+
+	if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/status", "", map[string]any{"user": user}); st != http.StatusAccepted {
+		t.Fatalf("start: %d %s", st, body)
+	}
+	job := pollCryptJob(t, ts.URL, user)
+	if job.FoldersFailed != 1 {
+		t.Fatalf("folders failed %d, want 1 (job %+v)", job.FoldersFailed, job)
+	}
+	if job.Totals["plain"] != 1 {
+		t.Fatalf("INBOX not counted: %v", job.Totals)
+	}
+}
+
+// breakFolderIndex overwrites the folder's index with bytes no index format
+// reads, so the folder cannot be opened.
+func breakFolderIndex(t *testing.T, home, folder string) {
+	t.Helper()
+	var idx string
+	_ = filepath.WalkDir(home, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && d.Name() == "yarilo.index" && strings.HasSuffix(filepath.Dir(p), "."+folder) {
+			idx = p
+		}
+		return nil
+	})
+	if idx == "" {
+		t.Fatalf("no index for %s under %s", folder, home)
+	}
+	if err := os.WriteFile(idx, bytes.Repeat([]byte{0xff}, 4096), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

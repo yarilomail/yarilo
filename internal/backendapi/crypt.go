@@ -57,9 +57,11 @@ type cryptRequest struct {
 
 // cryptFolder is one folder's messages counted by state.
 type cryptFolder struct {
-	Folder string         `json:"folder"`
-	States map[string]int `json:"states"`
-	Failed int            `json:"failed"`
+	Namespace string         `json:"namespace"`
+	Folder    string         `json:"folder"`
+	States    map[string]int `json:"states"`
+	Failed    int            `json:"failed"`
+	Error     string         `json:"error,omitempty"`
 }
 
 // cryptJob is one user's status or re-encryption run. It lives in this
@@ -82,6 +84,8 @@ type cryptJob struct {
 	WouldRewrite int
 	NoKey        int
 	Failed       int
+	// FoldersFailed are folders that could not be opened.
+	FoldersFailed int
 
 	cancel context.CancelFunc
 	done   chan struct{} // closed when the job ends
@@ -97,13 +101,14 @@ func (j *cryptJob) snapshot() map[string]any {
 	defer j.mu.Unlock()
 	folders := make([]cryptFolder, len(j.Folders))
 	for i, f := range j.Folders {
-		folders[i] = cryptFolder{Folder: f.Folder, States: copyCounts(f.States), Failed: f.Failed}
+		folders[i] = cryptFolder{Namespace: f.Namespace, Folder: f.Folder, States: copyCounts(f.States), Failed: f.Failed, Error: f.Error}
 	}
 	return map[string]any{
 		"kind": j.Kind, "user": j.User, "namespace": j.Namespace, "dry_run": j.DryRun, "to": j.To,
 		"state": j.State, "error": j.Error, "started": j.Started, "finished": j.Finished,
 		"seen": j.Seen, "folders": folders, "totals": copyCounts(j.Totals),
 		"would_rewrite": j.WouldRewrite, "no_key": j.NoKey, "failed": j.Failed,
+		"folders_failed": j.FoldersFailed,
 	}
 }
 
@@ -124,9 +129,6 @@ func (s *Server) handleCryptStart(kind cryptKind) http.HandlerFunc {
 		if req.User == "" {
 			apiError(w, "user is required", http.StatusBadRequest)
 			return
-		}
-		if req.Namespace == "" {
-			req.Namespace = "personal"
 		}
 		if kind == cryptReencrypt {
 			switch req.To {
@@ -245,7 +247,7 @@ func (s *Server) runCryptJob(ctx context.Context, job *cryptJob, req cryptReques
 		job.State = "done"
 	}
 	line := []any{"user", job.User, "kind", job.Kind, "state", job.State, "seen", job.Seen,
-		"would_rewrite", job.WouldRewrite, "no_key", job.NoKey, "failed", job.Failed,
+		"would_rewrite", job.WouldRewrite, "no_key", job.NoKey, "failed", job.Failed, "folders_failed", job.FoldersFailed,
 		"duration_ms", now.Sub(job.Started).Milliseconds()}
 	job.mu.Unlock()
 	close(job.done)
@@ -276,18 +278,45 @@ func needsRewrite(st mailcrypt.State, to string) bool {
 	return false
 }
 
+// cryptNamespaces are the namespaces a job walks: the one asked for, or every
+// namespace of the user's that has a store of its own.
+func (s *Server) cryptNamespaces(asked string) []string {
+	if asked != "" {
+		return []string{asked}
+	}
+	out := []string{"personal"}
+	for _, spec := range s.opts.Namespaces {
+		if s.ownsStore(spec) && !slices.Contains(out, slugFor(spec)) {
+			out = append(out, slugFor(spec))
+		}
+	}
+	return out
+}
+
 func (s *Server) walkCrypt(ctx context.Context, job *cryptJob, req cryptRequest) error {
 	uc, err := s.openUserContextReadOnly(req.User)
 	if err != nil {
 		return err
 	}
 	defer uc.Close()
-	bundle, err := uc.ns(s, req.Namespace)
+	for _, ns := range s.cryptNamespaces(req.Namespace) {
+		if err := s.walkCryptNamespace(ctx, job, req, uc, ns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryptRequest, uc *userContext, ns string) error {
+	bundle, err := uc.ns(s, ns)
 	if err != nil {
 		return err
 	}
 	if bundle == nil {
-		return errNoMailHome
+		if ns == "personal" {
+			return errNoMailHome
+		}
+		return nil // that namespace's home was never made: no mail in it
 	}
 	if isVirtualNamespace(bundle.spec) {
 		return nil // its folders name messages that live in other folders
@@ -298,21 +327,23 @@ func (s *Server) walkCrypt(ctx context.Context, job *cryptJob, req cryptRequest)
 	}
 	entries, err := bundle.box.ListFolders()
 	if err != nil {
-		return fmt.Errorf("crypt: list folders: %w", err)
+		return fmt.Errorf("crypt: %s: list folders: %w", ns, err)
 	}
 	for _, e := range entries {
-		if len(req.Folders) > 0 && !slices.Contains(req.Folders, e.Name) {
+		if !e.Selectable || (len(req.Folders) > 0 && !slices.Contains(req.Folders, e.Name)) {
 			continue
 		}
+		row := job.addFolder(ns, e.Name)
 		folder, err := bundle.mbox.Folder(e.Name, 0)
-		if err != nil {
-			continue // not selectable: no messages of its own
+		var msgs []*mailbox.MessageMeta
+		if err == nil {
+			msgs, err = bundle.mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		}
-		msgs, err := bundle.mbox.Messages(folder.ID, mailbox.SeqSet{{From: 1, To: 0}})
 		if err != nil {
-			return fmt.Errorf("crypt: %s: %w", e.Name, err)
+			slog.Error("backendapi/crypt: folder unreadable", "user", req.User, "namespace", ns, "folder", e.Name, "err", err)
+			job.folderFailed(row, err)
+			continue
 		}
-		row := job.addFolder(e.Name)
 		for _, m := range msgs {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -322,14 +353,14 @@ func (s *Server) walkCrypt(ctx context.Context, job *cryptJob, req cryptRequest)
 				if errors.Is(err, mailbox.ErrExpunged) {
 					continue
 				}
-				slog.Warn("backendapi/crypt: message unreadable", "user", req.User, "folder", e.Name, "uid", m.UID, "err", err)
+				slog.Warn("backendapi/crypt: message unreadable", "user", req.User, "namespace", ns, "folder", e.Name, "uid", m.UID, "err", err)
 				job.count(row, 0, err, req.To)
 				continue
 			}
 			st, perr := s.opts.Crypt.Probe(b)
 			_ = b.Close()
 			if perr != nil {
-				slog.Warn("backendapi/crypt: message unreadable", "user", req.User, "folder", e.Name, "uid", m.UID, "err", perr)
+				slog.Warn("backendapi/crypt: message unreadable", "user", req.User, "namespace", ns, "folder", e.Name, "uid", m.UID, "err", perr)
 			}
 			job.count(row, st, perr, req.To)
 		}
@@ -341,14 +372,14 @@ func (s *Server) walkCrypt(ctx context.Context, job *cryptJob, req cryptRequest)
 	if !ok {
 		return nil
 	}
-	row := job.addFolder(unreferencedFolder)
+	row := job.addFolder(ns, unreferencedFolder)
 	return ur.RawUnreferenced(func(key uint32, b mailbox.RawBody) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		st, perr := s.opts.Crypt.Probe(b)
 		if perr != nil {
-			slog.Warn("backendapi/crypt: record unreadable", "user", req.User, "map_uid", key, "err", perr)
+			slog.Warn("backendapi/crypt: record unreadable", "user", req.User, "namespace", ns, "map_uid", key, "err", perr)
 		}
 		job.count(row, st, perr, req.To)
 		return nil
@@ -359,12 +390,21 @@ func isVirtualNamespace(spec config.NamespaceConfig) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(spec.Location)), "virtual:")
 }
 
-func (j *cryptJob) addFolder(name string) *cryptFolder {
+func (j *cryptJob) addFolder(ns, name string) *cryptFolder {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	f := &cryptFolder{Folder: name, States: map[string]int{}}
+	f := &cryptFolder{Namespace: ns, Folder: name, States: map[string]int{}}
 	j.Folders = append(j.Folders, f)
 	return f
+}
+
+// folderFailed marks a folder that could not be opened: its messages are not
+// counted, so the job cannot report a zero for them.
+func (j *cryptJob) folderFailed(f *cryptFolder, err error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	f.Error = err.Error()
+	j.FoldersFailed++
 }
 
 func (j *cryptJob) count(f *cryptFolder, st mailcrypt.State, err error, to string) {

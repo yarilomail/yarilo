@@ -48,8 +48,10 @@ Commands:
   status <user> [folder...] [--namespace NS] [--detach]
         Count the user's messages in each folder by state: plain, current
         (sealed to exactly the keys of public_key), other_key, reference,
-        no_key. Runs as a job on the user's backend-api; Ctrl-C cancels it
-        unless --detach.
+        no_key. Every namespace of the user with a store of its own, or
+        only NS. A folder that cannot be opened is reported and the command
+        exits non-zero. Runs as a job on the user's backend-api; Ctrl-C
+        cancels it unless --detach.
 
   reencrypt <user> [folder...] --dry-run [--to age|plain] [--namespace NS] [--detach]
         What re-encryption would rewrite and leave. This release only
@@ -74,7 +76,7 @@ Commands:
 
 func cryptStart(kind string, args []string) error {
 	fs := flag.NewFlagSet("crypt "+kind, flag.ContinueOnError)
-	ns := fs.String("namespace", "personal", "namespace slug")
+	ns := fs.String("namespace", "", "only this namespace (default: every namespace of the user with a store of its own)")
 	detach := fs.Bool("detach", false, "return once the job has started")
 	dryRun := fs.Bool("dry-run", false, "report what would be done, write nothing")
 	to := fs.String("to", "age", "age or plain")
@@ -164,14 +166,17 @@ type cryptJobOut struct {
 	Error   string `json:"error"`
 	Seen    int    `json:"seen"`
 	Folders []struct {
-		Folder string         `json:"folder"`
-		States map[string]int `json:"states"`
-		Failed int            `json:"failed"`
+		Namespace string         `json:"namespace"`
+		Folder    string         `json:"folder"`
+		States    map[string]int `json:"states"`
+		Failed    int            `json:"failed"`
+		Error     string         `json:"error"`
 	} `json:"folders"`
-	Totals       map[string]int `json:"totals"`
-	WouldRewrite int            `json:"would_rewrite"`
-	NoKey        int            `json:"no_key"`
-	Failed       int            `json:"failed"`
+	Totals        map[string]int `json:"totals"`
+	WouldRewrite  int            `json:"would_rewrite"`
+	NoKey         int            `json:"no_key"`
+	Failed        int            `json:"failed"`
+	FoldersFailed int            `json:"folders_failed"`
 }
 
 // verdict is the exit status: a failed or cancelled job, or a message that
@@ -182,6 +187,8 @@ func (j cryptJobOut) verdict() error {
 		return fmt.Errorf("crypt %s for %s failed: %s", j.Kind, j.User, j.Error)
 	case j.State == "cancelled":
 		return fmt.Errorf("crypt %s for %s was cancelled", j.Kind, j.User)
+	case j.FoldersFailed > 0:
+		return fmt.Errorf("crypt %s for %s: %d folders could not be opened, their messages are not counted", j.Kind, j.User, j.FoldersFailed)
 	case j.Failed > 0:
 		return fmt.Errorf("crypt %s for %s: %d messages could not be read (named in the backend-api log)", j.Kind, j.User, j.Failed)
 	}
@@ -196,18 +203,22 @@ func printCryptJob(data []byte) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "FOLDER\t%s\tFAILED\n", strings.ToUpper(strings.Join(cryptStates, "\t")))
-	row := func(name string, st map[string]int, failed int) {
+	fmt.Fprintf(tw, "NAMESPACE\tFOLDER\t%s\tFAILED\n", strings.ToUpper(strings.Join(cryptStates, "\t")))
+	row := func(ns, name string, st map[string]int, failed int, ferr string) {
+		if ferr != "" {
+			fmt.Fprintf(tw, "%s\t%s\tnot opened: %s\n", ns, name, ferr)
+			return
+		}
 		cells := make([]string, len(cryptStates))
 		for i, s := range cryptStates {
 			cells[i] = fmt.Sprint(st[s])
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\n", name, strings.Join(cells, "\t"), failed)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", ns, name, strings.Join(cells, "\t"), failed)
 	}
 	for _, f := range j.Folders {
-		row(f.Folder, f.States, f.Failed)
+		row(f.Namespace, f.Folder, f.States, f.Failed, f.Error)
 	}
-	row("TOTAL", j.Totals, j.Failed)
+	row("", "TOTAL", j.Totals, j.Failed, "")
 	if err := tw.Flush(); err != nil {
 		return err
 	}
