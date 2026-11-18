@@ -18,6 +18,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -120,7 +121,10 @@ func TestCryptStatusCountsEveryState(t *testing.T) {
 // maildir has no swap yet: its writers take no cross-process lock, and the
 // way in waits on a decision (MAILCRYPT §13.5). A run fails, writing nothing.
 func TestReencryptRefusesMaildirForNow(t *testing.T) {
-	ts, root := storageTestServer(t, func(o *Options) { o.Crypt = mailcrypt.New(mailcrypt.Options{}) })
+	ts, root := storageTestServer(t, func(o *Options) {
+		o.Crypt = mailcrypt.New(mailcrypt.Options{})
+		o.Locker = lockstest.Server(t)()
+	})
 	const user = "alice@example.com"
 	materialiseHome(t, ts, user)
 	saveThrough(t, root, user, nil, "Subject: a\r\n\r\nb\r\n")

@@ -53,6 +53,14 @@ func rewriteLayer(t *testing.T) *mailcrypt.Layer {
 	return mailcrypt.New(mailcrypt.Options{Recipients: []agelib.Recipient{id.Recipient()}, Identities: []agelib.Identity{id}})
 }
 
+// rewriteUser is alice's sdbox store against a lock service, as backend-api
+// opens it: a rewrite refuses to run without one.
+func rewriteUser(t *testing.T) (mailbox.UserMailbox, *userMailbox) {
+	t.Helper()
+	mb := lockedUser(t, t.TempDir(), lockstest.Server(t)())
+	return mb, mb.(*userMailbox)
+}
+
 func metaOf(t *testing.T, path string) map[byte]string {
 	t.Helper()
 	f, err := os.Open(path)
@@ -102,8 +110,7 @@ func TestRewriteKeepsTheRecord(t *testing.T) {
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			_, mb, _ := newTestUser(t)
-			u := mb.(*userMailbox)
+			mb, u := rewriteUser(t)
 			path := filepath.Join(u.folderPath("INBOX"), "u.1")
 			name := c.write(t, mb, path)
 			m := &mailbox.MessageMeta{UID: 1}
@@ -183,8 +190,7 @@ func TestRewriteLeavesTheFileWhenItCannotFinish(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, mb, _ := newTestUser(t)
-			u := mb.(*userMailbox)
+			mb, u := rewriteUser(t)
 			saveNamed(t, mb, "INBOX", "Subject: s\r\n\r\nbody\r\n", 1, [16]byte{})
 			path := filepath.Join(u.folderPath("INBOX"), "u.1")
 			if c.seam != nil {
@@ -210,8 +216,7 @@ func TestRewriteLeavesTheFileWhenItCannotFinish(t *testing.T) {
 // A reader that opened the file before the swap reads the old body to its end.
 func TestRewriteLetsAnOpenReaderFinish(t *testing.T) {
 	l := rewriteLayer(t)
-	_, mb, _ := newTestUser(t)
-	u := mb.(*userMailbox)
+	mb, u := rewriteUser(t)
 	body := "Subject: s\r\n\r\n" + strings.Repeat("line\r\n", 20000)
 	name, _ := saveNamed(t, mb, "INBOX", body, 1, [16]byte{})
 	rc, err := mb.Fetch("INBOX", name, false)
@@ -258,8 +263,7 @@ func TestRewriteRenamesUnderTheFolderLock(t *testing.T) {
 }
 
 func TestSweepRewriteTempsTakesOnlyOldOnes(t *testing.T) {
-	_, mb, _ := newTestUser(t)
-	u := mb.(*userMailbox)
+	_, u := rewriteUser(t)
 	dir := u.folderPath("INBOX")
 	old := filepath.Join(dir, rewritePrefix+"1.1")
 	young := filepath.Join(dir, rewritePrefix+"1.2")
@@ -308,8 +312,7 @@ func TestRewriteFromTheReferenceFormat(t *testing.T) {
 		ReferenceKeys: []*ecdh.PrivateKey{refKey},
 	})
 
-	_, mb, _ := newTestUser(t)
-	u := mb.(*userMailbox)
+	_, u := rewriteUser(t)
 	path := filepath.Join(u.folderPath("INBOX"), "u.1")
 	var file bytes.Buffer
 	file.Write(encodeFileHeaderLine(0x5f000000))
@@ -349,5 +352,46 @@ func TestRewriteFromTheReferenceFormat(t *testing.T) {
 	}
 	if meta[metaKeyPhysicalSize] != "3e8" {
 		t.Fatalf("Z %q, want the plaintext's 1000", meta[metaKeyPhysicalSize])
+	}
+}
+
+func TestRewriteRefusesWithoutTheLockService(t *testing.T) {
+	_, mb, _ := newTestUser(t)
+	saveNamed(t, mb, "INBOX", "Subject: s\r\n\r\nbody\r\n", 1, [16]byte{})
+	u := mb.(*userMailbox)
+	path := filepath.Join(u.folderPath("INBOX"), "u.1")
+	before, _ := os.ReadFile(path)
+	if err := u.RewriteRecord("INBOX", &mailbox.MessageMeta{UID: 1}, sealRewrite(rewriteLayer(t))); err == nil {
+		t.Fatal("a rewrite ran with no lock service")
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("the file changed")
+	}
+	noTemps(t, u.folderPath("INBOX"))
+}
+
+// Until the rename the temp wears its own write time, so the sweep's age
+// check sees a live rewrite's file as young, whatever the message's date.
+func TestRewriteTempIsYoungUntilTheRename(t *testing.T) {
+	mb, u := rewriteUser(t)
+	saveNamed(t, mb, "INBOX", "Subject: s\r\n\r\nbody\r\n", 1, [16]byte{})
+	path := filepath.Join(u.folderPath("INBOX"), "u.1")
+	lastYear := time.Now().AddDate(-1, 0, 0)
+	if err := os.Chtimes(path, lastYear, lastYear); err != nil {
+		t.Fatal(err)
+	}
+	swept := -1
+	testAfterRewriteVerified = func() {
+		swept, _ = u.SweepRewriteTemps("INBOX", time.Minute)
+	}
+	t.Cleanup(func() { testAfterRewriteVerified = nil })
+	if err := u.RewriteRecord("INBOX", &mailbox.MessageMeta{UID: 1}, sealRewrite(rewriteLayer(t))); err != nil {
+		t.Fatal(err)
+	}
+	if swept != 0 {
+		t.Fatalf("the sweep took %d live temps", swept)
+	}
+	if st, _ := os.Stat(path); !st.ModTime().Equal(lastYear) {
+		t.Fatalf("the message is dated %v, want %v", st.ModTime(), lastYear)
 	}
 }

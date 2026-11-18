@@ -17,6 +17,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -41,9 +42,11 @@ func sdboxRewriteFixture(t *testing.T) *rewriteFixture {
 		Recipients: []age.Recipient{newID.Recipient()},
 		Identities: []age.Identity{oldID, newID},
 	})
+	locker := lockstest.Server(t)()
 	ts, root := storageTestServer(t, func(o *Options) {
 		o.Crypt = server
-		o.Mailbox = mailbox.Validating(dboxv2.New(dboxv2.WithCrypt(server)), mailbox.DefaultNameRules())
+		o.Locker = locker
+		o.Mailbox = mailbox.Validating(dboxv2.New(dboxv2.WithCrypt(server), dboxv2.WithLocker(locker)), mailbox.DefaultNameRules())
 	})
 	const user = "alice@example.com"
 	materialiseHome(t, ts, user)
@@ -224,4 +227,28 @@ func TestReencryptUnreadableHomeFailsTheRun(t *testing.T) {
 func sdboxFile(t *testing.T, info *mailbox.UserInfo, uid uint32) string {
 	t.Helper()
 	return filepath.Join(info.Home, "sdbox", "mailboxes", "INBOX", "dbox-Mails", fmt.Sprintf("u.%d", uid))
+}
+
+// Without the lock service a rewrite is refused before it starts; status and
+// a dry run do not need it.
+func TestReencryptNeedsTheLockService(t *testing.T) {
+	server := mailcrypt.New(mailcrypt.Options{})
+	ts, root := storageTestServer(t, func(o *Options) {
+		o.Crypt = server
+		o.Mailbox = mailbox.Validating(dboxv2.New(dboxv2.WithCrypt(server)), mailbox.DefaultNameRules())
+	})
+	const user = "alice@example.com"
+	materialiseHome(t, ts, user)
+	saveWith(t, dboxv2.New(), &mailbox.UserInfo{Username: user, Home: maildirHome(root, user)}, "Subject: s\r\n\r\nx\r\n")
+	if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
+		map[string]any{"user": user, "to": "plain"}); st != http.StatusServiceUnavailable {
+		t.Fatalf("a rewrite without the lock service: %d %s", st, body)
+	}
+	if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
+		map[string]any{"user": user, "to": "plain", "dry_run": true}); st != http.StatusAccepted {
+		t.Fatalf("a dry run without the lock service: %d %s", st, body)
+	}
+	if job := pollCryptJob(t, ts.URL, user); job.State != "done" || job.Rewritten != 0 {
+		t.Fatalf("dry run %+v", job)
+	}
 }

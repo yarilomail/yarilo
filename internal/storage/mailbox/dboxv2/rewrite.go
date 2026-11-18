@@ -31,6 +31,9 @@ var (
 // RewriteRecord replaces u.<uid> around a new body, entries and Z as SaveReceived
 // writes them; always synced, as the old body is gone once the rename lands.
 func (u *userMailbox) RewriteRecord(folder string, m *mailbox.MessageMeta, rw mailbox.BodyRewrite) (err error) {
+	if u.b.locker == nil {
+		return errors.New("sdbox/rewrite: no lock service, so another process could not be kept out")
+	}
 	name, err := u.RecordPath(folder, m)
 	if err != nil {
 		return err
@@ -73,7 +76,7 @@ func (u *userMailbox) RewriteRecord(folder string, m *mailbox.MessageMeta, rw ma
 			_ = os.Remove(tmp)
 		}
 	}()
-	if err := writeSynced(tmp, out.Bytes(), before.ModTime()); err != nil {
+	if err := writeSynced(tmp, out.Bytes()); err != nil {
 		return fmt.Errorf("sdbox/rewrite %s: %w", name, err)
 	}
 	if err := verifyTemp(tmp, rw.Verify); err != nil {
@@ -94,6 +97,11 @@ func (u *userMailbox) RewriteRecord(folder string, m *mailbox.MessageMeta, rw ma
 		}
 		if testBeforeRewriteRename != nil {
 			testBeforeRewriteRename()
+		}
+		// Dated here, not when written: until now its own mtime is what tells
+		// the sweep a live rewrite's temp from a dead one's.
+		if err := os.Chtimes(tmp, before.ModTime(), before.ModTime()); err != nil {
+			return fmt.Errorf("sdbox/rewrite %s: %w", name, err)
 		}
 		if err := os.Rename(tmp, path); err != nil {
 			return fmt.Errorf("sdbox/rewrite %s: %w", name, err)
@@ -176,7 +184,7 @@ func withPhysicalSize(meta []metadataEntry, plainLen int64, sealed bool) []metad
 	return out
 }
 
-func writeSynced(path string, data []byte, mtime time.Time) error {
+func writeSynced(path string, data []byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -189,10 +197,7 @@ func writeSynced(path string, data []byte, mtime time.Time) error {
 		_ = f.Close()
 		return err
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Chtimes(path, mtime, mtime)
+	return f.Close()
 }
 
 func verifyTemp(path string, verify func(mailbox.RawBody) error) error {

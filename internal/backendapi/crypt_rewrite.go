@@ -38,18 +38,23 @@ func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns
 		Fill: func(src mailbox.RawBody, dst io.Writer) (int64, bool, error) {
 			o, err := l.Open(src, nil)
 			if err != nil {
-				return 0, false, fmt.Errorf("read: %w", err)
+				return 0, false, fmt.Errorf("%w: %w", errRead, err)
 			}
 			defer o.Close() //nolint:errcheck
 			h := sha256.New()
 			counted := &countWriter{h: h}
-			tee := io.TeeReader(o, counted)
+			tee := &readErrs{r: io.TeeReader(o, counted)}
+			var werr error
 			if to == "plain" {
-				if _, err := io.Copy(dst, tee); err != nil {
-					return 0, false, fmt.Errorf("write: %w", err)
-				}
-			} else if err := l.Seal(dst, tee); err != nil {
-				return 0, false, fmt.Errorf("write: %w", err)
+				_, werr = io.Copy(dst, tee)
+			} else {
+				werr = l.Seal(dst, tee)
+			}
+			switch {
+			case tee.err != nil:
+				return 0, false, fmt.Errorf("%w: %w", errRead, tee.err)
+			case werr != nil:
+				return 0, false, fmt.Errorf("write: %w", werr)
 			}
 			want, wantLen = h.Sum(nil), counted.n
 			return counted.n, to == "age", nil
@@ -96,6 +101,8 @@ func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns
 		reason = "changed"
 	case errors.Is(err, errVerify):
 		reason = "verify"
+	case errors.Is(err, errRead):
+		reason = "read"
 	default:
 		reason = "write"
 	}
@@ -105,7 +112,25 @@ func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns
 	return rewriteFailed, nil
 }
 
-var errVerify = errors.New("crypt: verification failed")
+var (
+	errVerify = errors.New("crypt: verification failed")
+	errRead   = errors.New("crypt: the old body could not be read")
+)
+
+// readErrs keeps the source's read error apart from the writer's, which the
+// copy reports alike.
+type readErrs struct {
+	r   io.Reader
+	err error
+}
+
+func (r *readErrs) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		r.err = err
+	}
+	return n, err
+}
 
 // verifyHook alters the hash of the read-back body. Test seam: a verification
 // that passes a corrupted body must turn a row red.

@@ -143,6 +143,12 @@ func (s *Server) handleCryptStart(kind cryptKind) http.HandlerFunc {
 				apiError(w, fmt.Sprintf("to: %q is neither age nor plain", req.To), http.StatusBadRequest)
 				return
 			}
+			// The sessions are other processes: without the lock service a
+			// swap would be excluded from nothing but this process.
+			if !req.DryRun && s.opts.Locker == nil {
+				apiError(w, "reencrypt: backend-api runs without the lock service, and a rewrite needs it; --dry-run works", http.StatusServiceUnavailable)
+				return
+			}
 			if req.To == "age" && !s.opts.Crypt.Writes() {
 				apiError(w, "to age: storage.mail_crypt.write is off, there is no key to write to", http.StatusBadRequest)
 				return
@@ -230,7 +236,7 @@ func (s *Server) runCryptJob(ctx context.Context, job *cryptJob, req cryptReques
 	run := func(ctx context.Context) error { return s.walkCrypt(ctx, job, req) }
 	var err error
 	if s.opts.Locker != nil {
-		err = locks.WithLock(ctx, s.opts.Locker, locks.CryptJobKey(req.User), locks.Owner(req.User, "backend-api-crypt"),
+		err = locks.WithLock(locks.WithSite(ctx, "crypt-job"), s.opts.Locker, locks.CryptJobKey(req.User), locks.Owner(req.User, "backend-api-crypt"),
 			cryptJobLease, cryptJobRenew, run)
 	} else {
 		err = run(ctx)
