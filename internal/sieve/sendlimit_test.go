@@ -231,3 +231,37 @@ func TestSendLimitThroughTheDictCounter(t *testing.T) {
 		t.Fatalf("incr key %q user %q ttl %v, want %q, u1@d.test, 2h", rc.keys[0], rc.user[0], rc.ttls[0], want)
 	}
 }
+
+// The limit crossed between two redirects of one message: the first goes
+// out, the second does not, and the message stays in INBOX so its address
+// is not left without a copy.
+func TestSendLimitCrossedMidMessageKeeps(t *testing.T) {
+	e, sent := limitEngine(t, 1)
+	home := withScript(t, "u1", `redirect "a@x.test"; redirect "b@x.test";`)
+	res, err := e.Filter(context.Background(), baseOpts("u1", home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*sent) != 1 || (*sent)[0] != "a@x.test" {
+		t.Fatalf("sent %v, want a@x.test alone", *sent)
+	}
+	if !inInbox(res) {
+		t.Fatal("the second redirect was refused and the message kept nowhere")
+	}
+}
+
+// vnd.yarilo.report sends mail and counts as the fourth action.
+func TestSendLimitCountsReports(t *testing.T) {
+	e, sent := limitEngine(t, 1)
+	home := withScript(t, "u1", `require ["vnd.yarilo.report"]; report "abuse" "spam" "abuse@x.test"; report "abuse" "spam" "abuse2@x.test";`)
+	before := testutil.ToFloat64(metricSendRefused.WithLabelValues("report"))
+	if _, err := e.Filter(context.Background(), baseOpts("u1", home)); err != nil {
+		t.Fatal(err)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("%d reports sent, want 1", len(*sent))
+	}
+	if d := testutil.ToFloat64(metricSendRefused.WithLabelValues("report")) - before; d != 1 {
+		t.Fatalf("refused reports +%v, want +1", d)
+	}
+}

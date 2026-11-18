@@ -28,7 +28,7 @@ const sendRateTTL = 2 * time.Hour
 var (
 	metricSendRefused = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "sieve_send_refused_total",
-		Help: "Sieve sends refused by sieve_send_rate_limit, one per recipient, by action: redirect, vacation, notify.",
+		Help: "Sieve sends refused by sieve_send_rate_limit, one per recipient, by action: redirect, vacation, notify, report.",
 	}, []string{"action"})
 	metricSendLimitUnavailable = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "sieve_send_limit_unavailable_total",

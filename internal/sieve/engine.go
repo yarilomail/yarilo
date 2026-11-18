@@ -342,21 +342,21 @@ func (e *Engine) runScript(ctx context.Context, script *gosieve.Script, opts Fil
 	}
 
 	if e.sender != nil {
-		// A redirect over the send limit is not sent; when it was what
-		// cancelled the implicit keep, the keep comes back and the message
-		// stays where it is, as a redirect skipped for any reason does.
-		refusedMove, sentMove := false, false
+		// A redirect over the send limit is not sent. When any redirect that
+		// cancelled the implicit keep is refused, the keep comes back and the
+		// message stays where it is, so a refused address still has a copy
+		// even when the redirects before it went out.
+		refusedMove := false
 		for _, r := range result.Redirects {
 			if !e.sendLimit.allow(ctx, opts.Username, opts.HomeDir, "redirect") {
 				refusedMove = refusedMove || !r.Copy
 				continue
 			}
-			sentMove = sentMove || !r.Copy
 			if err := e.sender.sendRedirect(ctx, opts.EnvFrom, r.Address, opts.MsgRaw); err != nil {
 				slog.Error("sieve: redirect failed", "user", opts.Username, "to", r.Address, "err", err)
 			}
 		}
-		if refusedMove && !sentMove && !result.discarded && len(result.Deliveries) == 0 {
+		if refusedMove && !result.discarded && len(result.Deliveries) == 0 {
 			result.Deliveries = append(result.Deliveries, Delivery{Folder: "INBOX", Implicit: true, FromKeep: true})
 		}
 		for _, resp := range result.VacationReplies {
@@ -370,6 +370,9 @@ func (e *Engine) runScript(ctx context.Context, script *gosieve.Script, opts Fil
 			}
 		}
 		for _, rep := range result.Reports {
+			if !e.sendLimit.allow(ctx, opts.Username, opts.HomeDir, "report") {
+				continue
+			}
 			if err := e.sender.sendReport(ctx, opts, rep); err != nil {
 				slog.Error("sieve: report failed", "user", opts.Username, "to", rep.Target, "err", err)
 			}

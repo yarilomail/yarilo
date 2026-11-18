@@ -236,7 +236,11 @@ func (s *Sender) sendReport(ctx context.Context, opts FilterOptions, r interp.Ac
 		ua = "yarilo"
 	}
 	msg := buildReportMessage(from, r.Target, ua, opts.EnvFrom, opts.EnvTo, r, opts.MsgRaw)
-	if err := s.submit(ctx, from, []string{r.Target}, bytes.NewReader(msg)); err != nil {
+	send := s.send
+	if send == nil {
+		send = s.submit
+	}
+	if err := send(ctx, from, []string{r.Target}, bytes.NewReader(msg)); err != nil {
 		return fmt.Errorf("sieve/sender: report send to %s: %w", r.Target, err)
 	}
 	return nil
