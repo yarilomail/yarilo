@@ -1016,9 +1016,9 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 	if outGUID == noGUID {
 		outGUID = guidFromBase(filename)
 	}
-	// The source's list alone: the destination's is taken apart, by the save
-	// cycle that publishes the file there, so no path holds two lists.
-	release, err := u.holdList(srcFolder, lockSiteMove)
+	// The source's alone: the file leaves it, and the destination's name is
+	// fresh, which a swap never renames onto.
+	release, err := u.sharedCrypt(srcFolder, lockSiteMove)
 	if err != nil {
 		return "", noGUID, fmt.Errorf("maildir: move: %w", err)
 	}
@@ -1219,7 +1219,7 @@ func (u *userMailbox) plainSize(path string, size int64) uint32 {
 // Remove unlinks one message. A name that is not there is not "already gone":
 // the listing is re-read and the file taken under the name it wears (#1797).
 func (u *userMailbox) Remove(folder, filename string) error {
-	release, err := u.holdList(folder, lockSiteRemove)
+	release, err := u.sharedCrypt(folder, lockSiteRemove)
 	if err != nil {
 		return fmt.Errorf("maildir: remove %s: %w", filename, err)
 	}
@@ -1649,11 +1649,19 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 	}
 	var arrivals []string
 	if movedNew {
-		if err := u.withMailboxLockSite(folder.Name, lockSiteReconcileMove, func() error {
+		// Shared: the swap looks names up in new/ as well, where delivered and
+		// never opened mail lies.
+		release, cerr := u.sharedCrypt(folder.Name, lockSiteReconcileMove)
+		if cerr != nil {
+			return st, cerr
+		}
+		err := u.withMailboxLockSite(folder.Name, lockSiteReconcileMove, func() error {
 			var merr error
 			arrivals, merr = u.moveNewToCurLocked(folder.Name)
 			return merr
-		}); err != nil {
+		})
+		release()
+		if err != nil {
 			return st, err
 		}
 	}
@@ -2429,7 +2437,7 @@ func (u *userMailbox) controlFolderPath(folder string) string {
 // maildir keeps them. Within one directory, so the rename is atomic; a new
 // keyword takes the first free letter and never renumbers one in use.
 func (u *userMailbox) WriteFlags(folder, filename string, flags, keywords []string) (string, error) {
-	release, err := u.holdList(folder, lockSiteWriteFlags)
+	release, err := u.sharedCrypt(folder, lockSiteWriteFlags)
 	if err != nil {
 		return filename, err
 	}
@@ -2464,9 +2472,9 @@ func (u *userMailbox) WriteFlagsMulti(folder string, writes []mailbox.FlagWrite)
 	whole := time.Now()
 	var lockMS, keywordsMS, renamesMS int64
 	renamed := 0
-	// The list before the mutex, the order of every path (#2184): a swap
-	// renames onto these names under the list (MAILCRYPT step 3).
-	release, err := u.holdList(folder, lockSiteWriteFlagsBulk)
+	// Shared, before the mutex: a re-encryption's swap renames onto these
+	// names holding it exclusive (MAILCRYPT section 13.5).
+	release, err := u.sharedCrypt(folder, lockSiteWriteFlagsBulk)
 	if err == nil {
 		defer release()
 		err = u.withMailboxLockSite(folder, lockSiteWriteFlagsBulk, func() error {
@@ -3098,7 +3106,7 @@ func (u *userMailbox) Username() string { return u.username }
 
 // HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
 func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
-	release, err := u.holdList(folder, lockSiteExpunge)
+	release, err := u.sharedCrypt(folder, lockSiteExpunge)
 	if err != nil {
 		return err
 	}

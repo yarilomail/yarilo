@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -184,9 +185,9 @@ func TestRewriteAgainstAnotherProcess(t *testing.T) {
 	}
 }
 
-// The rename runs while the folder's list is held: another process cannot
-// take it at that moment.
-func TestRewriteRenamesUnderTheList(t *testing.T) {
+// The rename runs while the folder's crypt lock is held exclusive: another
+// process's rename cannot take it shared at that moment.
+func TestRewriteRenamesUnderTheCryptLock(t *testing.T) {
 	box, other := twoHandles(t)
 	saveFlagged(t, box, "INBOX", "Subject: s\r\n\r\nx\r\n", 1)
 	prev := uidListLockWait
@@ -194,7 +195,7 @@ func TestRewriteRenamesUnderTheList(t *testing.T) {
 	t.Cleanup(func() { uidListLockWait = prev })
 	var takeErr error
 	testBeforeRewriteRename = func() {
-		release, err := other.holdList("INBOX", "test-other-process")
+		release, err := other.sharedCrypt("INBOX", "test-other-process")
 		if err == nil {
 			release()
 		}
@@ -205,13 +206,14 @@ func TestRewriteRenamesUnderTheList(t *testing.T) {
 		t.Fatal(err)
 	}
 	if takeErr == nil {
-		t.Fatal("another process took the list while the rename ran")
+		t.Fatal("another process took the crypt lock while the rename ran")
 	}
 }
 
-// The writers a swap races take the list too: holding it from another
-// handle keeps a STORE's rename, an unlink and a move out waiting.
-func TestWritersTakeTheList(t *testing.T) {
+// The writers a swap races take the crypt lock shared: a swap holding it
+// exclusive from another handle keeps a STORE's rename, an unlink, an
+// expunge, a move out and an arrival's move from new/ waiting.
+func TestWritersTakeTheCryptLock(t *testing.T) {
 	prev := uidListLockWait
 	uidListLockWait = 50 * time.Millisecond
 	t.Cleanup(func() { uidListLockWait = prev })
@@ -231,6 +233,9 @@ func TestWritersTakeTheList(t *testing.T) {
 			_, _, err := box.Move("INBOX", "Other", name, [16]byte{})
 			return err
 		}},
+		{"restore of a move", func(box *userMailbox, name string) error {
+			return box.RestoreMoved("INBOX", name, "Other", name, nil)
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			box, other := twoHandles(t)
@@ -238,19 +243,74 @@ func TestWritersTakeTheList(t *testing.T) {
 				t.Fatal(err)
 			}
 			name := saveFlagged(t, box, "INBOX", "Subject: s\r\n\r\nx\r\n", 1)
-			release, err := other.holdList("INBOX", "test-other-process")
+			release, err := other.exclusiveCrypt("INBOX")
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer release()
 			if err := c.act(box, name); err == nil {
-				t.Fatal("it went ahead while another process held the list")
+				t.Fatal("it went ahead while another process's swap held the crypt lock")
 			}
 			if files := filesOf(t, box, "INBOX"); len(files[maildirBase(name)]) != 1 || files[maildirBase(name)][0] != name {
 				t.Fatalf("the file changed: %v", files)
 			}
 		})
 	}
+}
+
+// Two sessions renaming in one folder hold the crypt lock together: neither
+// waits for the other (#1840 holds).
+func TestSessionsShareTheCryptLock(t *testing.T) {
+	box, other := twoHandles(t)
+	a, err := box.sharedCrypt("INBOX", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a()
+	prev := uidListLockWait
+	uidListLockWait = 20 * time.Millisecond
+	t.Cleanup(func() { uidListLockWait = prev })
+	b, err := other.sharedCrypt("INBOX", "b")
+	if err != nil {
+		t.Fatalf("a second session waited for the first: %v", err)
+	}
+	b()
+}
+
+// On a volume locked without flock the swap refuses and the sessions' renames
+// go on unheld.
+func TestRewriteRefusesWithoutFlock(t *testing.T) {
+	box, _ := twoHandles(t)
+	box.b.lockMethod = filelock.MethodDotlock
+	name := saveFlagged(t, box, "INBOX", "Subject: s\r\n\r\nx\r\n", 1)
+	path, _ := box.locate("INBOX", name)
+	before, _ := os.ReadFile(path)
+	err := box.RewriteRecord("INBOX", &mailbox.MessageMeta{UID: 1}, markRewrite("X: 1\r\n"))
+	if !errors.Is(err, filelock.ErrNoSharedLock) {
+		t.Fatalf("err %v", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("the file changed")
+	}
+	if _, err := box.WriteFlags("INBOX", name, []string{`\Flagged`}, nil); err != nil {
+		t.Fatalf("a STORE on a dotlock volume: %v", err)
+	}
+	noRewriteTemps(t, box, "INBOX")
+}
+
+func TestANestedTakeOfTheCryptLockIsRefused(t *testing.T) {
+	box, _ := twoHandles(t)
+	release, err := box.sharedCrypt("INBOX", "outer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a nested take was not refused")
+		}
+	}()
+	_, _ = box.sharedCrypt("INBOX", "inner")
 }
 
 func TestANestedTakeOfTheListIsRefused(t *testing.T) {
@@ -398,6 +458,7 @@ func TestRewriteStress(t *testing.T) {
 				}
 				err := box.RewriteRecord("INBOX", &mailbox.MessageMeta{UID: r.uid}, rw)
 				if err != nil && !errors.Is(err, mailbox.ErrExpunged) && !errors.Is(err, mailbox.ErrRecordChanged) &&
+					!errors.Is(err, mailbox.ErrRecordBusy) &&
 					!errors.Is(err, os.ErrNotExist) {
 					errs <- fmt.Errorf("rewrite %s: %w", b, err)
 					return
@@ -429,4 +490,88 @@ func TestRewriteStress(t *testing.T) {
 			t.Errorf("the index has %s in %s and the disk does not", base, r.folder)
 		}
 	}
+}
+
+// The reconcile's move from new/ to cur/ renames a message file too, and
+// waits for a swap holding the crypt lock; the arrival stays in new/.
+func TestTheArrivalMoveTakesTheCryptLock(t *testing.T) {
+	box, idx, folder := recSetup(t)
+	deliverToNewDir(t, box, "1700006000.M1P1.mda", "Subject: a\r\n\r\nb\r\n")
+	other := New().OpenUser(&mailbox.UserInfo{Username: "u@x.com", Home: box.home}).(*userMailbox)
+	release, err := other.exclusiveCrypt("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := uidListLockWait
+	uidListLockWait = 50 * time.Millisecond
+	t.Cleanup(func() { uidListLockWait = prev })
+	if _, err := box.ReconcileArrivals(nil, idx, folder); err == nil {
+		t.Fatal("the arrival moved while a swap held the crypt lock")
+	}
+	if _, err := os.Stat(filepath.Join(box.folderPath("INBOX"), "new", "1700006000.M1P1.mda")); err != nil {
+		t.Fatalf("the arrival left new/: %v", err)
+	}
+	release()
+	if _, err := box.ReconcileArrivals(nil, idx, folder); err != nil {
+		t.Fatalf("after the swap: %v", err)
+	}
+}
+
+// Sessions storing without pause in one folder do not starve the swap for
+// ever: it gives way when busy and still gets through.
+func TestRewriteGetsThroughUnderConstantStores(t *testing.T) {
+	box, _ := twoHandles(t)
+	const n = 20
+	var names []string
+	for i := range n {
+		names = append(names, saveFlagged(t, box, "INBOX", fmt.Sprintf("Subject: m%d\r\n\r\nx\r\n", i), uint32(i+1)))
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for s := range 4 {
+		session := New().OpenUser(&mailbox.UserInfo{Username: "u@x.com", Home: box.home}).(*userMailbox)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			flags := []string{`\Seen`, `\Flagged`}
+			for i := 0; ; i++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				base := maildirBase(names[(i+s)%n])
+				cur, _, err := session.currentName("INBOX", base)
+				if err == nil {
+					_, _ = session.WriteFlags("INBOX", cur, flags[:1+i%2], nil)
+				}
+			}
+		}()
+	}
+	done := 0
+	for round := 0; round < 20 && done < n; round++ {
+		for i := range n {
+			err := box.RewriteRecord("INBOX", &mailbox.MessageMeta{UID: uint32(i + 1)}, markRewrite("X-Done: 1\r\n"))
+			switch {
+			case err == nil:
+				done++
+			case errors.Is(err, mailbox.ErrRecordBusy), errors.Is(err, mailbox.ErrRecordChanged):
+			default:
+				close(stop)
+				wg.Wait()
+				t.Fatal(err)
+			}
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if done == 0 {
+		t.Fatal("the swap never got through four sessions' stores")
+	}
+	for base, files := range filesOf(t, box, "INBOX") {
+		if len(files) != 1 {
+			t.Fatalf("%s: %v", base, files)
+		}
+	}
+	t.Logf("%d swaps landed against four storing sessions", done)
 }

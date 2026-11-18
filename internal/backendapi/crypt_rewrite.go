@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -98,8 +99,14 @@ func rewriteBody(l *mailcrypt.Layer, rr mailbox.RecordRewriter, driver, user, ns
 	case errors.Is(err, mailbox.ErrExpunged):
 		mailcrypt.CountReencryptFailed(driver, "vanished")
 		return rewriteSkipped, nil
+	case errors.Is(err, filelock.ErrNoSharedLock):
+		mailcrypt.CountReencryptFailed(driver, "nolock")
+		return rewriteFailed, fmt.Errorf("crypt: %s needs flock on the mail volume to keep the sessions' renames out "+
+			"(storage_lock_method: flock, and a mount that locks on the server): %w", driver, err)
 	case errors.Is(err, mailbox.ErrRecordChanged):
 		reason = "changed"
+	case errors.Is(err, mailbox.ErrRecordBusy):
+		reason = "busy"
 	case errors.Is(err, errVerify):
 		reason = "verify"
 	case errors.Is(err, errRead):

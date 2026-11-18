@@ -253,6 +253,10 @@ type BodyRewrite struct {
 // between the read and the replace; the file is left as it was.
 var ErrRecordChanged = errors.New("mailbox: the record changed during the rewrite")
 
+// ErrRecordBusy is a rewrite that could not get the record's lock within its
+// bound; the file is left as it was, for a rerun.
+var ErrRecordBusy = errors.New("mailbox: the record stayed busy for the rewrite")
+
 // RecordRewriter replaces a record's stored body under its own name, with its
 // sizes, identity and date unchanged, after Verify has passed.
 type RecordRewriter interface {

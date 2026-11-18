@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -30,9 +31,9 @@ var (
 )
 
 // RewriteRecord replaces a message's file under the name it wears at that
-// moment: the folder's list, then the mutex (#2184), the record asked for in
-// the index and the name looked up under them, so a STORE, expunge or move
-// either ran before and is followed, or waits. The swap creates no file.
+// moment: the folder's crypt lock exclusive, then the mutex, the record asked
+// for in the index and the name looked up under them, so a STORE, expunge or
+// move either ran before and is followed, or waits. It creates no file.
 func (u *userMailbox) RewriteRecord(folder string, m *mailbox.MessageMeta, rw mailbox.BodyRewrite) (err error) {
 	raw, err := u.RawRecord(folder, m)
 	if err != nil {
@@ -80,8 +81,11 @@ func (u *userMailbox) RewriteRecord(folder string, m *mailbox.MessageMeta, rw ma
 		testAfterRewriteVerified()
 	}
 
-	release, err := u.holdList(folder, lockSiteRewrite)
-	if err != nil {
+	release, err := u.exclusiveCrypt(folder)
+	switch {
+	case errors.Is(err, filelock.ErrBusy):
+		return fmt.Errorf("maildir/rewrite %s: %w", base, mailbox.ErrRecordBusy)
+	case err != nil:
 		return fmt.Errorf("maildir/rewrite %s: %w", base, err)
 	}
 	defer release()
