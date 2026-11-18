@@ -26,4 +26,9 @@ type rawSection struct {
 	f *os.File
 }
 
-func (r rawSection) Close() error { return r.f.Close() }
+func (r rawSection) Close() error {
+	if r.f == nil {
+		return nil
+	}
+	return r.f.Close()
+}

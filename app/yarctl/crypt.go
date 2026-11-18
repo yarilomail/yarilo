@@ -53,9 +53,12 @@ Commands:
         exits non-zero. Runs as a job on the user's backend-api; Ctrl-C
         cancels it unless --detach.
 
-  reencrypt <user> [folder...] --dry-run [--to age|plain] [--namespace NS] [--detach]
-        What re-encryption would rewrite and leave. This release only
-        reports (--dry-run); nothing is written.
+  reencrypt <user> [folder...] [--dry-run] [--to age|plain] [--namespace NS] [--detach]
+        Rewrite every message that is not under the current key (--to age,
+        the default) or that is sealed (--to plain), one at a time: the new
+        body is verified by hash before it replaces the old one. A message
+        no key opens is left and counted. sdbox stores; maildir and mdbox
+        are refused for now. --dry-run reports and writes nothing.
 
   job <user>
         The user's running or last finished job.
@@ -174,6 +177,9 @@ type cryptJobOut struct {
 	} `json:"folders"`
 	Totals        map[string]int `json:"totals"`
 	WouldRewrite  int            `json:"would_rewrite"`
+	Rewritten     int            `json:"rewritten"`
+	Skipped       int            `json:"skipped"`
+	DryRun        bool           `json:"dry_run"`
 	NoKey         int            `json:"no_key"`
 	Failed        int            `json:"failed"`
 	FoldersFailed int            `json:"folders_failed"`
@@ -190,7 +196,7 @@ func (j cryptJobOut) verdict() error {
 	case j.FoldersFailed > 0:
 		return fmt.Errorf("crypt %s for %s: %d folders could not be opened, their messages are not counted", j.Kind, j.User, j.FoldersFailed)
 	case j.Failed > 0:
-		return fmt.Errorf("crypt %s for %s: %d messages could not be read (named in the backend-api log)", j.Kind, j.User, j.Failed)
+		return fmt.Errorf("crypt %s for %s: %d messages failed and were left as they were (named in the backend-api log)", j.Kind, j.User, j.Failed)
 	}
 	return nil
 }
@@ -223,8 +229,11 @@ func printCryptJob(data []byte) error {
 		return err
 	}
 	fmt.Printf("\n%s %s for %s: %s, %d messages", j.Kind, "job", j.User, j.State, j.Seen)
-	if j.Kind == "reencrypt" {
+	switch {
+	case j.Kind == "reencrypt" && j.DryRun:
 		fmt.Printf(", would rewrite %d, no key %d", j.WouldRewrite, j.NoKey)
+	case j.Kind == "reencrypt":
+		fmt.Printf(", rewritten %d, expunged meanwhile %d, no key %d", j.Rewritten, j.Skipped, j.NoKey)
 	}
 	if j.Error != "" {
 		fmt.Printf(", error: %s", j.Error)

@@ -237,6 +237,28 @@ type RawReader interface {
 	RawRecord(folder string, m *MessageMeta) (RawBody, error)
 }
 
+// BodyRewrite is how a record's stored body is replaced.
+type BodyRewrite struct {
+	// Fill writes the new stored body from the old one; it returns the
+	// plaintext's length and whether what it wrote is sealed.
+	Fill func(src RawBody, dst io.Writer) (plainLen int64, sealed bool, err error)
+	// Verify reads the written body back before it replaces the old one.
+	Verify func(written RawBody) error
+}
+
+// ErrRecordChanged is a rewrite given up because the record's file changed
+// between the read and the replace; the file is left as it was.
+var ErrRecordChanged = errors.New("mailbox: the record changed during the rewrite")
+
+// RecordRewriter replaces a record's stored body under its own name, with its
+// sizes, identity and date unchanged, after Verify has passed.
+type RecordRewriter interface {
+	RewriteRecord(folder string, m *MessageMeta, rw BodyRewrite) error
+	// SweepRewriteTemps removes the temp files of rewrites that died, older
+	// than age, and returns how many went.
+	SweepRewriteTemps(folder string, age time.Duration) (int, error)
+}
+
 // UnreferencedRawReader is a store that keeps messages no folder refers to
 // (mdbox records with no references, until purge).
 type UnreferencedRawReader interface {
