@@ -267,6 +267,9 @@ func TestMixedMaildirFolder(t *testing.T) {
 		}
 	}
 	wantLen := map[string]int{"1000.M1P1.host:2,S": len(plain), "1001.M1P1.host:2,S": len("From: a@b\r\n\r\nage body\r\n"), "1002.M1P1.host:2,S": 1000}
+	// What a read serves: the reference vector's four bare LF go out as CRLF,
+	// the length RFC822.SIZE gives (#2581); the listed size stays physical.
+	wantRead := map[string]int{"1000.M1P1.host:2,S": len(plain), "1001.M1P1.host:2,S": len("From: a@b\r\n\r\nage body\r\n"), "1002.M1P1.host:2,S": 1004}
 
 	recs, err := box.Scan("INBOX")
 	if err != nil {
@@ -285,7 +288,7 @@ func TestMixedMaildirFolder(t *testing.T) {
 		}
 		got, _ := io.ReadAll(rc)
 		rc.Close() //nolint:errcheck
-		if len(got) != wantLen[r.Filename] || mailcrypt.Classify(got) != mailcrypt.Plain {
+		if len(got) != wantRead[r.Filename] || mailcrypt.Classify(got) != mailcrypt.Plain {
 			t.Errorf("%s: read %d bytes, kind %v", r.Filename, len(got), mailcrypt.Classify(got))
 		}
 	}
