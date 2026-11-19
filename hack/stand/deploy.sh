@@ -109,13 +109,17 @@ EOF
 stand_watch_backend() {
   local file="$1" replicas n ready prev now
   local -a pods=() down=()
-  replicas=$(kube get sts yarilo-backend -o jsonpath='{.spec.replicas}' 2>/dev/null)
-  for n in $(seq 0 $(( ${replicas:-1} - 1 ))); do pods[n]="yarilo-backend-$n"; down[n]=0; done
   write() {
     : > "$file"
     for n in "${!pods[@]}"; do echo "${pods[n]} ${down[n]}" >> "$file"; done
   }
+  # Ready to stop before anything else, and zeros written before the first
+  # look: the step starts the upgrade only once this file is there.
   trap 'write; exit 0' TERM
+  pods=(yarilo-backend-0) down=(0)
+  write
+  replicas=$(kube get sts yarilo-backend -o jsonpath='{.spec.replicas}' 2>/dev/null)
+  for n in $(seq 0 $(( ${replicas:-1} - 1 ))); do pods[n]="yarilo-backend-$n"; down[n]=0; done
   write
   prev=$(date +%s)
   while :; do
