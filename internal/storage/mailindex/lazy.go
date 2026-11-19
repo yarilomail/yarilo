@@ -75,6 +75,7 @@ func OpenLazy(path string) (*File, *Records, error) {
 		n:      n,
 		chunks: make([]atomicChunk, chunkCount(n)),
 		src:    &lazySource{path: path, ident: st, header: head, dataOff: int64(hdr.HeaderSize)},
+		w:      newWriter(chunkCount(n)),
 	}
 	return parsed, recs, nil
 }
@@ -83,8 +84,8 @@ func OpenLazy(path string) (*File, *Records, error) {
 // one open of the base. A base that is gone, another file, or a header that
 // changed since OpenLazy is ErrBaseMoved, and so is any read that fails.
 func (r *Records) Load(lo, hi int) error {
-	if r.src == nil || lo >= hi {
-		return nil
+	if r.src == nil || lo >= hi || r.starts != nil {
+		return nil // a records set that was written is loaded whole
 	}
 	first, last := lo/ChunkRecords, (hi-1)/ChunkRecords
 	missing := false
@@ -124,7 +125,7 @@ func (r *Records) Load(lo, hi int) error {
 			continue
 		}
 		cn := min(ChunkRecords, r.n-ci*ChunkRecords)
-		raw := make([]byte, cn*size)
+		raw := make([]byte, cn*size, ChunkRecords*size)
 		if err := readFull(rd, raw, r.src.dataOff+int64(ci*ChunkRecords*size)); err != nil {
 			return err
 		}
