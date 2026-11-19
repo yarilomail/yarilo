@@ -82,16 +82,24 @@ func TestTheOldKeyGoesOnlyAfterAFinishedRun(t *testing.T) {
 	}
 }
 
-// A fill delivers in batches, a connection each: one connection stopped taking
-// mail after about a thousand.
-func TestAFillDeliversInBatches(t *testing.T) {
+// A fill names its first refusal, and the run's deploys lift the delivery
+// limit a fill past a thousand a minute meets, the restore keeping it: a 451
+// rate limit once passed for a lost connection (2026-11-19).
+func TestAFillSaysWhyAndTheRunLiftsTheLimit(t *testing.T) {
 	raw, err := os.ReadFile("fill-mailboxes.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`FILL_BATCH="${YARILO_FILL_BATCH:-500}"`, `deliver_batch "$user" "$from" "$to"`} {
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("fill-mailboxes.sh lacks %s", want)
+	if !strings.Contains(string(raw), `echo "fill: $user first refusal: $refused" >&2`) {
+		t.Error("fill-mailboxes.sh does not name a refusal")
+	}
+	src := scenarioSource(t)
+	for _, want := range []string{
+		`RUN_SET=(--set protocol.lmtp.rate_limit.enabled=false)`,
+		`case "$name" in restore | keys-kept) set=() ;; esac`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("crypt-scenarios.sh lacks %s", want)
 		}
 	}
 }

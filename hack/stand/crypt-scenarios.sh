@@ -76,16 +76,24 @@ encrypted() { echo $(( $(field "$1" current) + $(field "$1" other_key) + $(field
 
 fill_to() {
   local user="$1" want="$2" n="${1%%@*}"
-  YARILO_FILL_DOMAIN="${user#*@}" bash "$HERE/fill-mailboxes.sh" "${n#u}" "${n#u}" "$want" >> "$OUT/fill.log" 2>&1
+  YARILO_FILL_DOMAIN="${user#*@}" bash "$HERE/fill-mailboxes.sh" "${n#u}" "${n#u}" "$want" >> "$OUT/fill.log" 2>&1 && return 0
+  echo "crypt-scenarios: $user not filled to $want: $(grep -m1 "first refusal" "$OUT/fill.log" || tail -1 "$OUT/fill.log")" >&2
+  return 1
 }
 messages() { kube exec yarilo-backend-0 -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
   awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'; }
 
+# The run's deploys lift the per-recipient delivery limit, which a fill of one
+# user past a thousand messages a minute meets by design; the restore and the
+# keys-kept fallback put the stand back on its own values, limit included.
+RUN_SET=(--set protocol.lmtp.rate_limit.enabled=false)
+
 deploy() {
-  local name="$1"
+  local name="$1" set=("${RUN_SET[@]}")
   shift
+  case "$name" in restore | keys-kept) set=() ;; esac
   mkdir -p "$OUT/deploy-$name"
-  stand_deploy "$OUT/deploy-$name" "$TAG" "$REPO/helm" -f "$VALUES/values-sandbox.yaml" "$@" ||
+  stand_deploy "$OUT/deploy-$name" "$TAG" "$REPO/helm" -f "$VALUES/values-sandbox.yaml" "$@" ${set[@]+"${set[@]}"} ||
     { echo "crypt-scenarios: the $name deploy did not settle" >&2; return 1; }
 }
 
@@ -181,7 +189,10 @@ for t in $TYPES; do
 done
 
 echo "== status on $BIG messages"
-fill_to "$BIG_USER" "$BIG"
+big_fill=0
+fill_start=$(date +%s)
+fill_to "$BIG_USER" "$BIG" || big_fill=1
+big_fill_secs=$(( $(date +%s) - fill_start ))
 start=$(date +%s)
 big=$(status_of "$BIG_USER")
 big_secs=$(( $(date +%s) - start ))
@@ -302,7 +313,7 @@ echo "== speed"
 rates=$(awk '{ printf "%s %d msgs %ds (%s/s); ", $1, $2, $3, ($3 > 0 ? int($2 / $3) : "inf") }' "$OUT/speed.txt")
 total=$(( $(field "$big" plain) + $(encrypted "$big") ))
 if [ "$(wc -l < "$OUT/speed.txt")" -ge 9 ] && [ "$total" -ge "$BIG" ]; then
-  row PASS speed "$rates status of $BIG_USER ($total messages) ${big_secs}s"
+  row PASS speed "$rates status of $BIG_USER ($total messages) ${big_secs}s, its fill ${big_fill_secs}s"
 else
-  row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages"
+  row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages, fill exit $big_fill: $(grep -m1 "first refusal" "$OUT/fill.log" || echo none recorded)"
 fi

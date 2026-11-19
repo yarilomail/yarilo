@@ -19,7 +19,6 @@ DOMAIN="${YARILO_FILL_DOMAIN:-d00001.test}"
 LMTP_HOST="${LMTP_HOST:-yarilo-lmtp-login}"
 LMTP_PORT="${LMTP_PORT:-24}"
 BODY_LINES="${YARILO_FILL_LINES:-24}"
-FILL_BATCH="${YARILO_FILL_BATCH:-500}"
 
 # --request-timeout so a call that hangs becomes an error instead of a script
 # that waits for ever: an arm stood six hours on one (#1875).
@@ -55,22 +54,10 @@ messages_in() {
 # One connection per user, every message in it: a connection per message spends
 # the whole fill in handshakes.
 deliver_user() {
-  local user="$1" want="${2:-$COUNT}" from=1 to
-  # In batches of a connection each: one connection stopped taking mail after
-  # about a thousand (2026-11-19, a fill to 100000 ended at 1247).
-  while [ "$from" -le "$want" ]; do
-    to=$(( from + FILL_BATCH - 1 ))
-    [ "$to" -le "$want" ] || to=$want
-    deliver_batch "$user" "$from" "$to"
-    from=$(( to + 1 ))
-  done
-}
-
-deliver_batch() {
-  local user="$1"
+  local user="$1" want="${2:-$COUNT}"
   {
     printf 'LHLO fill.invalid\r\n'
-    for i in $(seq "$2" "$3"); do
+    for i in $(seq 1 "$want"); do
       printf 'MAIL FROM:<fill@test.invalid>\r\nRCPT TO:<%s>\r\nDATA\r\n' "$user"
       printf 'Subject: fill %s\r\nFrom: <fill@test.invalid>\r\nTo: <%s>\r\nDate: Thu, 18 Sep 2026 12:00:00 +0000\r\nMessage-ID: <fill-%s-%s@test.invalid>\r\n\r\n' \
         "$i" "$user" "$i" "$user"
@@ -120,6 +107,10 @@ for n in $(seq "$FROM" "$TO"); do
   out=$(deliver_user "$user" "$((COUNT - have))") || true
   # Informational: what the transport said, for a failure to be readable.
   acked=$((acked + $(printf '%s\n' "$out" | grep -o '250 2\.0\.0' | wc -l | tr -d ' ')))
+  # The first refusal is the reason a mailbox falls short: said, not left for
+  # the count below to hint at (a 451 rate limit once read as a lost connection).
+  refused=$(printf '%s\n' "$out" | grep -m1 -E '^[45][0-9][0-9][ -]' || true)
+  [ -z "$refused" ] || echo "fill: $user first refusal: $refused" >&2
 done
 
 short=0
