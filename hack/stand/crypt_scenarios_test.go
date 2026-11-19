@@ -31,7 +31,7 @@ func TestTheScenarioCountsReadTheTotals(t *testing.T) {
 			"plain=10 current=20 other_key=1 reference=4 no_key=0 failed=0"},
 		{"error: backend-api unreachable\n", "unread"},
 	} {
-		cmd := exec.Command("bash", "-c", fn+"counts")
+		cmd := exec.CommandContext(t.Context(), "bash", "-c", fn+"counts")
 		cmd.Stdin = strings.NewReader(tc.in)
 		out, err := cmd.Output()
 		if err != nil || strings.TrimSpace(string(out)) != tc.want {

@@ -42,7 +42,7 @@ esac
 func runDeploy(t *testing.T, bin, chart string) error {
 	t.Helper()
 	script := `set -u; NS=sb; KCFG=k; kube() { kubectl -n "$NS" "$@"; }; . ./deploy.sh; stand_deploy "$1" t1 "$2" -f v.yaml`
-	cmd := exec.Command("bash", "-c", script, "deploy", t.TempDir(), chart)
+	cmd := exec.CommandContext(t.Context(), "bash", "-c", script, "deploy", t.TempDir(), chart)
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
 	return cmd.Run()
 }
