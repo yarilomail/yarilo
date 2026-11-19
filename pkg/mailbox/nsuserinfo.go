@@ -73,7 +73,7 @@ func NamespaceUserInfo(base *UserInfo, loc Location, separator string, kind Stor
 		ui.ACLGroups = base.ACLGroups
 	}
 	if kind == SharedByAll {
-		ui.LockName = "store:" + filepath.Clean(loc.Path)
+		ui.LockName = sharedStorePrefix + filepath.Clean(loc.Path)
 	}
 	return ui, nil
 }

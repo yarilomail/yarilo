@@ -137,16 +137,18 @@ func TestRewriteAgainstAnotherProcess(t *testing.T) {
 		{"expunged, record gone and file still there", func(_ *testing.T, _ *userMailbox, _ string, recorded *bool) {
 			*recorded = false
 		}, mailbox.ErrExpunged, true},
+		// The file went first and the index still has the record: changed, not
+		// expunged, until the index says so; a rerun finds it gone.
 		{"imapsieve, file first", func(t *testing.T, other *userMailbox, name string, _ *bool) {
 			if err := other.Remove("INBOX", name); err != nil {
 				t.Fatal(err)
 			}
-		}, mailbox.ErrExpunged, false},
+		}, mailbox.ErrRecordChanged, false},
 		{"moved out", func(t *testing.T, other *userMailbox, name string, _ *bool) {
 			if _, _, err := other.Move("INBOX", "Other", name, [16]byte{}); err != nil {
 				t.Fatal(err)
 			}
-		}, mailbox.ErrExpunged, false},
+		}, mailbox.ErrRecordChanged, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -614,5 +616,50 @@ func TestAFullVolumeStillLetsMailGo(t *testing.T) {
 	_ = c
 	if err := box.RewriteRecord("Other", &mailbox.MessageMeta{UID: 1}, markRewrite("X: 1\r\n")); err == nil {
 		t.Fatal("a swap ran where its lock file could not be made")
+	}
+}
+
+// A file renamed again each time it is looked up is missing from both lookups
+// of the raw read; it is expunged only when the index has no record, and
+// otherwise changed, which a rerun takes. The file stays as it was.
+func TestRewriteTellsARenameFromAnExpunge(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		recorded bool
+		want     error
+	}{
+		{"still in the index", true, mailbox.ErrRecordChanged},
+		{"gone from the index", false, mailbox.ErrExpunged},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			box, other := twoHandles(t)
+			name := saveFlagged(t, box, "INBOX", "Subject: s\r\n\r\nx\r\n", 1)
+			flags := [][]string{{`\Seen`, `\Flagged`}, {`\Seen`}}
+			i := 0
+			testBeforeRawLocate = func() {
+				cur, _, err := other.currentName("INBOX", maildirBase(name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := other.WriteFlags("INBOX", cur, flags[i%2], nil); err != nil {
+					t.Fatal(err)
+				}
+				i++
+				box.folderCacheFor("INBOX").invalidateDirEntries("test")
+			}
+			t.Cleanup(func() { testBeforeRawLocate = nil })
+			rw := markRewrite("X: 1\r\n")
+			rw.Recorded = func() (bool, error) { return c.recorded, nil }
+			err := box.RewriteRecord("INBOX", &mailbox.MessageMeta{UID: 1}, rw)
+			if !errors.Is(err, c.want) {
+				t.Fatalf("err %v, want %v", err, c.want)
+			}
+			testBeforeRawLocate = nil
+			cur, _, _ := box.currentName("INBOX", maildirBase(name))
+			path, _ := box.locate("INBOX", cur)
+			if b, _ := os.ReadFile(path); bytes.HasPrefix(b, []byte("X: 1")) {
+				t.Fatal("the file was rewritten")
+			}
+		})
 	}
 }

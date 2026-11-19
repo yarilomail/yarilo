@@ -44,6 +44,13 @@ const (
 	SharedByAll
 )
 
+// sharedStorePrefix opens a SharedByAll store's lock name, and no user name.
+const sharedStorePrefix = "store:"
+
+// IsSharedStoreName says name is a SharedByAll store's lock name, not a user's
+// (an owner's store keys by the owner).
+func IsSharedStoreName(name string) bool { return strings.HasPrefix(name, sharedStorePrefix) }
+
 // StoreKindOf is the kind of store a namespace of type nsType and prefix
 // opens.
 func StoreKindOf(nsType, prefix string) StoreKind {

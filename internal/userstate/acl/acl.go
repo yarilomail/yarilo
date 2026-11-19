@@ -474,7 +474,7 @@ func (s *Store) moved(err error, wrote bool) error {
 	if err != nil || !wrote {
 		return err
 	}
-	locks.EmitBest(s.locker, locks.MailboxListKey(s.username), locks.EventACL, "")
+	locks.EmitBest(s.locker, locks.MailboxListKey(s.lockUser()), locks.EventACL, "")
 	return nil
 }
 

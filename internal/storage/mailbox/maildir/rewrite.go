@@ -37,10 +37,14 @@ var (
 func (u *userMailbox) RewriteRecord(folder string, m *mailbox.MessageMeta, rw mailbox.BodyRewrite) (err error) {
 	raw, err := u.RawRecord(folder, m)
 	if err != nil {
-		// An expunge since the record was read drops its row too; the index
-		// tells that from a list that lost one.
-		if errors.Is(err, fs.ErrNotExist) || stillRecorded(rw.Recorded) == errGone {
+		// Expunged only when the index says so: a file renamed twice while it
+		// was looked up is gone from its name, not from the folder, and a
+		// rerun takes it.
+		switch {
+		case stillRecorded(rw.Recorded) == errGone:
 			return fmt.Errorf("maildir/rewrite: %w: %w", mailbox.ErrExpunged, err)
+		case errors.Is(err, fs.ErrNotExist):
+			return fmt.Errorf("maildir/rewrite: %w: %w", mailbox.ErrRecordChanged, err)
 		}
 		return err
 	}
@@ -108,18 +112,18 @@ func (u *userMailbox) swapHeld(folder, base, tmp string, before os.FileInfo, rec
 	name, _, err := u.currentName(folder, base)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("maildir/rewrite %s: %w", base, mailbox.ErrExpunged)
+			return fmt.Errorf("maildir/rewrite %s: %w", base, goneOrChanged(recorded))
 		}
 		return fmt.Errorf("maildir/rewrite %s: %w", base, err)
 	}
 	path, ok := u.locate(folder, name)
 	if !ok {
-		return fmt.Errorf("maildir/rewrite %s: %w", base, mailbox.ErrExpunged)
+		return fmt.Errorf("maildir/rewrite %s: %w", base, goneOrChanged(recorded))
 	}
 	now, err := statPath(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return fmt.Errorf("maildir/rewrite %s: %w", base, mailbox.ErrExpunged)
+		return fmt.Errorf("maildir/rewrite %s: %w", base, goneOrChanged(recorded))
 	case err != nil:
 		return fmt.Errorf("maildir/rewrite %s: %w", base, err)
 	case !os.SameFile(now, before) || now.Size() != before.Size():
@@ -145,6 +149,16 @@ func (u *userMailbox) swapHeld(folder, base, tmp string, before os.FileInfo, rec
 }
 
 var errGone = errors.New("maildir/rewrite: no longer recorded")
+
+// goneOrChanged names a file missing from where it was looked for: expunged
+// when the index has no record either, or when there is no index to ask;
+// changed otherwise, for a rerun to take.
+func goneOrChanged(recorded func() (bool, error)) error {
+	if recorded == nil || stillRecorded(recorded) == errGone {
+		return mailbox.ErrExpunged
+	}
+	return mailbox.ErrRecordChanged
+}
 
 func stillRecorded(recorded func() (bool, error)) error {
 	if recorded == nil {

@@ -118,7 +118,7 @@ func (o *Ops) Save(box mailbox.Box, folder string, f *mailbox.Folder, req SaveRe
 	}
 	slog.Debug(o.cfg.Protocol+": save timing", "folder", folder, "uid", m.UID, "size", req.Size,
 		"save_ms", tIndex.Sub(tSave).Milliseconds(), "index_ms", time.Since(tIndex).Milliseconds())
-	o.Committed(f, locks.EventDelivered, m.UID, UsageDelta(m), m.GUID)
+	o.CommittedIn(box, f, locks.EventDelivered, m.UID, UsageDelta(m), m.GUID)
 	o.recordThread(m.GUID, head.buf)
 	return Saved{Meta: m, Folder: f, Filename: name}, nil
 }

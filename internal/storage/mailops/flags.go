@@ -26,6 +26,6 @@ func (o *Ops) UpdateFlags(box mailbox.Box, f *mailbox.Folder, batch map[uint32]m
 	if err != nil {
 		return nil, err
 	}
-	o.EmitMessage(f.Name, locks.EventChanged, 0)
+	o.EmitMessageIn(box, f.Name, locks.EventChanged, 0)
 	return out.Flags, nil
 }

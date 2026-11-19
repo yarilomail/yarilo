@@ -24,6 +24,9 @@ func (u *userMailbox) rawRecord(folder string, m *mailbox.MessageMeta) (mailbox.
 	if err != nil {
 		return nil, err
 	}
+	if testBeforeRawLocate != nil {
+		testBeforeRawLocate()
+	}
 	p, ok := u.locate(folder, name)
 	if !ok {
 		return nil, fmt.Errorf("maildir: raw %s: %w", name, fs.ErrNotExist)
@@ -39,3 +42,7 @@ func (u *userMailbox) rawRecord(folder string, m *mailbox.MessageMeta) (mailbox.
 	}
 	return fileBody{File: f, size: st.Size()}, nil
 }
+
+// testBeforeRawLocate runs between a record's name lookup and its open. Test
+// seam: a STORE renames the file there.
+var testBeforeRawLocate func()

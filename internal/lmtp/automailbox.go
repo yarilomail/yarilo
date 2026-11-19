@@ -34,7 +34,11 @@ func (s *session) boxAuto(personal *mailbox.UserInfo, i int, nsUI *mailbox.UserI
 		Mailboxes: ns.AutoMailboxes(),
 		Limit:     s.opts.QuotaPolicy.MailboxCount,
 		Created: func(rel string) {
-			mailops.New(s.mailopsConfig(), nil, personal).EmitList(locks.EventMailboxCreate, ns.Prefix+rel)
+			name := personal.Username
+			if mailbox.IsSharedStoreName(nsUI.LockUser()) {
+				name = nsUI.LockUser()
+			}
+			mailops.New(s.mailopsConfig(), nil, personal).EmitListTo(name, locks.EventMailboxCreate, ns.Prefix+rel)
 		},
 		Subscribe: func(rel string) error {
 			owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
