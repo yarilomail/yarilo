@@ -40,9 +40,12 @@ func writeSyncFailure(w *imapserver.UpdateWriter, err *imaplib.Error) error {
 	return w.WriteStatusResp((*imaplib.StatusResponse)(err))
 }
 
-// backingFolder is a folder of the personal namespace a virtual record names.
+// backingFolder is a folder a virtual record names: h is its namespace, name
+// the folder in h's store, full its IMAP name (#2603).
 type backingFolder struct {
+	h      *nsHandle
 	name   string
+	full   string
 	id     uint64
 	guid   [16]byte
 	uidv   uint32
@@ -85,11 +88,19 @@ func (s *session) backingFoldersOf(h *nsHandle, folderID uint64) (map[uint32]bac
 	}
 	out := make(map[uint32]backingFolder, len(refs))
 	for id, ref := range refs {
-		f, ferr := mailbox.Counting(s.primary.mailbox()).Folder(ref.Name, 0)
+		bh, name, full := s.primary, ref.Name, s.primary.fullName(ref.Name)
+		if ref.FullName != "" {
+			dh, rel, derr := s.dispatch(ref.FullName)
+			if derr != nil || dh == nil || s.requireRight(dh, rel, mailbox.RightRead) != nil {
+				continue // the session cannot open it, so the copy is not there for it
+			}
+			bh, name, full = dh, rel, ref.FullName
+		}
+		f, ferr := mailbox.Counting(bh.mailbox()).Folder(name, 0)
 		if ferr != nil {
 			continue
 		}
-		out[id] = backingFolder{name: ref.Name, id: f.ID, guid: f.GUID, uidv: f.UIDValidity, folder: f}
+		out[id] = backingFolder{h: bh, name: name, full: full, id: f.ID, guid: f.GUID, uidv: f.UIDValidity, folder: f}
 	}
 	return out, nil
 }
@@ -119,7 +130,7 @@ func (s *session) virtualBackingNames(name string) []string {
 	}
 	names := make([]string, 0, len(folders))
 	for _, b := range folders {
-		names = append(names, b.name)
+		names = append(names, b.full)
 	}
 	return names
 }
@@ -135,7 +146,7 @@ func (s *session) readVirtualCopy(m *mailbox.MessageMeta) (io.ReadCloser, error)
 	if !ok {
 		return nil, fmt.Errorf("imap/virtual: backing folder %d is gone: %w", m.VirtualBacking, os.ErrNotExist)
 	}
-	h := s.primary
+	h := b.h
 	recs, err := h.mailbox().Messages(b.id, mailbox.SeqSet{{From: m.VirtualRealUID, To: m.VirtualRealUID}})
 	if err != nil {
 		return nil, fmt.Errorf("imap/virtual: read %s uid %d: %w", b.name, m.VirtualRealUID, err)
@@ -177,13 +188,16 @@ func (s *session) prepareVirtualFTSSearch(criteria *imaplib.SearchCriteria, msgs
 			continue
 		}
 		mbox := fts.MailboxRef{Name: b.name, GUID: mailbox.FormatObjectID(b.guid), UIDValidity: b.uidv}
-		backMsgs, rerr := s.primary.mailbox().Messages(b.id, mailbox.SeqSet{})
-		if rerr != nil {
-			return nil, search.ErrLookup
-		}
-		fallback, cerr := o.CatchUp(user, mbox, backMsgs)
-		if cerr != nil {
-			return nil, cerr
+		fallback := b.h != s.primary // the user's text index holds their own folders only
+		if !fallback {
+			backMsgs, rerr := b.h.mailbox().Messages(b.id, mailbox.SeqSet{})
+			if rerr != nil {
+				return nil, search.ErrLookup
+			}
+			var cerr error
+			if fallback, cerr = o.CatchUp(user, mbox, backMsgs); cerr != nil {
+				return nil, cerr
+			}
 		}
 		if fallback {
 			// This folder is not indexed far enough to answer: its copies
@@ -234,7 +248,7 @@ type virtualCopy struct {
 
 // storeOnCopies applies a STORE to the copies the virtual records name and
 // answers with the set each ended with; a record whose copy is gone drops out.
-func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates map[uint32]mailbox.FlagsUpdate) (map[uint32]mailbox.FlagsUpdate, map[uint32]virtualCopy, error) {
+func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates map[uint32]mailbox.FlagsUpdate, rights []rune) (map[uint32]mailbox.FlagsUpdate, map[uint32]virtualCopy, error) {
 	folders, err := s.backingFolders()
 	if err != nil {
 		return nil, nil, err
@@ -245,14 +259,23 @@ func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates ma
 			byBacking[m.VirtualBacking] = append(byBacking[m.VirtualBacking], vuid)
 		}
 	}
-	h := s.primary
 	out := make(map[uint32]mailbox.FlagsUpdate, len(updates))
 	copies := make(map[uint32]virtualCopy, len(updates))
+	// The rights are the backing folder's: a copy in a folder the user may only
+	// read is changed through no mailbox (#2603).
+	for id := range byBacking {
+		if b, ok := folders[id]; ok {
+			if err := s.requireAllRights(b.h, b.name, rights); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	for id, vuids := range byBacking {
 		b, ok := folders[id]
 		if !ok {
 			continue // the backing folder is gone: nothing to change
 		}
+		h := b.h
 		tx, terr := h.mailbox().Begin(b.id)
 		if terr != nil {
 			return nil, nil, terr
@@ -299,10 +322,16 @@ func (s *session) expungeCopies(doomed []*mailbox.MessageMeta) ([]*mailbox.Messa
 	if err != nil {
 		return nil, err
 	}
-	h := s.primary
 	byBacking := map[uint32][]*mailbox.MessageMeta{}
 	for _, m := range doomed {
 		byBacking[m.VirtualBacking] = append(byBacking[m.VirtualBacking], m)
+	}
+	for id := range byBacking {
+		if b, ok := folders[id]; ok {
+			if err := s.requireRight(b.h, b.name, mailbox.RightExpunge); err != nil {
+				return nil, err
+			}
+		}
 	}
 	var gone []*mailbox.MessageMeta
 	for id, vms := range byBacking {
@@ -311,6 +340,7 @@ func (s *session) expungeCopies(doomed []*mailbox.MessageMeta) ([]*mailbox.Messa
 			gone = append(gone, vms...) // the backing folder itself is gone
 			continue
 		}
+		h := b.h
 		var reals []*mailbox.MessageMeta
 		for _, vm := range vms {
 			recs, rerr := readForWriteSet(h.mailbox(), b.id, mailbox.SeqSet{{From: vm.VirtualRealUID, To: vm.VirtualRealUID}})
@@ -357,7 +387,6 @@ func (s *session) expungeCopies(doomed []*mailbox.MessageMeta) ([]*mailbox.Messa
 // imapSieveOnCopies runs the FLAG cause as the reference does for a STORE in a
 // virtual mailbox: the copy's folder first, then the virtual mailbox's script.
 func (s *session) imapSieveOnCopies(pending []pendingStore, copies map[uint32]virtualCopy, changed []string) {
-	h := s.primary
 	virtScript := s.imapSieveScriptName(s.folderNS, s.folder.Name, s.folder.GUID)
 	virtName := s.folderNS.fullName(s.folder.Name)
 	backScript := map[uint64]string{}
@@ -367,12 +396,13 @@ func (s *session) imapSieveOnCopies(pending []pendingStore, copies map[uint32]vi
 			continue
 		}
 		b := c.back
+		h := b.h
 		script, known := backScript[b.id]
 		if !known {
 			script = s.imapSieveScriptName(h, b.name, b.guid)
 			backScript[b.id] = script
 		}
-		for _, run := range []struct{ script, mailbox string }{{script, b.name}, {virtScript, virtName}} {
+		for _, run := range []struct{ script, mailbox string }{{script, b.full}, {virtScript, virtName}} {
 			// Read afresh each time: the flag write and the first script may
 			// have renamed the copy's file or moved the copy away.
 			recs, err := h.mailbox().Messages(b.id, mailbox.SeqSet{{From: c.uid, To: c.uid}})
@@ -399,7 +429,7 @@ func (s *session) subscribeSelected(ctx context.Context) (<-chan locks.Event, er
 			// A backing folder in a shared store is heard on the store's key.
 			ks := s.notifyKeys()
 			for _, b := range folders {
-				keys = append(keys, ks.folder(b.name))
+				keys = append(keys, ks.folder(b.full))
 			}
 		}
 	}
@@ -469,8 +499,14 @@ func (s *session) virtualSaveTarget(name string) (target string, redirected bool
 	if cfg.SaveTo == nil || s.primary == nil {
 		return "", false, errVirtualCannot("Can't save messages to this virtual mailbox")
 	}
+	th, trel := s.primary, cfg.SaveTo.Pattern
 	target = s.primary.fullName(cfg.SaveTo.Pattern)
-	if exists, _ := s.primary.box.FolderExists(cfg.SaveTo.Pattern); !exists {
+	// A save folder in another namespace is that namespace's (#2603); the
+	// redirected command checks the insert right there.
+	if dh, rel, derr := s.dispatch(cfg.SaveTo.Pattern); derr == nil && dh != nil && dh != s.primary {
+		th, trel, target = dh, rel, cfg.SaveTo.Pattern
+	}
+	if exists, _ := th.box.FolderExists(trel); !exists {
 		return "", false, errVirtualCannot("the folder this virtual mailbox saves to does not exist: " + target)
 	}
 	return target, true, nil

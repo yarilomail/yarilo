@@ -48,6 +48,8 @@ type userMailbox struct {
 	// handle: a poll pass runs on every NOOP (#1805).
 	personalMu  sync.Mutex
 	personalBox mailbox.Box
+	shared      []Source
+	sharedOpen  bool
 }
 
 func (u *userMailbox) Username() string { return u.info.Username }
@@ -199,6 +201,10 @@ func (u *userMailbox) Close() error {
 		u.personalBox.Close()
 		u.personalBox = nil
 	}
+	for _, src := range u.shared {
+		src.Box.Close()
+	}
+	u.shared, u.sharedOpen = nil, false
 	return nil
 }
 

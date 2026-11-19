@@ -267,6 +267,28 @@ func matchFrom(pattern, name string, sep byte) bool {
 
 // Selects reports whether the configuration takes this folder: a positive line
 // names it and no negative line does.
+// SelectsIn is Selects with each line bound to a namespace: only a line bound
+// says anything about the folder (#2603). explicit is a line naming the folder
+// without a wildcard.
+func SelectsIn(cfg *Config, folder string, bound func(pattern string) bool) (selected, explicit bool) {
+	taken := false
+	for _, b := range cfg.Boxes {
+		if b.MetadataEntry != "" || !bound(b.Pattern) {
+			continue
+		}
+		exact := b.Pattern == folder
+		if !(exact || matchPattern(b.Pattern, folder)) {
+			continue
+		}
+		if b.Negative {
+			return false, false
+		}
+		taken = true
+		explicit = explicit || (exact && !strings.ContainsAny(b.Pattern, "*%"))
+	}
+	return taken, explicit
+}
+
 func Selects(cfg *Config, folder string) bool {
 	taken := false
 	for _, b := range cfg.Boxes {
