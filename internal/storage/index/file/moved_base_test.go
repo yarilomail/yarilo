@@ -1,8 +1,11 @@
 package file
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"syscall"
 	"testing"
@@ -195,5 +198,116 @@ func TestAWriteAfterALazyReadKeepsEveryRecord(t *testing.T) {
 				t.Errorf("uid 7 %v, uid 9 %v: a write was lost", msgs[6].Flags, msgs[8].Flags)
 			}
 		})
+	}
+}
+
+// A handle that left its records on disk cannot write its base: it would
+// write a folder with no records.
+func TestAHandleWithoutRecordsCannotWriteItsBase(t *testing.T) {
+	home := movedFolder(t, 2*mailindex.ChunkRecords)
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	if _, err := h.GetMessages(f.ID, mailbox.SeqSet{}); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := h.(*userHandle).ui.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(fs.indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	ferr := fs.flush()
+	fs.mu.Unlock()
+	if !errors.Is(ferr, errRecordsLeft) {
+		t.Errorf("flush without records: %v, want errRecordsLeft", ferr)
+	}
+	after, err := os.ReadFile(fs.indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("the base was rewritten by a handle holding no records")
+	}
+}
+
+// Every read of the index answers the same through a lazy view as through
+// the records decoded whole, until step 6 leaves one form (#2625 review).
+func TestEveryReadAnswersTheSameThroughALazyView(t *testing.T) {
+	home := movedFolder(t, 2*mailindex.ChunkRecords+40)
+	w, wf := acceptOpen(t, home)
+	tx, err := w.Begin(wf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.UpdateFlags(3, mailbox.FlagsUpdate{Flags: []string{`\Flagged`}, Keywords: []string{"$Work"}})
+	tx.UpdateFlags(1500, mailbox.FlagsUpdate{Flags: []string{`\Answered`, `\Deleted`}})
+	tx.Expunge(2049)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.OptimizeIndex(wf.ID); err != nil {
+		t.Fatal(err)
+	}
+	w.Close() //nolint:errcheck
+
+	answers := func(decoded bool) map[string]any {
+		decodedImages = decoded
+		defer func() { decodedImages = false }()
+		baseImages.Delete(indexPathFor(home))
+		h, f := acceptOpen(t, home)
+		defer h.Close() //nolint:errcheck
+		hu, u := h.(*userHandle), h.(*userHandle).ui
+		opens := mailindex.LazyOpens()
+		defer func() {
+			if lazyRead := mailindex.LazyOpens() > opens; lazyRead == decoded {
+				t.Errorf("decoded=%v, yet the reads loaded lazy chunks: %v", decoded, lazyRead)
+			}
+		}()
+		out := map[string]any{"folder": *f}
+		must := func(name string, v any, err error) {
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			out[name] = v
+		}
+		msgs, err := h.GetMessages(f.ID, mailbox.SeqSet{})
+		must("messages", msgs, err)
+		some, err := h.GetMessages(f.ID, mailbox.SeqSet{{From: 3, To: 3}, {From: 1500, To: 2050}})
+		must("some messages", some, err)
+		b, m, err := hu.FolderVSize(f.ID)
+		must("vsize", [2]uint64{b, uint64(m)}, err)
+		sl, err := hu.SizelessUIDs(f.ID)
+		must("sizeless", sl, err)
+		kw, err := hu.Keywords(f.ID)
+		must("keywords", kw, err)
+		gone, err := hu.Vanished(f.ID, 0)
+		must("vanished", gone, err)
+		need, err := hu.GUIDBackfillNeeded(f.ID)
+		must("guid backfill", need, err)
+		ms, ok := hu.MaildirStamp(f.ID)
+		must("maildir stamp", [2]any{ms, ok}, nil)
+		vh, ok := hu.VirtualHeader(f.ID)
+		must("virtual header", [2]any{vh, ok}, nil)
+		iid, rid, ok, err := hu.CachePairIdentity(f.ID)
+		must("cache pair", [3]any{iid, rid, ok}, err)
+		gr, err := u.GUIDRecords()
+		must("guid records", gr, err)
+		ul, err := u.pop3UIDLs(f.ID)
+		must("pop3 uidls", ul, err)
+		reopened, err := h.OpenFolder("INBOX", 0)
+		must("reopened folder", *reopened, err)
+		return out
+	}
+	lazy, decoded := answers(false), answers(true)
+	for name, want := range decoded {
+		if !reflect.DeepEqual(lazy[name], want) {
+			t.Errorf("%s through a lazy view differs from the decoded records:\n lazy    %v\n decoded %v", name, lazy[name], want)
+		}
+	}
+	if msgs, _ := lazy["messages"].([]*mailbox.MessageMeta); len(msgs) != 2*mailindex.ChunkRecords+39 {
+		t.Errorf("%d messages, want the folder less its expunged one", len(msgs))
 	}
 }

@@ -141,6 +141,10 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 	return snap, nil
 }
 
+// errRecordsLeft refuses a base write from a handle holding the header only:
+// it would write a folder with no records over the folder's index.
+var errRecordsLeft = errors.New("fileindex/flush: the handle holds no records; reload before writing")
+
 // leaveRecordsOnDisk drops the handle's records once a lazy view serves its
 // reads; the next locked use reads the base in full (INDEX-MEMORY.md §3).
 func (fs *folderState) leaveRecordsOnDisk() {
@@ -673,6 +677,9 @@ func (fs *folderState) advanceModSeqAtLeast(target uint64) error {
 
 // flush rewrites the on-disk .index file from fs.file.
 func (fs *folderState) flush() error {
+	if fs.recordsLeft {
+		return errRecordsLeft
+	}
 	// flush persists Header.NextUID as ground truth and discards the log; name
 	// the caller so a NextUID regression traces to the flush that wrote it.
 	if pc, _, _, ok := runtime.Caller(1); ok {

@@ -33,6 +33,10 @@ const baseReadAttempts = 3
 // read and the stat that labels it. Nil everywhere else.
 var afterBaseRead func()
 
+// decodedImages is a test seam: images decoded whole, as before the lazy
+// form, so a row can compare the two. False everywhere else.
+var decodedImages bool
+
 // afterViewImage is a test seam: the base and log replaced between the image a
 // view is built on and the log it opens. Nil everywhere else.
 var afterViewImage func()
@@ -56,6 +60,10 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	for attempt := 0; ; attempt++ {
 		pre := st
 		parsed, recs, perr := mailindex.OpenLazy(fs.indexPath)
+		if decodedImages {
+			parsed, perr = mailindex.Open(fs.indexPath)
+			recs = nil
+		}
 		if perr != nil {
 			return nil, asCorrupt(fs.folder, perr)
 		}
