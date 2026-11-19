@@ -33,6 +33,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/v2/internal/storage/search"
+	"github.com/yarilomail/yarilo/v2/internal/storage/virtualsrc"
 	submsvr "github.com/yarilomail/yarilo/v2/internal/submission"
 	submproxy "github.com/yarilomail/yarilo/v2/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
@@ -159,14 +160,6 @@ func New(cfg *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Per-namespace backends; a virtual one draws on the mail, index and
-	// search built above, so it is assembled after them.
-	nsMailboxes, err := BuildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker, VirtualDeps{
-		Mailbox: mbox, Index: idx, Search: SearchOptions(cfg, ftsClient, ftsChain), MetadataDict: metadataDict,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("backend: namespace mailboxes: %w", err)
-	}
 	// ---- connection limiters, one per protocol as warden counts them (#2457) ----
 	imapConnLimiter := connlimit.New(cfg.MaxUserIPConnections("imap"))
 	pop3ConnLimiter := connlimit.New(cfg.MaxUserIPConnections("pop3"))
@@ -197,6 +190,17 @@ func New(cfg *config.Config) (*Server, error) {
 			return nil, fmt.Errorf("backend: auth_service mtls: %w", err)
 		}
 		authTLS = t
+	}
+
+	// Per-namespace backends; a virtual one draws on the mail, index, search
+	// and owner lookup built above, so it is assembled after them.
+	nsMailboxes, err := BuildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker, VirtualDeps{
+		Mailbox: mbox, Index: idx, Search: SearchOptions(cfg, ftsClient, ftsChain), MetadataDict: metadataDict,
+		ACL: cfg.ACL, SharedDict: sharedDict, OwnerLookup: ownerUserdbLookup(masterAddr, authTLS, resolver),
+		Base: DeploymentBase(resolver),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("backend: namespace mailboxes: %w", err)
 	}
 
 	// One relay per process: the mechanism list travels in its handshake, so a
@@ -1084,6 +1088,14 @@ type VirtualDeps struct {
 	Index        mailbox.IndexBackend
 	Search       search.Options
 	MetadataDict dict.Dict
+	// ACL decides which shared and public folders a virtual mailbox reads.
+	ACL config.ACLConfig
+	// SharedDict, OwnerLookup and Base open an owner-templated namespace's
+	// stores as a session does: the owners who granted, their userdb identity,
+	// the deployment's storage-name form.
+	SharedDict  dict.Dict
+	OwnerLookup func(context.Context, string) (*mailbox.UserInfo, error)
+	Base        *mailbox.UserInfo
 }
 
 // SearchOptions is the search share of the FTS configuration.
@@ -1129,6 +1141,8 @@ func BuildNamespaceMailboxes(namespaces []config.NamespaceConfig, globalDriver s
 				b = virtual.New(virtual.Options{
 					Personal: personalBoxes(vd, sc, locker), Search: vd.Search,
 					MetadataDict: vd.MetadataDict, Locker: locker,
+					Shared:   sharedSources(namespaces, vd, sc, locker, overrides),
+					Declared: virtualsrc.Declared(namespaces),
 				})
 			} else {
 				b = buildMailboxByDriver(drv, sc, locker)
@@ -1360,4 +1374,17 @@ func BuildScriptStore(cfg *config.Config, locker locks.Locker) (*sieve.IndexedSt
 		return nil, fmt.Errorf("backend: sieve dict: %w", err)
 	}
 	return sieve.NewScriptStore(cfg.Sieve.ScriptsDriver, cfg.Sieve.DefaultName, locker, d), nil
+}
+
+// DeploymentBase is the deployment's storage-name form, as an owner's store is
+// opened with it (#1078, #1092).
+func DeploymentBase(r *mailbox.Resolver) *mailbox.UserInfo {
+	if r == nil {
+		return nil
+	}
+	full, err := r.UserInfo("", "")
+	if err != nil {
+		return nil
+	}
+	return &mailbox.UserInfo{StorageEscapeChar: full.StorageEscapeChar, SkipNFCNormalize: full.SkipNFCNormalize}
 }

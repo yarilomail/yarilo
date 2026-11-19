@@ -3634,7 +3634,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	if virtualSel && len(batchUpdates) > 0 {
 		// The copy is the message: it takes the change, and the virtual record
 		// then takes the set the copy ended with, moving its own modseq.
-		onCopies, copies, cerr := s.storeOnCopies(msgByUID, batchUpdates)
+		onCopies, copies, cerr := s.storeOnCopies(msgByUID, batchUpdates, storeFlagRights(storeFlags.Flags))
 		if cerr != nil {
 			return dependencyError(cerr)
 		}

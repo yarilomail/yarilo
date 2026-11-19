@@ -31,6 +31,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
+	"github.com/yarilomail/yarilo/v2/internal/userdbinfo"
 	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
@@ -184,6 +185,8 @@ func main() {
 	// on the same personal mail and search as there (#1805).
 	nsOverrides, err := backend.BuildNamespaceMailboxes(cfg.Namespaces, cfg.Storage.MailDriver, cfg.Storage, locker, backend.VirtualDeps{
 		Mailbox: mb, Index: idx, Search: backend.SearchOptions(cfg, ftsClient, ftsChain), MetadataDict: dicts["metadata"],
+		ACL: cfg.ACL, SharedDict: dicts[cfg.ACL.SharedDict], OwnerLookup: ownerLookup(authcl, resolver),
+		Base: backend.DeploymentBase(resolver),
 	})
 	if err != nil {
 		slog.Error("backend-api: namespace mailbox wiring", "err", err)
@@ -324,4 +327,24 @@ func runTelemetry(cfg config.TelemetryConfig) {
 // writes the same folders, under the same locks, durability and thresholds.
 func buildIndex(sc config.StorageConfig, locker locks.Locker) *file.Backend {
 	return file.New(backend.IndexOptions(sc, locker)...)
+}
+
+// ownerLookup resolves an owner's storage identity through the userdb, as an
+// admin request for that owner does; nil without an auth client.
+func ownerLookup(authcl *authclient.Client, resolver *mailbox.Resolver) func(context.Context, string) (*mailbox.UserInfo, error) {
+	if authcl == nil {
+		return nil
+	}
+	return func(ctx context.Context, owner string) (*mailbox.UserInfo, error) {
+		pui, err := authcl.Userdb(ctx, owner)
+		if err != nil || pui == nil {
+			return nil, fmt.Errorf("backend-api: owner %q not found: %w", owner, err)
+		}
+		ui, err := resolver.UserInfo(owner, pui.Home)
+		if err != nil {
+			return nil, err
+		}
+		userdbinfo.Apply(ui, pui, owner)
+		return ui, nil
+	}
 }
