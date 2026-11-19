@@ -16,8 +16,7 @@ import (
 // bytes, so nothing about a rebuild is a second format (#1711).
 func TestARebuiltStoreEqualsWhatTheTransactionsWrote(t *testing.T) {
 	written, wrote := guidTxFolder2(t)
-	writtenBytes, err := os.ReadFile(written.GUIDStorePath())
-	if err != nil {
+	if _, err := os.Stat(written.GUIDStorePath()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -31,6 +30,25 @@ func TestARebuiltStoreEqualsWhatTheTransactionsWrote(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Before a fold the written copies sit in the journal: what the index reads
+	// equals what the rebuild wrote (#2617).
+	readWritten, err := written.GUIDRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readRebuilt, err := rebuilt.GUIDRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(readWritten) != fmt.Sprint(readRebuilt) {
+		t.Errorf("before the fold, the written store reads\n%v\nand the rebuilt one\n%v", readWritten, readRebuilt)
+	}
+	// After a fold the base holds them, record for record as the rebuild's.
+	foldGUIDStore(t, written)
+	writtenBytes, err := os.ReadFile(written.GUIDStorePath())
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The header carries an index id and the write times; the records are what
 	// this row is about.
 	if a, b := recordsOf(t, writtenBytes), recordsOf(t, rebuiltBytes); a != b {
@@ -305,5 +323,24 @@ func TestTheHandleCarriesTheGUIDCapabilities(t *testing.T) {
 	resolved, err := h.(mailbox.GUIDResolver).GUIDCopies([][16]byte{{1}})
 	if err != nil || len(resolved) != 1 {
 		t.Errorf("after a rebuild through the handle the copy reads %v (err %v)", resolved, err)
+	}
+}
+
+// foldGUIDStore folds the store's journal into its base by the compaction a
+// write runs, its thresholds at their least.
+func foldGUIDStore(t *testing.T, u *userIndex) {
+	t.Helper()
+	minB, maxB := u.b.logCompactMinBytes, u.b.logCompactMaxBytes
+	u.b.logCompactMinBytes, u.b.logCompactMaxBytes = 1, 1
+	defer func() { u.b.logCompactMinBytes, u.b.logCompactMaxBytes = minB, maxB }()
+	id, err := u.openGUIDStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.withFolderSite(id, lockSiteGUIDAppend, func(fs *folderState) error {
+		u.compactLogIfNeeded(fs)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
