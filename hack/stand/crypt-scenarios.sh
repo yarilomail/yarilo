@@ -17,7 +17,7 @@
 #   plain     --all --to plain leaves no encrypted message on the stand
 #   speed     messages a second per type and source state (plain, the old key,
 #             age back to plain), and the time of status on a user holding
-#             CRYPT_BIG messages
+#             CRYPT_BIG (10000) messages; nothing is said of larger mailboxes
 #
 # The keys are mounted for the run only. They are removed only when status
 # --all shows no encrypted message; otherwise the stand stays on its keys with
@@ -35,7 +35,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 N="${CRYPT_N:-200}"
 KILL_N="${CRYPT_KILL_N:-3000}"
-BIG="${CRYPT_BIG:-100000}"
+BIG="${CRYPT_BIG:-10000}"
 ROWS="$OUT/crypt-scenarios.txt"
 SECRET=yarilo-mail-crypt-window
 VALUES="$REPO/helm_values"
@@ -313,7 +313,7 @@ echo "== speed"
 rates=$(awk '{ printf "%s %d msgs %ds (%s/s); ", $1, $2, $3, ($3 > 0 ? int($2 / $3) : "inf") }' "$OUT/speed.txt")
 total=$(( $(field "$big" plain) + $(encrypted "$big") ))
 if [ "$(wc -l < "$OUT/speed.txt")" -ge 9 ] && [ "$total" -ge "$BIG" ]; then
-  row PASS speed "$rates status of $BIG_USER ($total messages) ${big_secs}s, its fill ${big_fill_secs}s"
+  row PASS speed "$rates status on $total messages ($BIG_USER) ${big_secs}s, its fill ${big_fill_secs}s; measured at $BIG, not beyond"
 else
   row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages, fill exit $big_fill: $(grep -m1 "first refusal" "$OUT/fill.log" || echo none recorded)"
 fi

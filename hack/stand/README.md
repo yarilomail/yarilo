@@ -126,7 +126,7 @@ The six rows of MAILCRYPT §13.12, each a PASS or FAIL line in
 | Row | Passes when |
 |:---|:---|
 | `mixed-<type>` | a folder of plaintext and age mail on each type is rewritten: plain 0, other_key 0, failed 0 |
-| `speed` | messages a second for each type and source state (plain to age, the old key to the new, age to plain), nine figures, and status on a user of `CRYPT_BIG` (100000) messages |
+| `speed` | messages a second for each type and source state (plain to age, the old key to the new, age to plain), nine figures, and status on a user of `CRYPT_BIG` (10000) messages, which says nothing of larger mailboxes (owner, 2026-11-19) |
 | `load-<type>` | on each type, a user of imaptest's range is re-encrypted while imaptest runs: running when the job starts and when it ends, or the row fails; a rerun after the load leaves plain 0 and imaptest logged no error |
 | `kill` | the backend pod holding a running job is deleted; the rerun finishes, plain 0, failed 0 |
 | `rotate` | a new key beside the old (`mailcrypt-keys.sh rotate-add`), `--all`: other_key 0 and reference 0; the old key removed (`rotate-drop`): no_key 0 |
