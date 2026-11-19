@@ -81,7 +81,7 @@ func TestTheArmDeploysTheChartItNames(t *testing.T) {
 		`CHART="${YARILO_ARM_CHART:-$REPO}"`,
 		`git -C "$CHART" status --porcelain`,
 		`echo "-- chart: $(git -C "$CHART" describe`,
-		`upgrade yarilo "$CHART/helm"`,
+		`stand_deploy "$OUT/deploy-$ARM" "$TAG" "$CHART/helm"`,
 		`-f "$CHART/helm_values/values-sandbox.yaml"`,
 		`OVERLAY="$CHART/helm_values/`,
 	} {

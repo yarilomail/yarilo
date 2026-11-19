@@ -370,9 +370,8 @@ VALUES=(-f "$REPO/helm_values/values-sandbox.yaml")
 echo "-- tooling: $(git -C "$REPO" log --oneline -1) tag=$TAG${ACCEPT_VALUES:+ values+=$ACCEPT_VALUES}"
 
 echo "== deploy $(date -u +%FT%TZ)"
-helm upgrade yarilo "$REPO/helm" -n "$NS" "${VALUES[@]}" \
-  --set image.tag="$TAG" --wait --timeout 10m > "$OUT/deploy.txt" 2>&1
-kube rollout status sts/yarilo-backend --timeout=280s >> "$OUT/deploy.txt" 2>&1
+. "$REPO/hack/stand/deploy.sh"
+stand_deploy "$OUT" "$TAG" "$REPO/helm" "${VALUES[@]}" || { echo "accept: the deploy did not settle ($OUT/deploy.txt)" >&2; exit 1; }
 settle >> "$OUT/deploy.txt" 2>&1
 START=$(date -u +%FT%TZ)
 pod_state > "$OUT/pods-start.txt"

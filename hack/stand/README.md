@@ -9,6 +9,22 @@ Windows run on the runner (`sb-run-01`), from a clean checkout, with
 runs from a laptop measures the same cluster with different tooling, and the
 checkout guard then guards nothing.
 
+## The rollout step
+
+Every deploy of a tag goes through `stand_deploy` in `deploy.sh`: the acceptance
+run, an arm of a window, the MAILCRYPT window's restore and the re-encryption
+scenarios.
+
+- A release left `pending-*` by a cut-off helm stops the step. Clearing it is a
+  manual act: delete the pending revision's `sh.helm.release.v1.yarilo.vN`
+  Secret, repeat the same upgrade, and say so in the run's row.
+- The images the chart renders are pulled first, by a pod per node asking no
+  CPU (`prepull.txt`). The node has no room for an old and a new backend pod at
+  once; a pull the new pods waited on held `yarilo-backend-1` down for 3.5
+  minutes (2026-11-19).
+- `backend-downtime.txt` holds the seconds each backend pod was not Ready
+  during the upgrade; the number goes into the run's row.
+
 ## The arm
 
 ```
@@ -94,6 +110,36 @@ KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/mailcrypt-reference-check.sh <image
 ```
 
 Result in `crypt-reference.txt`.
+
+## The re-encryption scenarios
+
+```sh
+screen -dmS crypt bash -lc "cd ~/stand && KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/crypt-scenarios.sh <tag> ~/windows/<name>"
+```
+
+The six rows of MAILCRYPT §13.12, each a PASS or FAIL line in
+`crypt-scenarios.txt` naming the image and the status counts before and after:
+
+| Row | Passes when |
+|:---|:---|
+| `mixed-<type>` | a folder of plaintext and age mail on each type is rewritten: plain 0, other_key 0, failed 0 |
+| `speed` | always measured: messages a second per type, and status on a user of `CRYPT_BIG` (100000) messages |
+| `load` | a user imaptest works on is re-encrypted; a rerun after the load leaves plain 0 and imaptest logged no error |
+| `kill` | the backend pod holding a running job is deleted; the rerun finishes, plain 0, failed 0 |
+| `rotate` | a new key beside the old (`mailcrypt-keys.sh rotate-add`), `--all`: other_key 0 and reference 0; the old key removed (`rotate-drop`): no_key 0 |
+| `plain` | `--all --to plain` leaves no encrypted message |
+
+Before the rows, the run checks the stand live: backend-api answers `crypt
+keys`, a hybrid key is the one new mail is sealed to, and a delivery under
+`write: age` counts as current.
+
+The keys live in Secret `yarilo-mail-crypt-window` for the run only, made by
+`mailcrypt-keys.sh` with `age-keygen` (in `~/bin` on the runner) and never
+printed. However the run ends, it removes them only when `status --all` shows
+no encrypted message; otherwise the stand stays on its keys with write off
+(`values-sandbox-mailcrypt-keys.yaml`), the Secret is kept and a `cleanup` FAIL
+names the users holding encrypted mail. The run's own rows go to docs-internal
+`stand-runs.md` with the downtime of each deploy.
 
 ## The acceptance run
 
