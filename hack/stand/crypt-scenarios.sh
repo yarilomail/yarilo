@@ -77,7 +77,7 @@ encrypted() { echo $(( $(field "$1" current) + $(field "$1" other_key) + $(field
 fill_to() {
   local user="$1" want="$2" n="${1%%@*}"
   YARILO_FILL_DOMAIN="${user#*@}" bash "$HERE/fill-mailboxes.sh" "${n#u}" "${n#u}" "$want" >> "$OUT/fill.log" 2>&1 && return 0
-  echo "crypt-scenarios: $user not filled to $want: $(grep -m1 "first refusal" "$OUT/fill.log" || tail -1 "$OUT/fill.log")" >&2
+  echo "crypt-scenarios: $user not filled to $want: $(grep -m1 "refused after" "$OUT/fill.log" || tail -1 "$OUT/fill.log")" >&2
   return 1
 }
 messages() { kube exec yarilo-backend-0 -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
@@ -315,5 +315,5 @@ total=$(( $(field "$big" plain) + $(encrypted "$big") ))
 if [ "$(wc -l < "$OUT/speed.txt")" -ge 9 ] && [ "$total" -ge "$BIG" ]; then
   row PASS speed "$rates status on $total messages ($BIG_USER) ${big_secs}s, its fill ${big_fill_secs}s; measured at $BIG, not beyond"
 else
-  row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages, fill exit $big_fill: $(grep -m1 "first refusal" "$OUT/fill.log" || echo none recorded)"
+  row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages, fill exit $big_fill: $(grep -m1 "refused after" "$OUT/fill.log" || echo none recorded)"
 fi

@@ -82,16 +82,25 @@ func TestTheOldKeyGoesOnlyAfterAFinishedRun(t *testing.T) {
 	}
 }
 
-// A fill names its first refusal, and the run's deploys lift the delivery
-// limit a fill past a thousand a minute meets, the restore keeping it: a 451
-// rate limit once passed for a lost connection (2026-11-19).
+// A fill waits for each message's reply and ends at the first refusal, and the
+// run's deploys lift the delivery limit, the restore keeping it: a pipelined
+// fill once counted its mailbox while the server was still delivering.
 func TestAFillSaysWhyAndTheRunLiftsTheLimit(t *testing.T) {
 	raw, err := os.ReadFile("fill-mailboxes.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `echo "fill: $user first refusal: $refused" >&2`) {
-		t.Error("fill-mailboxes.sh does not name a refusal")
+	for _, want := range []string{
+		`expect 250 || break`,
+		`echo "fill: $user refused after $DELIVERED: $REFUSED" >&2`,
+		`read -r -t 120 line <&4`,
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("fill-mailboxes.sh lacks %s: a message is sent only after the last one's reply, and the first refusal ends the fill", want)
+		}
+	}
+	if strings.Contains(string(raw), "nc -w") {
+		t.Error("fill-mailboxes.sh reads its replies under nc -w: a timer stands in for them")
 	}
 	src := scenarioSource(t)
 	for _, want := range []string{
