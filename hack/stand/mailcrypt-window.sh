@@ -26,6 +26,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 mkdir -p "$OUT"
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
+. "$HERE/deploy.sh"
 
 watcher=""
 checks_failed=0
@@ -33,8 +34,8 @@ finish() {
   rc=$?
   [ -n "$watcher" ] && { kill "$watcher" 2>/dev/null || true; wait "$watcher" 2>/dev/null || true; }
   echo "== restore: the stand's own values on $TAG"
-  if helm --kubeconfig="$KCFG" upgrade yarilo "$REPO/helm" -n "$NS" \
-    -f "$REPO/helm_values/values-sandbox.yaml" --set image.tag="$TAG" --timeout 10m --wait >/dev/null; then
+  mkdir -p "$OUT/deploy-restore"
+  if stand_deploy "$OUT/deploy-restore" "$TAG" "$REPO/helm" -f "$REPO/helm_values/values-sandbox.yaml"; then
     bash "$HERE/mailcrypt-keys.sh" delete
   else
     echo "mailcrypt-window: the restore did not settle; Secret yarilo-mail-crypt-window is left for the pods that still mount it, delete it after them" >&2

@@ -418,9 +418,11 @@ step "deploy"
 # The knobs beside the tag, so a window says what kind of arm it is: a quick
 # arm's numbers are per-login ratios, not throughput (README.md).
 echo "== arm $ARM: $TAG types=[$TYPES] fill=$FILL"
-helm --kubeconfig="$KCFG" upgrade yarilo "$CHART/helm" -n "$NS" \
-  -f "$CHART/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} \
-  --set image.tag="$TAG" --timeout 10m >/dev/null
+. "$REPO/hack/stand/deploy.sh"
+mkdir -p "$OUT/deploy-$ARM"
+stand_deploy "$OUT/deploy-$ARM" "$TAG" "$CHART/helm" \
+  -f "$CHART/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} ||
+  { echo "ab-arm: the deploy did not settle ($OUT/deploy-$ARM/deploy.txt)" >&2; exit 1; }
 
 deadline=$(( $(date +%s) + 600 ))
 until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ]; do
