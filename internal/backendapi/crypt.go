@@ -343,11 +343,6 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 	writing := job.Kind == cryptReencrypt && !req.DryRun
 	var rw mailbox.RecordRewriter
 	var sw mailbox.StoreRewriter
-	if writing && bundle.spec.Type != "personal" && driver != "maildir" {
-		// Its lock keys carry the accessing user, so the swap would keep out
-		// no other user's session (#2598); maildir locks by path.
-		return fmt.Errorf("crypt: namespace %s is a shared %s store, whose locks are per user (#2598); only a maildir one is rewritten", ns, driver)
-	}
 	if writing {
 		rw, _ = mailbox.Driver(bundle.box).(mailbox.RecordRewriter)
 		sw, _ = mailbox.Driver(bundle.box).(mailbox.StoreRewriter)

@@ -306,6 +306,9 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 		if err != nil {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
 		}
+		if spec.Type != "personal" && !mailbox.PrefixIsOwnerTemplated(spec.Prefix) {
+			nsInfo = mailbox.SharedStore(nsInfo)
+		}
 	}
 	// No Init unless the caller opened eagerly; no refusal either, since outside
 	// the personal namespace the home is the owner's and gates nothing here.

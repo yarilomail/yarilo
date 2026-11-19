@@ -64,9 +64,8 @@ Commands:
         --dry-run reports and writes nothing. --rate (default 100) bounds
         the messages rewritten a second, shared by the --jobs running at
         once. --all runs every user user/iterate lists, each on the user's
-        own backend-api, then the public namespace once (a shared sdbox or
-        mdbox store is refused, #2598); the summary is the zero the last
-        step of a key rotation reads.
+        own backend-api, then the public namespace once; the summary is
+        the zero the last step of a key rotation reads.
 
   job <user>
         The user's running or last finished job.

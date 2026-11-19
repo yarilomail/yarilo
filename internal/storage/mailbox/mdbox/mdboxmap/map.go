@@ -511,7 +511,7 @@ func (m *Map) withMapLockRenewing(fn func(context.Context) error) error {
 	noteSpan(spanWaitStart)
 	start := time.Now()
 	err := locks.WithLockWaiting(locks.WithSite(context.Background(), "mdbox-map"), m.locker, key, m.owner,
-		mapLockTTL, mapLockRenew, 35*time.Second, func(ctx context.Context) error {
+		mapLockTTL, mapLockRenew, MapLockWait, func(ctx context.Context) error {
 			metricMapLockAcquire.Observe(time.Since(start).Seconds())
 			noteSpan(spanWaitEnd)
 			return heldSpan(func() error { return fn(ctx) })
@@ -812,3 +812,6 @@ func looksForeignMapBase(path string) (bool, error) {
 	}
 	return true, nil
 }
+
+// MapLockWait bounds the wait for the map's lock. Test seam.
+var MapLockWait = 35 * time.Second

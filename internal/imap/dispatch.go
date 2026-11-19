@@ -248,6 +248,7 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: %s namespace: %w", spec.Type, err)
 			}
+			ui = mailbox.SharedStore(ui)
 			h, err := s.openHandle(spec, nsSlug(spec), ui, owner, subsFile)
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: open %s namespace: %w", spec.Type, err)
@@ -323,6 +324,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 	// this cannot drift from where the other services write (#1437).
 	subsRoot := mailbox.ControlRoot(ui)
 	store := subs.New(subsRoot, subsFile, ui.Username, owner, s.srv.opts.Locker)
+	store.SetLockName(ui.LockName)
 	// acl_defaults_from_inbox applies to personal/shared namespaces only.
 	defaultsFromInbox := s.srv.opts.ACLDefaultsFromInbox &&
 		(spec.Type == NamespacePersonal || spec.Type == NamespaceShared)
@@ -332,6 +334,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		CacheTTL:          s.srv.opts.ACLCacheTTL,
 		Global:            s.srv.opts.ACLGlobal,
 	}, s.srv.opts.Locker)
+	aclStore.SetLockName(ui.LockName)
 	// The namespace-instance owner. A personal namespace is owned by the user
 	// it was opened for; a fixed shared/public one by nobody. Owner-templated
 	// namespaces (B1) set this to the resolved owner, and isOwner then works for

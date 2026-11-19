@@ -75,6 +75,9 @@ func (s *session) subscriberFor(personal *mailbox.UserInfo, folder string) func(
 	if err != nil {
 		return nil
 	}
+	if sharedStore(ns) {
+		ui = mailbox.SharedStore(ui)
+	}
 	return s.boxAuto(personal, s.namespaceIndex(ns), ui).Subscribe
 }
 

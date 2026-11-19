@@ -369,6 +369,7 @@ func (s *Server) materialiseFolderACL(bundle *nsBundle, folder string) error {
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
 		s.opts.Locker)
+	store.SetLockName(bundle.info.LockName)
 	return store.MaterialiseOnCreate(folder)
 }
 
@@ -385,6 +386,7 @@ func (s *Server) dropFolderACL(bundle *nsBundle, folder string) error {
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
 		s.opts.Locker)
+	store.SetLockName(bundle.info.LockName)
 	return store.Remove(folder)
 }
 
@@ -401,6 +403,7 @@ func (s *Server) renameFolderACL(bundle *nsBundle, oldFolder, newFolder string) 
 		locks.Owner(bundle.info.Username, bundle.info.LockID()),
 		acl.Policy{},
 		s.opts.Locker)
+	store.SetLockName(bundle.info.LockName)
 	return store.Rename(oldFolder, newFolder)
 }
 

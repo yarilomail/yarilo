@@ -22,6 +22,27 @@ func (u *UserInfo) LockID() string {
 	return u.SessionID
 }
 
+// LockUser is the name lock keys on this store are built from: LockName, or
+// Username for a user's own store.
+func (u *UserInfo) LockUser() string {
+	if u.LockName != "" {
+		return u.LockName
+	}
+	return u.Username
+}
+
+// SharedStore marks ui as a store shared by every user who opens it (a
+// non-templated shared or public namespace): its lock keys name the store's
+// path, so two users' sessions on it exclude each other (#2598).
+func SharedStore(ui *UserInfo) *UserInfo {
+	root := ui.MailPath
+	if root == "" {
+		root = ui.Home
+	}
+	ui.LockName = "store:" + filepath.Clean(root)
+	return ui
+}
+
 // UserInfo carries the per-session storage identity for a user, resolved once
 // at session start (after passdb/userdb lookup) and passed to
 // MailboxBackend.OpenUser / IndexBackend.OpenUser. Backends MUST use Home
@@ -94,6 +115,12 @@ type UserInfo struct {
 	// session, a delivery's connection id, an admin request's. Read it through
 	// LockID, so a hand-built UserInfo cannot lock anonymously (#1670).
 	SessionID string
+
+	// LockName is the name a store's lock keys are built from, when it is
+	// not Username: a shared store with no owner is one store for every user
+	// who opens it, so its keys name the store (SharedStore). Read through
+	// LockUser.
+	LockName string
 
 	// MailPath, when non-empty, is the mail storage root, separated from Home
 	// (which holds Sieve scripts and other metadata). Empty falls back to

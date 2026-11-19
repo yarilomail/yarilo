@@ -118,6 +118,7 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 		separator:  mailbox.SepOrDefault(u.Separator),
 		escapeChar: u.StorageEscapeChar,
 		username:   u.Username,
+		lockUser:   u.LockUser(),
 		owner:      locks.Owner(u.Username, u.LockID()),
 		listUTF8:   b.listUTF8,
 	}
@@ -130,6 +131,7 @@ type userMailbox struct {
 	separator  string // IMAP hierarchy separator; converted to "/" on disk (fs nesting)
 	escapeChar string // storage-name escape char; "" disables escaping
 	username   string
+	lockUser   string // lock keys: the user, or a shared store's name
 	owner      string
 	listUTF8   bool
 	mu         sync.Mutex
@@ -174,13 +176,13 @@ func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) 
 	if u.b.locker == nil {
 		return fn()
 	}
-	key := locks.MailboxKey(u.username, folder)
+	key := locks.MailboxKey(u.lockUser, folder)
 	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
 		return fn()
 	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), folderLockWait)
 	defer cancel()
 	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
 	if err != nil {
@@ -312,8 +314,8 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 	if a > b {
 		a, b = b, a
 	}
-	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "sdbox-folder"), 35*time.Second)
+	keyA := locks.MailboxKey(u.lockUser, a)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "sdbox-folder"), folderLockWait)
 	defer cancel()
 	heldA, herr := locks.Reentrant(u.b.locker, keyA, "sdbox-folder", false)
 	if herr != nil {
@@ -329,7 +331,7 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 	if a == b {
 		return fn()
 	}
-	keyB := locks.MailboxKey(u.username, b)
+	keyB := locks.MailboxKey(u.lockUser, b)
 	heldB, herr := locks.Reentrant(u.b.locker, keyB, "sdbox-folder", false)
 	if herr != nil {
 		return herr
@@ -1070,11 +1072,17 @@ func randomGUID() [16]byte {
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
 
+// LockUser is the name this store's lock keys are built from.
+func (u *userMailbox) LockUser() string { return u.lockUser }
+
 // DriverName is the label this driver's messages are counted under.
 func (u *userMailbox) DriverName() string { return driverName }
 
 // syncFile is the durability call. A test seam: a row counts it, because
 // nothing else in the package observes whether it happened (#1847).
+// folderLockWait bounds the wait for a folder's lock. Test seam.
+var folderLockWait = 35 * time.Second
+
 var syncFile = (*os.File).Sync
 
 // FsyncMode is what a delivery makes durable here, so the wiring of the

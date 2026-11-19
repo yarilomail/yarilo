@@ -26,7 +26,7 @@ func (u *userMailbox) withMapLock(fn func(context.Context) error) error {
 	if u.b.locker == nil {
 		return fn(context.Background())
 	}
-	key := locks.MdboxMapKey(u.username)
+	key := locks.MdboxMapKey(u.lockUser)
 	if held, err := locks.Reentrant(u.b.locker, key, "mdbox-rebuild", false); err != nil {
 		return err
 	} else if held != locks.HoldNone {

@@ -222,6 +222,12 @@ type UIDAddressable interface {
 	RecordPath(folder string, m *MessageMeta) (string, error)
 }
 
+// LockNamer is a store whose lock keys name something other than the user: a
+// shared store with no owner is one store for all who open it (#2598).
+type LockNamer interface {
+	LockUser() string
+}
+
 // RawBody is a stored body exactly as it lies on disk: still encrypted when it
 // was saved so, with its line ends untouched.
 type RawBody interface {

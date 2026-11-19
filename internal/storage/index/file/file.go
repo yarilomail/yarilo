@@ -261,13 +261,14 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserIndex {
 			// spelling of a path rule is what misplaced our map (#1579).
 			controlRoot: mailbox.ControlRoot(u),
 			username:    u.Username,
+			lockUser:    u.LockUser(),
 			// The shared index keeps one for the paths that have no handle in hand;
 			// a locked call made through a handle stamps its own (#1664).
 			owner: locks.Owner(u.Username, u.LockID()),
 			open:  make(map[uint64]*folderState),
 		}
-		ui.uidValidity = uidvalidity.New(ui.controlRoot, ui.username, ui.owner, b.locker)
-		ui.folders = folders.New(ui.controlRoot, ui.username, ui.owner, b.locker)
+		ui.uidValidity = uidvalidity.New(ui.controlRoot, ui.lockUser, ui.owner, b.locker)
+		ui.folders = folders.New(ui.controlRoot, ui.lockUser, ui.owner, b.locker)
 		ref = &refUserIndex{ui: ui}
 		b.users[key] = ref
 	}
@@ -545,6 +546,7 @@ type userIndex struct {
 	// index does not lose its identity.
 	folders  *folders.Store
 	username string
+	lockUser string // lock keys: the user, or a shared store's name
 	owner    string
 
 	mu    sync.Mutex

@@ -106,6 +106,9 @@ var _ mailbox.EnvelopeCache = (*Handle)(nil)
 type Options struct {
 	Locker locks.Locker
 	User   string
+	// LockUser keys the cache's lock when it is not User: a shared store's
+	// name, the same for every user who opens it (#2598).
+	LockUser string
 	// SessionID names the session in the lock owner. Required: a cache write
 	// holds the mailbox key, and an anonymous holder is unattributable (#1670).
 	SessionID string
@@ -177,7 +180,11 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 	fc.unlock = append(fc.unlock, mailindex.LockCachePath(path, opts.Shared))
 	if lkr := opts.Locker; lkr != nil && opts.User != "" && opts.Folder != "" {
 		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "msgcache"), 35*time.Second)
-		key := locks.MailboxKey(opts.User, opts.Folder)
+		lockUser := opts.User
+		if opts.LockUser != "" {
+			lockUser = opts.LockUser
+		}
+		key := locks.MailboxKey(lockUser, opts.Folder)
 		owner := locks.Owner(opts.User, opts.lockID())
 		var lk locks.Lock
 		var lerr error
@@ -293,7 +300,7 @@ func (fc *Handle) flush() {
 	// The session travels: this window is the exclusive one every shared FETCH
 	// now pays, and held_by must name who holds it (#1670).
 	second := Open(r.idx, r.fid, Options{
-		Locker: r.opts.Locker, User: r.opts.User, Folder: r.opts.Folder,
+		Locker: r.opts.Locker, User: r.opts.User, LockUser: r.opts.LockUser, Folder: r.opts.Folder,
 		TraceID: r.opts.TraceID, SessionID: r.opts.SessionID,
 	})
 	if second == nil {

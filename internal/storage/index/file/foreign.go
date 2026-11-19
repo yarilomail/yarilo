@@ -141,7 +141,7 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	if u.b.locker != nil {
 		opts = append(opts, mdboxmap.WithLocker(u.b.locker), mdboxmap.WithOwner(u.owner))
 	}
-	m, err := mdboxmap.Open(ourStorage, u.username, opts...)
+	m, err := mdboxmap.Open(ourStorage, u.lockUser, opts...)
 	if err != nil {
 		return false, fmt.Errorf("fileindex/convert: open map: %w", err)
 	}
@@ -439,7 +439,7 @@ func (u *userIndex) AdoptForeignNames() error {
 	if u.b.locker == nil {
 		return run()
 	}
-	key := locks.IndexKey(u.username)
+	key := locks.IndexKey(u.lockUser)
 	if held, err := locks.Reentrant(u.b.locker, key, "index-adopt", false); err != nil {
 		return err
 	} else if held != locks.HoldNone {

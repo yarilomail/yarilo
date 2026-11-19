@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
@@ -356,37 +356,39 @@ func TestReencryptHoldsItsRate(t *testing.T) {
 	}
 }
 
-// A shared namespace's store is rewritten only when it is maildir: an sdbox
-// or mdbox one is locked per accessing user (#2598).
-func TestReencryptSharedNamespaceOnlyMaildir(t *testing.T) {
-	for _, c := range []struct {
-		driver string
-		ok     bool
-	}{{"maildir", true}, {"sdbox", false}} {
-		t.Run(c.driver, func(t *testing.T) {
+// A shared namespace's store is rewritten under the store's own lock keys,
+// whatever its driver: the job's user is only who opened it (#2598).
+func TestReencryptSharedNamespace(t *testing.T) {
+	for _, driver := range []string{"maildir", "sdbox", "mdbox"} {
+		t.Run(driver, func(t *testing.T) {
 			dir := t.TempDir()
+			locker := lockstest.Server(t)()
+			id, _ := age.GenerateX25519Identity()
+			server := mailcrypt.New(mailcrypt.Options{Recipients: []age.Recipient{id.Recipient()}, Identities: []age.Identity{id}})
+			backends := map[string]mailbox.MailboxBackend{
+				"sdbox": dboxv2.New(dboxv2.WithLocker(locker)),
+				"mdbox": mdbox.New(mdbox.WithLocker(locker)),
+			}
 			ts, _ := storageTestServer(t, func(o *Options) {
-				o.Crypt = mailcrypt.New(mailcrypt.Options{})
-				o.Locker = lockstest.Server(t)()
+				o.Crypt = server
+				o.Locker = locker
 				o.Namespaces = append(o.Namespaces, config.NamespaceConfig{
-					Type: "shared", Prefix: "Public/", Separator: "/", List: "yes", Location: c.driver + ":" + dir,
+					Type: "shared", Prefix: "Public/", Separator: "/", List: "yes", Location: driver + ":" + dir,
 				})
-				o.MailboxByDriver = func(d string) mailbox.MailboxBackend {
-					if d == "sdbox" {
-						return dboxv2.New()
-					}
-					return nil
-				}
+				o.MailboxByDriver = func(d string) mailbox.MailboxBackend { return backends[d] }
 			})
 			const user = "alice@example.com"
 			materialiseHome(t, ts, user)
+			store := map[string]mailbox.MailboxBackend{"maildir": maildir.New(), "sdbox": dboxv2.New(), "mdbox": mdbox.New()}[driver]
+			info := mailbox.SharedStore(&mailbox.UserInfo{Username: user, Home: dir, MailPath: dir, Driver: driver, Separator: "/"})
+			saveWith(t, store, info, "Subject: public\r\n\r\nx\r\n")
 			if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
-				map[string]any{"user": user, "namespace": "public", "to": "plain"}); st != http.StatusAccepted {
+				map[string]any{"user": user, "namespace": "public"}); st != http.StatusAccepted {
 				t.Fatalf("start: %d %s", st, body)
 			}
 			job := waitCryptJob(t, ts.URL, user)
-			if c.ok && job.State != "done" || !c.ok && (job.State != "failed" || !strings.Contains(job.Error, "#2598")) {
-				t.Fatalf("%s: %+v", c.driver, job)
+			if job.State != "done" || job.Rewritten != 1 || job.Failed != 0 {
+				t.Fatalf("%s: %+v", driver, job)
 			}
 		})
 	}

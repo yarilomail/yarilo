@@ -135,6 +135,7 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 		separator:        mailbox.SepOrDefault(u.Separator),
 		escapeChar:       u.StorageEscapeChar,
 		username:         u.Username,
+		lockUser:         u.LockUser(),
 		owner:            locks.Owner(u.Username, u.LockID()),
 		listUTF8:         b.listUTF8,
 	}
@@ -694,6 +695,7 @@ type userMailbox struct {
 	separator        string // IMAP hierarchy separator; converted to "." on disk (maildir++)
 	escapeChar       string // storage-name escape char; "" disables escaping
 	username         string
+	lockUser         string     // lock keys: the user, or a shared store's name
 	owner            string     // <process>/<pid>/<user> - passed to yarilo-locks for BUSY diagnostics
 	listUTF8         bool       // mirrors Backend.listUTF8
 	mu               sync.Mutex // orders this pod's sessions; other processes are excluded at the file
@@ -3103,6 +3105,9 @@ func (u *userMailbox) reconcileIsClean(idx mailbox.UserIndex, folder *mailbox.Fo
 
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
+
+// LockUser is the name this store's lock keys are built from.
+func (u *userMailbox) LockUser() string { return u.lockUser }
 
 // HoldFolder runs fn under this folder's hold (mailbox.FolderHolder).
 func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
