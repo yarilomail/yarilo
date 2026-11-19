@@ -38,6 +38,7 @@ type Store struct {
 	// levels of another implementation's file, which stores them apart.
 	separator string
 	username  string
+	lockName  string
 	owner     string
 	locker    locks.Locker
 }
@@ -217,7 +218,7 @@ func (s *Store) withLock(fn func() error) error {
 	if s.locker == nil {
 		return fn()
 	}
-	key := locks.SubscriptionsKey(s.username)
+	key := locks.SubscriptionsKey(s.lockUser())
 	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "subs-write"), 35*time.Second)
 	defer cancel()
 	lk, err := locks.Acquire(ctx, s.locker, key, s.owner, 30*time.Second)
@@ -226,4 +227,21 @@ func (s *Store) withLock(fn func() error) error {
 	}
 	defer func() { _ = s.locker.Unlock(ctx, lk.ID) }()
 	return fn()
+}
+
+// SetLockName keys this store's write locks by name instead of the user: a
+// shared store with no owner is one store for every user (#2598). Events
+// stay the user's, whose sessions listen for them.
+func (s *Store) SetLockName(name string) *Store {
+	if name != "" {
+		s.lockName = name
+	}
+	return s
+}
+
+func (s *Store) lockUser() string {
+	if s.lockName != "" {
+		return s.lockName
+	}
+	return s.username
 }

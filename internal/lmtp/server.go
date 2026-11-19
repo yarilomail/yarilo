@@ -544,7 +544,7 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	if rel == "" {
 		rel = "INBOX" // delivery to a bare namespace prefix → its INBOX
 	}
-	ui, err := mailbox.NamespaceUserInfo(userInfo, loc, ns.Separator)
+	ui, err := mailbox.NamespaceUserInfo(userInfo, loc, ns.Separator, mailbox.StoreKindOf(ns.Type, ns.Prefix))
 	if err != nil {
 		slog.Warn("lmtp: namespace not usable, delivering to INBOX",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
@@ -591,6 +591,7 @@ func (s *session) postAllowed(ui *mailbox.UserInfo, ns *config.NamespaceConfig, 
 		Global:            s.opts.ACLGlobal,
 		CacheTTL:          s.opts.ACLCacheTTL,
 	}, s.opts.Locker)
+	store.SetLockName(ui.LockName)
 	var sep byte = '/'
 	if ns.Separator != "" {
 		sep = ns.Separator[0]

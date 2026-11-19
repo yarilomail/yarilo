@@ -152,8 +152,12 @@ func (b *Box) BackfillGUIDs(f *mailbox.Folder, name string) error {
 // EnvelopeCache opens the folder's cache; a nil handle answers every call as a
 // miss, so none served is not an error to the protocol.
 func (b *Box) EnvelopeCache(folderID uint64, opts mailbox.EnvelopeCacheOptions) mailbox.EnvelopeCache {
+	lockUser := ""
+	if ln, ok := mailbox.Driver(b.store).(mailbox.LockNamer); ok && ln.LockUser() != opts.User {
+		lockUser = ln.LockUser()
+	}
 	return msgcache.Open(b.index, folderID, msgcache.Options{
-		Locker: opts.Locker, User: opts.User, SessionID: opts.SessionID, Folder: opts.Folder,
+		Locker: opts.Locker, User: opts.User, LockUser: lockUser, SessionID: opts.SessionID, Folder: opts.Folder,
 		TraceID: opts.TraceID, DeferWrites: opts.DeferWrites, Shared: opts.Shared,
 	})
 }

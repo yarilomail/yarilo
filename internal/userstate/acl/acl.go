@@ -54,6 +54,7 @@ type Store struct {
 	// username keys the lock acquired on every write; for shared/public
 	// namespaces this is the accessing user.
 	username string
+	lockName string
 	owner    string
 	locker   locks.Locker
 
@@ -531,7 +532,7 @@ func (s *Store) withLock(folder string, fn func() error) error {
 	if s.locker == nil {
 		return fn()
 	}
-	key := locks.MailboxKey(s.username, folder)
+	key := locks.MailboxKey(s.lockUser(), folder)
 	// An outer caller already holds this key; the service is not reentrant.
 	if held, err := locks.Reentrant(s.locker, key, "acl-write", false); err != nil {
 		return err
@@ -546,4 +547,21 @@ func (s *Store) withLock(folder string, fn func() error) error {
 	}
 	defer func() { _ = s.locker.Unlock(ctx, lk.ID) }()
 	return fn()
+}
+
+// SetLockName keys this store's write locks by name instead of the user: a
+// shared store with no owner is one store for every user (#2598). Events
+// stay the user's, whose sessions listen for them.
+func (s *Store) SetLockName(name string) *Store {
+	if name != "" {
+		s.lockName = name
+	}
+	return s
+}
+
+func (s *Store) lockUser() string {
+	if s.lockName != "" {
+		return s.lockName
+	}
+	return s.username
 }

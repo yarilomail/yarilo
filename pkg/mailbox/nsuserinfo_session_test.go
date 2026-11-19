@@ -23,7 +23,7 @@ func TestANamespaceHandleKeepsTheSessionInItsLockOwner(t *testing.T) {
 		SessionID: "4hZsLQ3CbjzBBcd1f9",
 		Home:      "/srv/mail/u56",
 	}
-	ns, err := NamespaceUserInfo(base, Location{Path: "/srv/public", Driver: "maildir"}, "/")
+	ns, err := NamespaceUserInfo(base, Location{Path: "/srv/public", Driver: "maildir"}, "/", SharedByAll)
 	if err != nil {
 		t.Fatalf("NamespaceUserInfo: %v", err)
 	}

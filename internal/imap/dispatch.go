@@ -197,7 +197,7 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 					return nil, nil, fmt.Errorf("imap: personal namespace location: %w", err)
 				}
 				if ok {
-					if ui, err = mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator)); err != nil {
+					if ui, err = mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator), mailbox.UserStore); err != nil {
 						return nil, nil, fmt.Errorf("imap: personal namespace: %w", err)
 					}
 				}
@@ -244,7 +244,8 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 			// backend (falls back to Home/Maildir) disagree. Shared with the
 			// admin API, which built the same structure from two fields and
 			// therefore disagreed with this one (#1109).
-			ui, err := mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator))
+			ui, err := mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator),
+				mailbox.StoreKindOf(string(spec.Type), spec.Prefix))
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: %s namespace: %w", spec.Type, err)
 			}
@@ -323,6 +324,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 	// this cannot drift from where the other services write (#1437).
 	subsRoot := mailbox.ControlRoot(ui)
 	store := subs.New(subsRoot, subsFile, ui.Username, owner, s.srv.opts.Locker)
+	store.SetLockName(ui.LockName)
 	// acl_defaults_from_inbox applies to personal/shared namespaces only.
 	defaultsFromInbox := s.srv.opts.ACLDefaultsFromInbox &&
 		(spec.Type == NamespacePersonal || spec.Type == NamespaceShared)
@@ -332,6 +334,7 @@ func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserIn
 		CacheTTL:          s.srv.opts.ACLCacheTTL,
 		Global:            s.srv.opts.ACLGlobal,
 	}, s.srv.opts.Locker)
+	aclStore.SetLockName(ui.LockName)
 	// The namespace-instance owner. A personal namespace is owned by the user
 	// it was opened for; a fixed shared/public one by nobody. Owner-templated
 	// namespaces (B1) set this to the resolved owner, and isOwner then works for

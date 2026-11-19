@@ -22,6 +22,37 @@ func (u *UserInfo) LockID() string {
 	return u.SessionID
 }
 
+// LockUser is the name lock keys on this store are built from: LockName, or
+// Username for a user's own store.
+func (u *UserInfo) LockUser() string {
+	if u.LockName != "" {
+		return u.LockName
+	}
+	return u.Username
+}
+
+// StoreKind says whose store a namespace opens.
+type StoreKind int
+
+const (
+	// UserStore is the user's own store, or an owner's resolved per owner:
+	// its lock keys name that user.
+	UserStore StoreKind = iota
+	// SharedByAll is one fixed store for every user who opens it (a shared
+	// or public namespace with no owner): its lock keys name the store, so
+	// two users' sessions on it exclude each other (#2598).
+	SharedByAll
+)
+
+// StoreKindOf is the kind of store a namespace of type nsType and prefix
+// opens.
+func StoreKindOf(nsType, prefix string) StoreKind {
+	if strings.EqualFold(nsType, "personal") || PrefixIsOwnerTemplated(prefix) {
+		return UserStore
+	}
+	return SharedByAll
+}
+
 // UserInfo carries the per-session storage identity for a user, resolved once
 // at session start (after passdb/userdb lookup) and passed to
 // MailboxBackend.OpenUser / IndexBackend.OpenUser. Backends MUST use Home
@@ -94,6 +125,11 @@ type UserInfo struct {
 	// session, a delivery's connection id, an admin request's. Read it through
 	// LockID, so a hand-built UserInfo cannot lock anonymously (#1670).
 	SessionID string
+
+	// LockName is the name a store's lock keys are built from, when it is
+	// not Username: a SharedByAll store's, set by NamespaceUserInfo. Read
+	// through LockUser.
+	LockName string
 
 	// MailPath, when non-empty, is the mail storage root, separated from Home
 	// (which holds Sieve scripts and other metadata). Empty falls back to

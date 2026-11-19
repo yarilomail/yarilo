@@ -90,7 +90,7 @@ func (s *Server) rebuildFolder(ctx context.Context, req rebuildRequest) (*rebuil
 	// Acquired before any Scan/OpenFolder so the snapshot we read is the
 	// snapshot we rewrite.
 	if s.opts.Locker != nil {
-		key := locks.MailboxKey(uc.info.Username, req.Folder)
+		key := locks.MailboxKey(bundle.info.LockUser(), req.Folder)
 		lockCtx, cancel := context.WithTimeout(locks.WithSite(ctx, "admin-rebuild"), 60*time.Second)
 		defer cancel()
 		lk, err := locks.Acquire(lockCtx, s.opts.Locker, key, uc.lockOwner(), 90*time.Second)
@@ -348,7 +348,7 @@ func (s *Server) optimizeFolder(ctx context.Context, req optimizeRequest) (*opti
 	}
 	start := time.Now()
 	if s.opts.Locker != nil {
-		key := locks.MailboxKey(uc.info.Username, req.Folder)
+		key := locks.MailboxKey(bundle.info.LockUser(), req.Folder)
 		lockCtx, cancel := context.WithTimeout(locks.WithSite(ctx, "admin-rebuild"), 60*time.Second)
 		defer cancel()
 		lk, err := locks.Acquire(lockCtx, s.opts.Locker, key, uc.lockOwner(), 90*time.Second)

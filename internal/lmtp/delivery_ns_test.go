@@ -59,6 +59,10 @@ func TestDeliveryTargetRoutesNamespaces(t *testing.T) {
 	if rel2 != "News" {
 		t.Errorf("rel = %q, want News", rel2)
 	}
+	// The public store locks under its own name, whoever delivers (#2598).
+	if ln, ok := mailbox.Driver(box2).(mailbox.LockNamer); !ok || ln.LockUser() != "store:"+publicDir {
+		t.Errorf("public store's lock name %v, want store:%s", ln, publicDir)
+	}
 	// Deliver a message and confirm it lands under the public root, not alice's.
 	if err := box2.Create(rel2); err != nil {
 		t.Fatalf("create News: %v", err)

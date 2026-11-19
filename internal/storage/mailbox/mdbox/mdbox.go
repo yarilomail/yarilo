@@ -206,6 +206,7 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 		separator:   mailbox.SepOrDefault(u.Separator),
 		escapeChar:  u.StorageEscapeChar,
 		username:    u.Username,
+		lockUser:    u.LockUser(),
 		owner:       locks.Owner(u.Username, u.LockID()),
 		altBasePath: u.AltDir, // the resolver's mail_alt_path, already expanded
 		listUTF8:    b.listUTF8,
@@ -219,6 +220,7 @@ type userMailbox struct {
 	separator   string // IMAP hierarchy separator; converted to "/" on disk (fs nesting)
 	escapeChar  string // storage-name escape char; "" disables escaping
 	username    string
+	lockUser    string // lock keys: the user, or a shared store's name
 	owner       string
 	altBasePath string // expanded alt root + "/mdbox"; "" = disabled
 	listUTF8    bool
@@ -304,7 +306,7 @@ func (u *userMailbox) openMap() (*mdboxmap.Map, error) {
 		mapOpts = append(mapOpts, mdboxmap.WithLogRotation(
 			u.b.logRotateMinSize, u.b.logRotateMaxSize, u.b.logRotateMinAge))
 	}
-	m, err := mdboxmap.Open(u.mapStoragePath(), u.username, mapOpts...)
+	m, err := mdboxmap.Open(u.mapStoragePath(), u.lockUser, mapOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -330,13 +332,13 @@ func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) 
 	if err := u.refuseFolderUnderMap(folder, site); err != nil {
 		return err
 	}
-	key := locks.MailboxKey(u.username, folder)
+	key := locks.MailboxKey(u.lockUser, folder)
 	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
 		return fn()
 	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), folderLockWait)
 	defer cancel()
 	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
 	if err != nil {
@@ -356,8 +358,8 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 	if a > b {
 		a, b = b, a
 	}
-	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "mdbox-folder"), 35*time.Second)
+	keyA := locks.MailboxKey(u.lockUser, a)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "mdbox-folder"), folderLockWait)
 	defer cancel()
 	heldA, herr := locks.Reentrant(u.b.locker, keyA, "mdbox-folder", false)
 	if herr != nil {
@@ -373,7 +375,7 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 	if a == b {
 		return fn()
 	}
-	keyB := locks.MailboxKey(u.username, b)
+	keyB := locks.MailboxKey(u.lockUser, b)
 	heldB, herr := locks.Reentrant(u.b.locker, keyB, "mdbox-folder", false)
 	if herr != nil {
 		return herr
@@ -1400,14 +1402,17 @@ func logOtherHeaderSize(file string, offset uint32, announced, actual int) {
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
 
+// LockUser is the name this store's lock keys are built from.
+func (u *userMailbox) LockUser() string { return u.lockUser }
+
 // refuseFolderUnderMap refuses a folder taken by a goroutine already holding
 // the map; another session of the same user waits instead.
 func (u *userMailbox) refuseFolderUnderMap(folder, site string) error {
-	mapKey := locks.MdboxMapKey(u.username)
+	mapKey := locks.MdboxMapKey(u.lockUser)
 	if _, held := u.b.locker.HoldsResource(mapKey); !held {
 		return nil
 	}
-	folderKey := locks.MailboxKey(u.username, folder)
+	folderKey := locks.MailboxKey(u.lockUser, folder)
 	metricLockOrderRefused.WithLabelValues(site).Inc()
 	slog.Error("mdbox: refusing a folder lock under the map lock",
 		"site", site, "outer", mapKey, "inner", folderKey, "issue", "#1884")
@@ -1432,6 +1437,9 @@ func (u *userMailbox) RemoveHeld(folder, filename string) error {
 // afterMapAppend marks where the map takes the record, for the row that
 // asserts the sync came first.
 var afterMapAppend func()
+
+// folderLockWait bounds the wait for a folder's lock. Test seam.
+var folderLockWait = 35 * time.Second
 
 // syncFile and syncDir are the durability calls. Test seams: a row counts the
 // call, and the order it came in.
