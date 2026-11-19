@@ -191,7 +191,11 @@ func (u *userIndex) AppendGUIDRecord(r mailbox.GUIDRecord) error {
 			GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 			Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
 		})
-		return fs.flush()
+		if err := fs.flushAppend(rec); err != nil {
+			return err
+		}
+		u.compactLogIfNeeded(fs)
+		return nil
 	})
 }
 
@@ -482,15 +486,20 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 		if u.guid.rebuilding.Load() {
 			return errGUIDRebuilding
 		}
+		// Journalled like a folder's command: a base rewrite here cost every
+		// delivery the whole account's copies (#2617).
+		var logRecs [][]byte
 		if b.goneFolder != nil {
 			for i := len(fs.file.Records) - 1; i >= 0; i-- {
 				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
 				if !ok || r.FolderGUID != *b.goneFolder {
 					continue
 				}
-				if _, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0); eerr != nil {
+				recs, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0)
+				if eerr != nil {
 					return eerr
 				}
+				logRecs = append(logRecs, recs...)
 			}
 		}
 		for _, c := range b.gone {
@@ -499,9 +508,11 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 				if !ok || r.FolderGUID != c.folderGUID || r.UID != c.uid {
 					continue
 				}
-				if _, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0); eerr != nil {
+				recs, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0)
+				if eerr != nil {
 					return eerr
 				}
+				logRecs = append(logRecs, recs...)
 				break
 			}
 		}
@@ -509,8 +520,21 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 			if err := appendGUIDLocked(fs, r); err != nil {
 				return err
 			}
+			recs, err := fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+			if err != nil {
+				return err
+			}
+			logRecs = append(logRecs, recs...)
 		}
-		return fs.flush()
+		if len(logRecs) == 0 {
+			return nil
+		}
+		// Folded by the thresholds a folder's journal is (#2617).
+		if err := fs.appendMutLog(logRecs...); err != nil {
+			return err
+		}
+		u.compactLogIfNeeded(fs)
+		return nil
 	})
 }
 

@@ -13,20 +13,20 @@ func TestAnImageCarriesTheIdentityOfWhatItRead(t *testing.T) {
 	reader := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
 	t.Cleanup(func() { reader.Close() }) //nolint:errcheck
 
-	appendFromAnotherProcess(t, home, false) // uid 2041
+	appendFoldedFromAnotherProcess(t, home, false) // uid 2041
 	if _, err := reader.GUIDCopies([][16]byte{{1}}); err != nil {
 		t.Fatal(err)
 	}
 
 	// While this read parses, the other process appends, as a delivery does.
-	appendFromAnotherProcess(t, home, false) // uid 2041 again: the cache goes stale
+	appendFoldedFromAnotherProcess(t, home, false) // uid 2041 again: the cache goes stale
 	once := false
 	afterBaseRead = func() {
 		if once {
 			return
 		}
 		once = true
-		appendFromAnotherProcess(t, home, true) // the delivery's copy, uid 2042
+		appendFoldedFromAnotherProcess(t, home, true) // the delivery's copy, uid 2042
 	}
 	t.Cleanup(func() { afterBaseRead = nil })
 	if _, err := reader.GUIDCopies([][16]byte{{1}}); err != nil {
@@ -50,16 +50,16 @@ func TestASweepSizedLookupSeesACopyAppendedDuringARead(t *testing.T) {
 	reader := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
 	t.Cleanup(func() { reader.Close() }) //nolint:errcheck
 
-	appendFromAnotherProcess(t, home, false)
+	appendFoldedFromAnotherProcess(t, home, false)
 	reader.GUIDCopies([][16]byte{{1}}) //nolint:errcheck
-	appendFromAnotherProcess(t, home, false)
+	appendFoldedFromAnotherProcess(t, home, false)
 	once := false
 	afterBaseRead = func() {
 		if once {
 			return
 		}
 		once = true
-		appendFromAnotherProcess(t, home, true)
+		appendFoldedFromAnotherProcess(t, home, true)
 	}
 	t.Cleanup(func() { afterBaseRead = nil })
 	reader.GUIDCopies([][16]byte{{1}}) //nolint:errcheck
@@ -88,9 +88,9 @@ func TestAReadThatSpentItsRetriesCatchesUp(t *testing.T) {
 	reader := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
 	t.Cleanup(func() { reader.Close() }) //nolint:errcheck
 
-	appendFromAnotherProcess(t, home, false)
+	appendFoldedFromAnotherProcess(t, home, false)
 	reader.GUIDCopies([][16]byte{{1}}) //nolint:errcheck
-	appendFromAnotherProcess(t, home, false)
+	appendFoldedFromAnotherProcess(t, home, false)
 
 	// One write per read until the retries run out; the last is the delivery's
 	// copy, so only the version the read ends on holds it.
@@ -100,7 +100,7 @@ func TestAReadThatSpentItsRetriesCatchesUp(t *testing.T) {
 			return
 		}
 		left--
-		appendFromAnotherProcess(t, home, left == 0)
+		appendFoldedFromAnotherProcess(t, home, left == 0)
 	}
 	t.Cleanup(func() { afterBaseRead = nil })
 	reader.GUIDCopies([][16]byte{{1}}) //nolint:errcheck
