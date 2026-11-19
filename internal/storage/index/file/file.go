@@ -587,8 +587,11 @@ type folderState struct {
 	// only where the only other copy is removed right after (#1524).
 	fsyncOnFlush bool
 
-	file     *mailindex.File // the wire-format snapshot
-	keywords keywordsHdr     // parsed keyword name registry
+	file        *mailindex.File    // the wire-format snapshot
+	recs        *mailindex.Records // a view's lazy records; file.Records is then nil
+	recordsLeft bool               // file holds the header only; the next locked use reads all
+	headerFixed bool               // the header was corrected from records in memory
+	keywords    keywordsHdr        // parsed keyword name registry
 
 	// flushes counts base rewrites, so a transaction can tell whether one
 	// happened while it was applying its own ops (#1831).
@@ -804,7 +807,7 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	reloadStart := time.Now()
 	view, release, err := fs.openView()
 	observeReadPart("reload", time.Since(reloadStart))
-	if errors.Is(err, errBaseMoving) {
+	if errors.Is(err, errBaseMoving) || errors.Is(err, mailindex.ErrBaseMoved) {
 		return u.withFolderROSite(folderID, lockSiteFallback, fn)
 	}
 	if err != nil {
@@ -816,10 +819,19 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 		}
 		return u.evictIfGone(folderID, fs, err)
 	}
-	defer release()
+	if view.recs != nil {
+		fs.leaveRecordsOnDisk()
+	}
 	buildStart := time.Now()
 	ferr := fn(view)
 	observeReadPart("build", time.Since(buildStart))
+	release()
+	if errors.Is(ferr, mailindex.ErrBaseMoved) {
+		// The base went from under a lazy load: forget it and answer from the
+		// one the path names now (INDEX-MEMORY.md §4).
+		fs.dropView(view)
+		return u.withFolderROSite(folderID, lockSiteFallback, fn)
+	}
 	return ferr
 }
 

@@ -89,7 +89,7 @@ func TestAHeldViewKeepsItsImageAcrossAFold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := len(held.file.Records)
+	before := held.recordCount()
 
 	uid, err := u.AllocateUID(folder.ID)
 	if err != nil {
@@ -104,11 +104,11 @@ func TestAHeldViewKeepsItsImageAcrossAFold(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release2()
-	if len(held.file.Records) != before {
-		t.Errorf("the held view grew from %d to %d records under its reader", before, len(held.file.Records))
+	if held.recordCount() != before {
+		t.Errorf("the held view grew from %d to %d records under its reader", before, held.recordCount())
 	}
-	if len(after.file.Records) != before+1 {
-		t.Errorf("the view opened after the append has %d records, want %d", len(after.file.Records), before+1)
+	if after.recordCount() != before+1 {
+		t.Errorf("the view opened after the append has %d records, want %d", after.recordCount(), before+1)
 	}
 	release()
 }
@@ -184,7 +184,7 @@ func TestConcurrentOpensPayForOneFold(t *testing.T) {
 				t.Error(verr)
 				return
 			}
-			counts[i] = len(v.file.Records)
+			counts[i] = v.recordCount()
 			rel()
 		}(i)
 	}
@@ -209,7 +209,7 @@ func TestANewBaseIsNotReadThroughTheOldImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	rel1()
-	before := len(v1.file.Records)
+	before := v1.recordCount()
 
 	uid, err := u.AllocateUID(folder.ID)
 	if err != nil {
@@ -231,9 +231,9 @@ func TestANewBaseIsNotReadThroughTheOldImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rel2()
-	if len(v2.file.Records) != before+1 {
+	if v2.recordCount() != before+1 {
 		t.Errorf("after the base was rewritten the read has %d records, want %d (path %s)",
-			len(v2.file.Records), before+1, filepath.Base(fs.indexPath))
+			v2.recordCount(), before+1, filepath.Base(fs.indexPath))
 	}
 }
 
@@ -321,9 +321,12 @@ func viewUIDs(t *testing.T, fs *folderState) []uint32 {
 		t.Fatal(err)
 	}
 	defer release()
+	if err := v.loadRecords(); err != nil {
+		t.Fatal(err)
+	}
 	var out []uint32
-	for _, r := range v.file.Records {
-		out = append(out, r.UID)
+	for i := range v.recordCount() {
+		out = append(out, v.recUID(i))
 	}
 	return out
 }
@@ -385,7 +388,7 @@ func TestAPublishedMapIsNotExtendedInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.view == from.view || len(from.view.file.Records) != 5 {
-		t.Errorf("the published image was extended in place: it holds %d records, want 5", len(from.view.file.Records))
+	if m.view == from.view || from.view.recordCount() != 5 {
+		t.Errorf("the published image was extended in place: it holds %d records, want 5", from.view.recordCount())
 	}
 }

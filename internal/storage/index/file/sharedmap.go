@@ -117,6 +117,17 @@ func (fs *folderState) viewIfCurrent(img *baseImage, logSt os.FileInfo, ierr err
 	return m.view, func() { fs.releaseView(m) }, true
 }
 
+// dropView unpublishes the map holding view and forgets the cached image of
+// the base, so the next read builds from the current one.
+func (fs *folderState) dropView(view *folderState) {
+	baseImages.Delete(fs.indexPath)
+	fs.mapMu.Lock()
+	if fs.current != nil && fs.current.view == view {
+		fs.current = nil
+	}
+	fs.mapMu.Unlock()
+}
+
 func (fs *folderState) releaseView(m *indexMap) {
 	fs.mapMu.Lock()
 	m.refs--
@@ -181,17 +192,21 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	fs.mapMu.Lock()
 	shared := from.refs > 0 || !from.ownsFile || fs.current == from
 	fs.mapMu.Unlock()
-	if shared {
+	if shared || from.view.recs != nil {
 		// Somebody is reading this image: it stays as it is, and the fold
 		// goes onto a copy (the reference's move-to-private).
 		mapCopies.add()
+		file, merr := from.view.materialized()
+		if merr != nil {
+			return nil, merr
+		}
 		target = &folderState{
 			user:      from.view.user,
 			folder:    from.view.folder,
 			indexDir:  from.view.indexDir,
 			indexPath: from.view.indexPath,
 			traceID:   from.view.traceID,
-			file:      cloneIndexFile(from.view.file),
+			file:      file,
 			keywords:  from.view.keywords,
 			lineage:   from.view.lineage,
 			logSize:   from.view.logSize,
