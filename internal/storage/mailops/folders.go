@@ -84,14 +84,20 @@ func (o *Ops) EmitList(ev locks.EventType, payload string) {
 	o.EmitListIn(nil, ev, payload)
 }
 
-// EmitListIn publishes a change to a folder of box, under its full name: on
-// a shared store's own key, where every user's sessions on it listen, and
-// not on the user's as well, or their own sessions would hear it twice (#2600).
+// EmitListIn publishes a change to a folder of box, under its full name: for
+// a SharedByAll store on its own key, where every user's sessions on it
+// listen, and not on the user's as well, or their own sessions would hear it
+// twice (#2600). Any other store's change, an owner's among them, goes on
+// the user's key: the full name is the user's view of it.
 func (o *Ops) EmitListIn(box mailbox.Box, ev locks.EventType, payload string) {
 	if o.cfg.Locker == nil || o.user == nil || o.user.Username == "" {
 		return
 	}
-	o.EmitListTo(mailbox.LockUserOf(box, o.user.Username), ev, payload)
+	name := o.user.Username
+	if store := mailbox.LockUserOf(box, name); mailbox.IsSharedStoreName(store) {
+		name = store
+	}
+	o.EmitListTo(name, ev, payload)
 }
 
 // EmitListTo publishes a folder-list change on name's key: a user's, or a

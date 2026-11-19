@@ -355,7 +355,7 @@ func (s *session) startNotifyWatch(items []imaplib.NotifyItem) {
 		w.addSub(folder, mask)
 		// Resolved here, on the session: the list watcher runs apart from it.
 		for _, back := range s.virtualBackingNames(folder) {
-			hear(folder, locks.MailboxKey(s.userInfo.Username, back))
+			hear(folder, keys.folder(back))
 		}
 	}
 
@@ -536,7 +536,7 @@ func (s *session) notifyKeys() notifyKeySet {
 		if h == nil || h.mbox == nil || prefix == "" {
 			continue
 		}
-		if name := mailbox.LockUserOf(h.mbox, ks.user); name != ks.user {
+		if name := mailbox.LockUserOf(h.mbox, ks.user); mailbox.IsSharedStoreName(name) {
 			ks.shared = append(ks.shared, sharedPrefix{prefix: prefix, store: name})
 		}
 	}

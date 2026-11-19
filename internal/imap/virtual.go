@@ -396,8 +396,10 @@ func (s *session) subscribeSelected(ctx context.Context) (<-chan locks.Event, er
 	keys := []string{locks.MailboxKey(mailbox.LockUserOf(s.folderMailbox(), user), s.folder.Name)}
 	if s.isVirtualSelected() {
 		if folders, err := s.backingFolders(); err == nil {
+			// A backing folder in a shared store is heard on the store's key.
+			ks := s.notifyKeys()
 			for _, b := range folders {
-				keys = append(keys, locks.MailboxKey(user, b.name))
+				keys = append(keys, ks.folder(b.name))
 			}
 		}
 	}
