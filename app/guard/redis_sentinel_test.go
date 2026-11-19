@@ -2,7 +2,6 @@ package guard_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +15,7 @@ import (
 // ${…} from a Secret, and every container holding the Redis password also
 // holds the Sentinel's; without it nothing about Sentinel is rendered (#2505).
 func TestRedisSentinelReachesEveryRedisClient(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	out, err := helmOutput(t, "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
@@ -69,7 +68,7 @@ func TestRedisSentinelReachesEveryRedisClient(t *testing.T) {
 		}
 	}
 
-	plain, err := exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm").Output()
+	plain, err := helmOutput(t, "template", "yarilo", "../../helm")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

@@ -3,7 +3,6 @@ package guard_test
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,7 +18,7 @@ func renderWith(t *testing.T, extra string) ([]byte, error) {
 	if err := os.WriteFile(f, []byte(extra), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "--set", "internalTLS.enabled=false", "-f", f).CombinedOutput()
+	return helmCombined(t, "template", "yarilo", "../../helm", "--set", "internalTLS.enabled=false", "-f", f)
 }
 
 // loadRendered loads the rendered ConfigMap the way a pod does.
@@ -39,6 +38,7 @@ func loadRendered(t *testing.T, out []byte) *config.Config {
 // An explicit 0, false or "" reaches the config instead of the chart's default,
 // and a namespace without list, or with an unquoted yes, still loads (#2162, #2164).
 func TestZeroFalseAndUnsetReachTheConfig(t *testing.T) {
+	t.Parallel()
 	out, err := renderWith(t, `
 acl:
   enabled: true
@@ -97,6 +97,7 @@ namespaces:
 // The vacation keys reach the config as written: an explicit false or 0 is
 // not replaced by the chart (#2277).
 func TestVacationKeysReachTheConfig(t *testing.T) {
+	t.Parallel()
 	out, err := renderWith(t, `
 sieve:
   sieve_vacation_enabled: false
@@ -138,6 +139,7 @@ sieve:
 
 // sieve_global reaches the config as written, and its default is none (#2283).
 func TestSieveGlobalReachesTheConfig(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ extra, want string }{
 		{"", ""},
 		{"sieve:\n  sieve_global: \"/etc/yarilo/sieve-global\"\n", "/etc/yarilo/sieve-global"},
@@ -155,6 +157,7 @@ func TestSieveGlobalReachesTheConfig(t *testing.T) {
 // sieve_global_before and sieve_global_after reach the config as written, in
 // order, and their defaults are none: the chart once dropped both.
 func TestSieveGlobalBeforeAfterReachTheConfig(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ extra, before, after string }{
 		{"", "[]", "[]"},
 		{"sieve:\n  sieve_global_before: [/g/a.sieve, /g/b.sieve]\n  sieve_global_after: [/g/z.sieve]\n",
@@ -177,6 +180,7 @@ func TestSieveGlobalBeforeAfterReachTheConfig(t *testing.T) {
 // sieve_global_extensions reaches the config as written, and its default is
 // none (#2290).
 func TestSieveGlobalExtensionsReachTheConfig(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ extra, want string }{
 		{"", "[]"},
 		{"sieve:\n  sieve_global_extensions: [vnd.yarilo.pipe, vnd.yarilo.execute]\n", "[vnd.yarilo.pipe vnd.yarilo.execute]"},
@@ -193,6 +197,7 @@ func TestSieveGlobalExtensionsReachTheConfig(t *testing.T) {
 
 // The SQL pool settings of a passdb entry reach the config.
 func TestPassdbPoolSettingsReachTheConfig(t *testing.T) {
+	t.Parallel()
 	out, err := renderWith(t, `
 components:
   auth:
@@ -219,6 +224,7 @@ components:
 // With quota-status on and no address of its own, it looks recipients up on the
 // release's auth service rather than accepting every one (#2160).
 func TestQuotaStatusLooksUpOnTheReleaseAuth(t *testing.T) {
+	t.Parallel()
 	out, err := renderWith(t, "components:\n  quotaStatus:\n    enabled: true\n    auth_master_addr: \"\"\n")
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
@@ -292,6 +298,7 @@ func valuesAt(at, key, value string) string {
 // Each yarilo name the chart would drop fails the render, naming both spellings
 // and where it sits; the chart's name carries the value instead (#2161, #2162).
 func TestCanonicalNamesAreRefused(t *testing.T) {
+	t.Parallel()
 	if len(canonicalNames) < 40 {
 		t.Fatalf("only %d names: the table lost its oauth2 rows", len(canonicalNames))
 	}
@@ -338,6 +345,7 @@ func TestCanonicalNamesAreRefused(t *testing.T) {
 // The chart renders each zero-is-off key with its real default, so a release
 // that sets nothing keeps the defaults, and a 0 in the values turns it off.
 func TestChartZeroIsOff(t *testing.T) {
+	t.Parallel()
 	out, err := renderWith(t, "")
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
@@ -394,6 +402,7 @@ protocol: {jmap: {jmap_websocket_timeout: 0}}
 // A protocol's own connection limit reaches the config when set, 0 included,
 // and is absent when not, so the protocol takes general.limits (#2457).
 func TestProtocolUserIPLimitsReachTheConfig(t *testing.T) {
+	t.Parallel()
 	out, err := renderWith(t, `
 protocol:
   imap:

@@ -2,7 +2,6 @@ package guard_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -10,11 +9,12 @@ import (
 )
 
 func TestTheChartRendersTheLMTPProxyTimeout(t *testing.T) {
+	t.Parallel()
 	vf := filepath.Join(t.TempDir(), "values.yaml")
 	if err := os.WriteFile(vf, []byte("protocol:\n  lmtp:\n    proxy:\n      lmtp_proxy_timeout: 7\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", vf).Output()
+	out, err := helmOutput(t, "template", "../../helm", "-f", vf)
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

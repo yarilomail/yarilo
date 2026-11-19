@@ -2,7 +2,6 @@ package guard_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,7 +40,7 @@ func renderAuth(t *testing.T, lit, ref map[string]bool) ([]byte, error) {
 	if err := os.WriteFile(f, []byte(v), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml", "-f", f).CombinedOutput()
+	return helmCombined(t, "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml", "-f", f)
 }
 
 // authEnv returns, per component, the env names that come from a Secret.
@@ -89,6 +88,7 @@ func authEnv(t *testing.T, out []byte) map[string][]string {
 // With a *_secret_ref the config names ${YARILO_…} and only yarilo-auth gets the
 // variable; a literal renders as before; both fail the render (#2163).
 func TestAuthCredentialsComeFromTheSecret(t *testing.T) {
+	t.Parallel()
 	all := map[string]bool{"client_secret": true, "api_header": true, "hash_nonce": true}
 	cases := []struct {
 		name            string

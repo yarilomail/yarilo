@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"slices"
 	"sort"
 	"strings"
@@ -96,6 +95,7 @@ func listenerPod(l mtls.Listener, coLocated bool) string {
 // Policies say what pkg/mtls says, both ways: each admits exactly its roles' pods,
 // and each rendered server has its policy on ports it opens (#2138).
 func TestNetworkPoliciesAreTheRoleMatrix(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		coLocated bool
@@ -108,7 +108,7 @@ func TestNetworkPoliciesAreTheRoleMatrix(t *testing.T) {
 			"--set", "components.backendAPI.enabled=true", "--set", "components.fts.enabled=true"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := exec.CommandContext(t.Context(), "helm", append([]string{"template", "yarilo", "../../helm"}, tc.args...)...).Output()
+			out, err := helmOutput(t, append([]string{"template", "yarilo", "../../helm"}, tc.args...)...)
 			if err != nil {
 				t.Fatalf("helm template: %v", err)
 			}

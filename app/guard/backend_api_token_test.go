@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -9,12 +8,13 @@ import (
 // Every backend-api container the chart renders gets its token: one without it
 // would refuse to start, and before that refusal it answered anyone.
 func TestEveryBackendAPIContainerGetsItsToken(t *testing.T) {
+	t.Parallel()
 	for _, values := range []string{"", "../../helm_values/values-sandbox.yaml"} {
 		args := []string{"template", "t", "../../helm"}
 		if values != "" {
 			args = append(args, "-f", values)
 		}
-		out, err := exec.CommandContext(t.Context(), "helm", args...).Output()
+		out, err := helmOutput(t, args...)
 		if err != nil {
 			t.Fatalf("helm template %v: %v", args, err)
 		}

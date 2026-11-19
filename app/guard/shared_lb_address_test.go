@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -29,6 +28,7 @@ type sharedLBService struct {
 // pending. A kept values file that shares an address against that rule takes
 // the stand's client ports down on the next deploy (acc1751).
 func TestSharedLoadBalancerAddressesCanBeShared(t *testing.T) {
+	t.Parallel()
 	const sandbox = "../../helm_values/values-sandbox.yaml"
 	sets := [][]string{{sandbox}}
 	overlays, err := filepath.Glob("../../helm_values/values-sandbox-*.yaml")
@@ -52,7 +52,7 @@ func TestSharedLoadBalancerAddressesCanBeShared(t *testing.T) {
 			for _, f := range set {
 				args = append(args, "-f", f)
 			}
-			out, err := exec.CommandContext(t.Context(), "helm", args...).Output()
+			out, err := helmOutput(t, args...)
 			if err != nil {
 				t.Fatalf("helm template: %v", err)
 			}
