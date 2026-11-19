@@ -31,35 +31,55 @@ type Deps struct {
 	Locker      locks.Locker
 }
 
-// virtualNamespace is a namespace a virtual mailbox may draw from besides the
-// personal one: a shared one, the only other type a session opens.
-func virtualNamespace(ns config.NamespaceConfig) bool {
-	return strings.EqualFold(strings.TrimSpace(ns.Type), "shared")
+// kindOf is how a session opens namespace i besides the primary personal
+// one: a second personal namespace with a store of its own, a shared one
+// (fixed or owner-templated), or an Other Users one with an owner template.
+// Anything else opens no store.
+func kindOf(namespaces []config.NamespaceConfig, i int) (personal, opens bool) {
+	ns := namespaces[i]
+	switch strings.ToLower(strings.TrimSpace(ns.Type)) {
+	case "personal":
+		return true, mailbox.OwnsStore(config.NamespaceShapes(namespaces), i)
+	case "shared":
+		return false, ns.Location != ""
+	case "other", "other_users":
+		return false, ns.Location != "" && mailbox.PrefixIsOwnerTemplated(ns.Prefix)
+	}
+	return false, false
 }
 
-// Declared is every namespace but the personal ones, prefixes in "/"
-// form, as a virtual pattern resolves to them (#2603).
+// declaredOf is namespace i's prefix in "/" form, as a pattern names it.
+func declaredOf(ns config.NamespaceConfig) string {
+	return virtual.SameSeparator(ns.Prefix, sepOf(ns))
+}
+
+// Declared is every namespace a pattern may name besides the primary personal
+// one, prefixes in "/" form (#2603).
 func Declared(namespaces []config.NamespaceConfig) []virtual.Declared {
 	var out []virtual.Declared
-	for _, ns := range namespaces {
-		if strings.EqualFold(strings.TrimSpace(ns.Type), "personal") || ns.Prefix == "" {
+	for i, ns := range namespaces {
+		if ns.Prefix == "" {
 			continue
+		}
+		personal, opens := kindOf(namespaces, i)
+		if personal && !opens {
+			continue // the primary store under another prefix: its patterns are personal
 		}
 		loc, ok, _ := mailbox.ParseLocation(ns.Location, nil)
 		out = append(out, virtual.Declared{
-			Prefix:         virtual.SameSeparator(ns.Prefix, sepOf(ns)),
+			Prefix:         declaredOf(ns),
 			OwnerTemplated: mailbox.PrefixIsOwnerTemplated(ns.Prefix),
-			HasStore:       virtualNamespace(ns) && ok && !strings.EqualFold(loc.Driver, "virtual"),
+			HasStore:       opens && ok && !strings.EqualFold(loc.Driver, "virtual"),
 		})
 	}
 	return out
 }
 
-// Sources opens, for one user, the stores of the shared and public
-// namespaces as a session opens them, read only: through nsopen, with the
-// session's ACL (#2603). An owner-templated namespace gives a store per owner
-// who granted the user something.
-func Sources(namespaces []config.NamespaceConfig, vd Deps) func(*mailbox.UserInfo) []virtual.Source {
+// Sources opens, for one user, the stores of the declared namespace named, as
+// a session opens them, read only: through nsopen, with the session's ACL. An
+// owner-templated namespace gives a store per owner who granted the user
+// something (#2603).
+func Sources(namespaces []config.NamespaceConfig, vd Deps) func(*mailbox.UserInfo, string) []virtual.Source {
 	if vd.Backends.Mailbox == nil || vd.Index == nil {
 		return nil
 	}
@@ -72,28 +92,28 @@ func Sources(namespaces []config.NamespaceConfig, vd Deps) func(*mailbox.UserInf
 		}
 		global = g
 	}
-	backends, locker := vd.Backends, vd.Locker
-	return func(personal *mailbox.UserInfo) []virtual.Source {
+	return func(personal *mailbox.UserInfo, namespace string) []virtual.Source {
 		var out []virtual.Source
-		for _, ns := range namespaces {
-			if !virtualNamespace(ns) || ns.Location == "" {
+		for i, ns := range namespaces {
+			own, opens := kindOf(namespaces, i)
+			if !opens || ns.Prefix == "" || declaredOf(ns) != namespace {
 				continue
 			}
-			nsd := nsopen.Namespace{Type: ns.Type, Prefix: ns.Prefix, Separator: ns.Separator, Location: ns.Location}
-			declared := virtual.SameSeparator(ns.Prefix, sepOf(ns))
-			for _, st := range storesOf(nsd, vd, personal) {
+			nsd := nsopen.Namespace{Type: ns.Type, Prefix: ns.Prefix, Separator: sepOf(ns), Location: ns.Location}
+			for _, st := range storesOf(nsd, own, vd, personal) {
 				if strings.EqualFold(st.ui.Driver, "virtual") {
 					continue
 				}
-				o, err := nsopen.Open(backends.For(ns.Prefix, st.ui), vd.Index, st.ui, nsopen.Deferred, false, mailboxbase.ReadOnly())
+				o, err := nsopen.Open(vd.Backends.For(ns.Prefix, st.ui), vd.Index, st.ui, nsopen.Deferred, false, mailboxbase.ReadOnly())
 				if err != nil {
 					slog.Warn("virtualsrc: a virtual mailbox skips a namespace", "ns", ns.Prefix, "err", err)
 					continue
 				}
-				out = append(out, virtual.Source{
-					Namespace: declared, Prefix: st.prefix, Sep: sepOf(ns), Box: o.Box,
-					Rights: rightsOn(vd.ACL, global, ns, st, personal, locker),
-				})
+				rights := rightsOn(vd.ACL, global, ns, st, personal, vd.Locker)
+				if own {
+					rights = func(string) (mailbox.Rights, error) { return mailbox.FullRights, nil }
+				}
+				out = append(out, virtual.Source{Namespace: namespace, Prefix: st.prefix, Sep: sepOf(ns), Box: o.Box, Rights: rights})
 			}
 		}
 		return out
@@ -108,9 +128,13 @@ type store struct {
 	owner  string
 }
 
-func storesOf(nsd nsopen.Namespace, vd Deps, personal *mailbox.UserInfo) []store {
+func storesOf(nsd nsopen.Namespace, own bool, vd Deps, personal *mailbox.UserInfo) []store {
 	if !mailbox.PrefixIsOwnerTemplated(nsd.Prefix) {
-		ui, ok, err := nsopen.Fixed(nsd, personal, personal, nsopen.Kind(nsd))
+		kind := nsopen.Kind(nsd)
+		if own {
+			kind = mailbox.UserStore
+		}
+		ui, ok, err := nsopen.Fixed(nsd, personal, personal, kind)
 		if err != nil || !ok {
 			if err != nil {
 				slog.Warn("virtualsrc: a virtual mailbox skips a namespace", "ns", nsd.Prefix, "err", err)

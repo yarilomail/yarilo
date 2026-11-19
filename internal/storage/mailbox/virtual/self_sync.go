@@ -22,9 +22,9 @@ type Options struct {
 	Search       search.Options
 	MetadataDict dict.Dict
 	Locker       locks.Locker
-	// Shared opens, for one user, the namespaces besides the personal one a
-	// pattern may reach, each as a session opens it (#2603).
-	Shared func(*mailbox.UserInfo) []Source
+	// Shared opens, for one user, the stores of one declared namespace a
+	// line binds to, as a session opens them (#2603).
+	Shared func(personal *mailbox.UserInfo, namespace string) []Source
 	// Declared is every namespace but the personal one, with a store or not.
 	Declared []Declared
 }
@@ -67,18 +67,44 @@ func (u *userMailbox) personal() (mailbox.Box, error) {
 	return u.personalBox, nil
 }
 
-// sources is the other namespaces this user's virtual mailboxes may draw from,
-// opened with the personal mail and closed with this handle.
-func (u *userMailbox) sources() []Source {
-	if u.opts.Shared == nil || u.info.Personal == nil {
+// sourcesOf is the stores of the namespaces given, each opened on the first
+// pass that binds a line to it and closed with this handle.
+func (u *userMailbox) sourcesOf(namespaces map[string]bool) []Source {
+	if u.opts.Shared == nil || u.info.Personal == nil || len(namespaces) == 0 {
 		return nil
 	}
 	u.personalMu.Lock()
 	defer u.personalMu.Unlock()
-	if !u.sharedOpen {
-		u.shared, u.sharedOpen = u.opts.Shared(u.info.Personal), true
+	if u.shared == nil {
+		u.shared = map[string][]Source{}
 	}
-	return u.shared
+	var out []Source
+	for ns := range namespaces {
+		srcs, ok := u.shared[ns]
+		if !ok {
+			srcs = u.opts.Shared(u.info.Personal, ns)
+			u.shared[ns] = srcs
+		}
+		out = append(out, srcs...)
+	}
+	return out
+}
+
+// namespacesOf is the declared namespaces the names fall under.
+func (u *userMailbox) namespacesOf(names []string) map[string]bool {
+	out := map[string]bool{}
+	for _, name := range names {
+		best := ""
+		for _, d := range u.opts.Declared {
+			if d.Prefix != "" && prefixMatches(d, name) && len(d.Prefix) > len(best) {
+				best = d.Prefix
+			}
+		}
+		if best != "" {
+			out[best] = true
+		}
+	}
+	return out
 }
 
 // SyncFolder brings one virtual mailbox up to date with the folders it draws
@@ -92,7 +118,7 @@ func (u *userMailbox) SyncFolder(idx mailbox.UserIndex, f *mailbox.Folder, open 
 	if err != nil {
 		return false, err
 	}
-	r := &resolver{u: u, box: box, shared: u.sources()}
+	r := &resolver{u: u, box: box}
 	was := headerOf(idx, f.ID)
 	if adopted, took := u.adoptNames(idx, f, cfg, was, r); took {
 		was = adopted
@@ -228,7 +254,11 @@ func (u *userMailbox) ResolveBacking(idx mailbox.UserIndex, folderID uint64) (ma
 			out[id] = mailbox.BackingRef{Name: e.Name, GUID: f.GUID, UIDValidity: f.UIDValidity}
 		}
 	}
-	for _, src := range u.sources() {
+	names := make([]string, 0, len(hdr.Backing))
+	for _, b := range hdr.Backing {
+		names = append(names, b.Name)
+	}
+	for _, src := range u.sourcesOf(u.namespacesOf(names)) {
 		entries, err := src.Box.Store().ListFolders()
 		if err != nil {
 			return nil, fmt.Errorf("virtual: list folders of %s: %w", src.Prefix, err)
@@ -252,10 +282,9 @@ func (u *userMailbox) ResolveBacking(idx mailbox.UserIndex, folderID uint64) (ma
 // resolver hands a pass the folders a configuration names, their messages,
 // and which of them a rule keeps.
 type resolver struct {
-	u      *userMailbox
-	box    mailbox.Box
-	shared []Source
-	ids    map[[16]byte]listed
+	u   *userMailbox
+	box mailbox.Box
+	ids map[[16]byte]listed
 }
 
 // listed is where a folder a pass selected is read from.
@@ -304,7 +333,13 @@ func (r *resolver) Folders(cfg *Config) ([]Backing, error) {
 		r.list(f, r.box, e.Name, false)
 		out = append(out, Backing{Name: name, GUID: f.GUID, UIDValidity: f.UIDValidity, NextUID: f.NextUID, HighestModSeq: f.HighestModSeq})
 	}
-	for _, src := range r.shared {
+	used := map[string]bool{}
+	for _, ns := range bound {
+		if ns != "" {
+			used[ns] = true
+		}
+	}
+	for _, src := range r.u.sourcesOf(used) {
 		got, err := r.sharedFolders(cfg, src, bound)
 		if err != nil {
 			return nil, err

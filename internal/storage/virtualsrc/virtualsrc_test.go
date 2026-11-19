@@ -20,6 +20,14 @@ import (
 // granted the user something, named by the owner's prefix, and none for an
 // owner who did not (#2603 rule 2).
 func TestAnOwnerTemplatedNamespaceGivesAStorePerGrantingOwner(t *testing.T) {
+	for _, typ := range []string{"shared", "other"} {
+		t.Run(typ, func(t *testing.T) { ownerTemplated(t, typ) })
+	}
+}
+
+// ownerTemplated is the row for one namespace type: the documented Other Users
+// form is type other with an owner template.
+func ownerTemplated(t *testing.T, typ string) {
 	root := t.TempDir()
 	d, err := dict.Open(dict.Config{Driver: "memory"})
 	if err != nil {
@@ -37,18 +45,20 @@ func TestAnOwnerTemplatedNamespaceGivesAStorePerGrantingOwner(t *testing.T) {
 	}
 	namespaces := []config.NamespaceConfig{
 		{Type: "personal", Prefix: "", Separator: "/"},
-		{Type: "shared", Prefix: "user/%u/", Separator: "/", Location: "maildir:%h/Maildir"},
+		{Type: typ, Prefix: "user/%u/", Separator: "/", Location: "maildir:%h/Maildir"},
+		{Type: "other", Prefix: "others/", Separator: "/", Location: "maildir:/srv/others"},
 	}
 	sources := virtualsrc.Sources(namespaces, virtualsrc.Deps{
 		Backends: nsopen.Backends{Mailbox: maildir.New()}, Index: fileindex.New(),
 		SharedDict: d, OwnerLookup: lookup,
 	})
 	bob := &mailbox.UserInfo{Username: "bob@x", Home: filepath.Join(root, "bob")}
-	got := sources(bob)
+	got := sources(bob, "user/%u/")
 	if len(got) != 1 || got[0].Prefix != "user/alice@x/" || got[0].Namespace != "user/%u/" {
 		t.Fatalf("sources = %+v, want one store for alice under user/alice@x/", got)
 	}
-	if decl := virtualsrc.Declared(namespaces); len(decl) != 1 || !decl[0].OwnerTemplated || !decl[0].HasStore {
-		t.Errorf("declared = %+v, want the owner template with a store", decl)
+	decl := virtualsrc.Declared(namespaces)
+	if len(decl) != 2 || !decl[0].OwnerTemplated || !decl[0].HasStore || decl[1].HasStore {
+		t.Errorf("declared = %+v, want the owner template with a store and others/ without, as a session opens none there", decl)
 	}
 }

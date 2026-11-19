@@ -51,6 +51,21 @@ func publicVirtualServer(t *testing.T, configs map[string]string, seed, seedPubl
 	ui.Close()  //nolint:errcheck
 	box.Close() //nolint:errcheck
 
+	archLoc := "maildir:" + filepath.Join(info.Home, "archive")
+	arch := nsopen.Namespace{Type: "personal", Prefix: "Archive/", Separator: "/", Location: archLoc}
+	archUI, _, err := nsopen.Fixed(arch, info, info, mailbox.UserStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abox := maildir.New().OpenUser(archUI)
+	if err := abox.Init(); err != nil {
+		t.Fatal(err)
+	}
+	aui := fileindex.New().OpenUser(archUI)
+	saveInto(t, abox, aui, "2025", 1, "archived", nil)
+	aui.Close()  //nolint:errcheck
+	abox.Close() //nolint:errcheck
+
 	pubLoc := "maildir:" + filepath.Join(root, "public")
 	pub := nsopen.Namespace{Type: "shared", Prefix: "Public/", Separator: "/", Location: pubLoc}
 	pubUI, _, err := nsopen.Fixed(pub, info, info, mailbox.SharedByAll)
@@ -83,6 +98,7 @@ func publicVirtualServer(t *testing.T, configs map[string]string, seed, seedPubl
 		{Type: "personal", Prefix: "", Separator: "/"},
 		{Type: "shared", Prefix: "Public/", Separator: "/", Location: pubLoc},
 		{Type: "shared", Prefix: "Other/", Separator: "/"},
+		{Type: "personal", Prefix: "Archive/", Separator: "/", Location: archLoc},
 		{Type: "personal", Prefix: "Virtual/", Separator: "/", Location: "virtual:%h/virtual"},
 	}
 	opts := imapserver.Options{
@@ -92,6 +108,7 @@ func publicVirtualServer(t *testing.T, configs map[string]string, seed, seedPubl
 			{Type: imapserver.NamespacePersonal, Prefix: "", Separator: '/', List: imapserver.ListYes},
 			{Type: imapserver.NamespaceShared, Prefix: "Public/", Separator: '/', List: imapserver.ListYes, Location: pubLoc},
 			{Type: imapserver.NamespaceShared, Prefix: "Other/", Separator: '/', List: imapserver.ListYes},
+			{Type: imapserver.NamespacePersonal, Prefix: "Archive/", Separator: '/', List: imapserver.ListYes, Location: archLoc},
 			{Type: imapserver.NamespacePersonal, Prefix: "Virtual/", Separator: '/', List: imapserver.ListYes, Location: "virtual:%h/virtual"},
 		},
 		AuthRelay: authtest.RelayTo(t, &enforcePassdb{users: map[string]string{"user@test.com": "testpass", "other@test.com": "testpass"}}),
@@ -110,10 +127,10 @@ func publicVirtualServer(t *testing.T, configs map[string]string, seed, seedPubl
 		Personal: func(ui *mailbox.UserInfo) mailbox.Box {
 			return mailboxbase.Open(mb.OpenUser(ui), idx.OpenUser(ui), mailboxbase.ReadOnly())
 		},
-		Shared: virtualsrc.Sources(cfgNS, virtualsrc.Deps{
+		Shared: countOpens(virtualsrc.Sources(cfgNS, virtualsrc.Deps{
 			Backends: nsopen.Backends{Mailbox: mb}, Index: idx,
 			ACL: config.ACLConfig{Enabled: true, Global: publicRights},
-		}),
+		})),
 		Declared:     virtualsrc.Declared(cfgNS),
 		MetadataDict: md,
 		Locker:       opts.Locker,
@@ -127,6 +144,18 @@ func publicVirtualServer(t *testing.T, configs map[string]string, seed, seedPubl
 	t.Cleanup(func() { ln.Close() })
 	lastPublicAddr = ln.Addr().String()
 	return loginTo(t, lastPublicAddr)
+}
+
+// namespaceOpens counts, per namespace, how often the virtual driver opened its
+// stores on the server publicVirtualServer started last.
+var namespaceOpens map[string]int
+
+func countOpens(open func(*mailbox.UserInfo, string) []virtual.Source) func(*mailbox.UserInfo, string) []virtual.Source {
+	namespaceOpens = map[string]int{}
+	return func(ui *mailbox.UserInfo, ns string) []virtual.Source {
+		namespaceOpens[ns]++
+		return open(ui, ns)
+	}
 }
 
 // lastPublicAddr is the server publicVirtualServer started last.
@@ -313,5 +342,41 @@ func TestAVirtualSaveIntoAPublicFolderNeedsTheInsertRight(t *testing.T) {
 	}
 	if got := existsCount(t, conn, rd, "a3", "Public/News"); got != 2 {
 		t.Errorf("Public/News EXISTS = %d, want nothing saved", got)
+	}
+}
+
+// A virtual mailbox opens only the namespaces its lines bind to, once for the
+// session: "*" never opens Public/, however often it is polled (#2609 review).
+func TestAVirtualMailboxOpensOnlyTheNamespacesItsLinesName(t *testing.T) {
+	conn, rd := publicVirtualServer(t, map[string]string{"Mine": "*\n", "Pub": "Public/*\n"}, personalInbox, publicFolders)
+	if got := existsCount(t, conn, rd, "a1", "Virtual/Mine"); got != 1 {
+		t.Fatalf("Virtual/Mine EXISTS = %d, want 1", got)
+	}
+	for i := 0; i < 3; i++ {
+		command(t, conn, rd, fmt.Sprintf("n%d", i), "NOOP")
+	}
+	if n := namespaceOpens["Public/"]; n != 0 {
+		t.Errorf("Public/ opened %d times for a mailbox no line binds to it, want 0", n)
+	}
+	if got := existsCount(t, conn, rd, "a2", "Virtual/Pub"); got != 4 {
+		t.Fatalf("Virtual/Pub EXISTS = %d, want 4", got)
+	}
+	for i := 0; i < 3; i++ {
+		command(t, conn, rd, fmt.Sprintf("p%d", i), "NOOP")
+	}
+	if n := namespaceOpens["Public/"]; n != 1 {
+		t.Errorf("Public/ opened %d times over a SELECT and three polls, want once", n)
+	}
+}
+
+// A second personal namespace with a store of its own is drawn from like any
+// other namespace (#2603 rule 1, #2609 review).
+func TestAVirtualMailboxDrawsFromASecondPersonalStore(t *testing.T) {
+	conn, rd := publicVirtualServer(t, map[string]string{"Old": "Archive/*\n"}, personalInbox, publicFolders)
+	if got := existsCount(t, conn, rd, "a1", "Virtual/Old"); got != 1 {
+		t.Fatalf("Virtual/Old EXISTS = %d, want the message in Archive/2025", got)
+	}
+	if s := subjectOf(t, command(t, conn, rd, "a2", "FETCH 1 (BODY.PEEK[HEADER.FIELDS (SUBJECT)])")); s != "archived" {
+		t.Errorf("Virtual/Old holds %q, want the archived message", s)
 	}
 }
