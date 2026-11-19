@@ -27,6 +27,7 @@ echo "kubectl $*" >> "` + calls + `"
 case "$*" in
   *"apply -f -"*) cat >> "` + calls + `" ;;
   *"spec.nodeName"*) echo node-1 ;;
+  *"component=backend -o json") echo '{"items":[{"metadata":{"name":"yarilo-backend-0","creationTimestamp":"2026-11-19T19:00:00Z"},"status":{"conditions":[{"type":"PodScheduled","lastTransitionTime":"2026-11-19T19:00:14Z"},{"type":"Ready","lastTransitionTime":"2026-11-19T19:00:25Z"}]}}]}' ;;
   *"status.phase"*) echo Succeeded ;;
   *"spec.replicas"*) echo 1 ;;
   *'type=="Ready"'*) echo True ;;
@@ -75,6 +76,10 @@ func TestTheRolloutStepUpgradesTheChartItIsHanded(t *testing.T) {
 	if strings.Index(string(raw), "apply -f -") > strings.Index(string(raw), " upgrade ") {
 		t.Error("the upgrade ran before the image was pulled")
 	}
+	if !strings.Contains(string(raw), "-l app.kubernetes.io/component=backend -o json") {
+		t.Error("the backend pods' pending and ready times were not read after the rollout")
+	}
+
 }
 
 // A release a cut-off helm left pending stops the step before anything runs.

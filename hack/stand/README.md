@@ -23,7 +23,10 @@ scenarios.
   once; a pull the new pods waited on held `yarilo-backend-1` down for 3.5
   minutes (2026-11-19).
 - `backend-downtime.txt` holds the seconds each backend pod was not Ready
-  during the upgrade; the number goes into the run's row.
+  during the upgrade, and `backend-pending.txt` how long each new pod waited
+  to be scheduled and to be Ready; both go into the run's row. A StatefulSet
+  stops a pod before it starts its successor, so a few seconds a pod are the
+  design; time pending is a wait for CPU.
 
 ## The arm
 
@@ -141,6 +144,10 @@ no encrypted message; otherwise the stand stays on its keys with write off
 (`values-sandbox-mailcrypt-keys.yaml`), the Secret is kept and a `cleanup` FAIL
 names the users holding encrypted mail. The run's own rows go to docs-internal
 `stand-runs.md` with the downtime of each deploy.
+
+Each run adds `CRYPT_LOAD_N` (1000) messages to the first user of every
+imaptest range and fills its own users: imaptest figures after it are not
+comparable with rows before it.
 
 ## The acceptance run
 

@@ -67,3 +67,31 @@ func TestTheKeysGoOnlyWhenNoMailIsEncrypted(t *testing.T) {
 		t.Error("the cleanup is not on EXIT: a failed scenario would leave the keys and the write mode")
 	}
 }
+
+// The old key is dropped only after the run that needs it finished: a drop
+// after a failed --all left thousands of messages no key opened (2026-11-19).
+func TestTheOldKeyGoesOnlyAfterAFinishedRun(t *testing.T) {
+	src := scenarioSource(t)
+	gate := strings.Index(src, `if [ "$code" != 0 ] || [ "$(field "$mid" other_key)" != 0 ] || [ "$(field "$mid" reference)" != 0 ]; then`)
+	drop := strings.Index(src, `mailcrypt-keys.sh" rotate-drop`)
+	if gate < 0 || drop < 0 || gate > drop {
+		t.Fatalf("rotate-drop at %d, its gate at %d: the drop must follow the check", drop, gate)
+	}
+	if !strings.Contains(src[gate:drop], "exit 1") {
+		t.Error("a failed check does not stop the run before the drop")
+	}
+}
+
+// A fill delivers in batches, a connection each: one connection stopped taking
+// mail after about a thousand.
+func TestAFillDeliversInBatches(t *testing.T) {
+	raw, err := os.ReadFile("fill-mailboxes.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`FILL_BATCH="${YARILO_FILL_BATCH:-500}"`, `deliver_batch "$user" "$from" "$to"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("fill-mailboxes.sh lacks %s", want)
+		}
+	}
+}

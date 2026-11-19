@@ -202,7 +202,10 @@ for t in $TYPES; do
   # The overlap is the row: imaptest running when the job starts and still
   # running when it ends.
   load_running && started_under=1 || started_under=0
-  crypt reencrypt "$lu" --rate 30 >> "$OUT/load.log" 2>&1
+  # About 40 s of work, inside imaptest's 90: a fixed rate overran it on a
+  # mailbox earlier runs had grown.
+  rate=$(( $(field "$before" plain) / 40 + 1 ))
+  crypt reencrypt "$lu" --rate "$rate" >> "$OUT/load.log" 2>&1
   during=$?
   job_done && ended_under=0 || ended_under=1
   kube wait --for=condition=complete --timeout=300s job/imaptest > /dev/null 2>&1
@@ -264,6 +267,12 @@ done
 crypt reencrypt --all --jobs 2 --rate 0 >> "$OUT/rotate.log" 2>&1
 code=$?
 mid=$(status_of --all)
+# The old key goes only once nothing needs it: dropped after a run that did
+# not finish, it takes with it every message still sealed to it.
+if [ "$code" != 0 ] || [ "$(field "$mid" other_key)" != 0 ] || [ "$(field "$mid" reference)" != 0 ]; then
+  row FAIL rotate "reencrypt exit $code; before[$before] after-reencrypt[$mid]; both keys kept"
+  exit 1
+fi
 bash "$HERE/mailcrypt-keys.sh" rotate-drop && restart_backend rotate-drop || { row FAIL rotate "the old key was not removed from the pods"; exit 1; }
 after=$(status_of --all)
 if [ "$code" = 0 ] && [ "$(field "$before" other_key)" -gt 0 ] && [ "$(field "$mid" other_key)" = 0 ] &&
