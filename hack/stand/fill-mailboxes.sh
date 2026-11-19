@@ -54,7 +54,8 @@ messages_in() {
 # One connection per user. The messages go out pipelined, and every reply is
 # read in order: the fill ends when each message is acknowledged, or at the
 # first refusal. No timer cuts the reading short (2026-11-19: a fill under
-# nc -w 60 counted the mailbox while the server was still delivering).
+# a 60 s final-read timer counted the mailbox while the server was still
+# delivering).
 deliver_user() {
   local user="$1" want="${2:-$COUNT}" dir i
   dir=$(mktemp -d)
