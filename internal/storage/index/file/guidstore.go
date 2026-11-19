@@ -212,8 +212,12 @@ func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {
 	var out []mailbox.GUIDRecord
 	err = u.withFolderROUnlocked(id, func(fs *folderState) error {
 		out = out[:0]
-		for i := range fs.file.Records {
-			r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+		if err := fs.loadRecords(); err != nil {
+			return err
+		}
+		for i := range fs.recordCount() {
+			v, _ := fs.recExt(i, extNameGUIDMap)
+			r, ok := decodeGUIDMapRec(v)
 			if !ok {
 				continue
 			}
@@ -595,7 +599,7 @@ func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 		version = guidImageVersion{
 			indexID: fs.file.Header.IndexID,
 			nextUID: fs.file.Header.NextUID,
-			records: len(fs.file.Records),
+			records: fs.recordCount(),
 		}
 		return nil
 	}); err != nil {

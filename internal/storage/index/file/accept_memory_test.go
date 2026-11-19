@@ -3,6 +3,7 @@ package file
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 
 // INDEX-MEMORY.md §7, as the slope between two folders. A marked row that
 // starts passing fails, so the step that fixes it drops its mark.
-var acceptExpectedFail = map[int]bool{1: true, 2: true, 3: true}
+var acceptExpectedFail = map[int]bool{2: true, 3: true}
 
 const (
 	acceptSmall = 2000
@@ -92,6 +93,10 @@ func acceptFolder(t *testing.T, n int) string {
 	hdr.MessagesCount = uint32(n)
 	hdr.SeenMessagesCount = uint32(n)
 	if _, err := mailindex.Recreate(mailindex.RecreateInput{Path: path, Header: hdr, Extensions: base.Extensions, Records: recs}); err != nil {
+		t.Fatal(err)
+	}
+	// The log describes the one-message base; this one is the whole folder.
+	if err := os.Remove(path + ".log"); err != nil {
 		t.Fatal(err)
 	}
 	return home

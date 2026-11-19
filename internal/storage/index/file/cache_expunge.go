@@ -117,7 +117,7 @@ func (u *userIndex) purgeCacheIfDue(fs *folderState, folderID uint64, path strin
 	}
 	var msgs uint32
 	if err := u.withFolderROUnlocked(folderID, func(v *folderState) error {
-		msgs = uint32(len(v.file.Records))
+		msgs = uint32(v.recordCount())
 		return nil
 	}); err != nil {
 		return err

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sort"
+	"sync/atomic"
 )
 
 // ChunkRecords is how many records one chunk holds: the unit a change copies
@@ -41,11 +42,13 @@ func (c *Chunk) at(i int) []byte {
 	return c.raw[off : off+c.size]
 }
 
-// Records is a folder's records in chunks, with their layout.
+// Records is a folder's records in chunks, with their layout. A lazy one
+// (OpenLazy) loads its chunks from the base on Load.
 type Records struct {
 	layout RecordLayout
-	chunks []*Chunk
+	chunks []atomicChunk
 	n      int
+	src    *lazySource
 }
 
 // Layout is the records' layout.
@@ -57,8 +60,15 @@ func (r *Records) Len() int { return r.n }
 // Chunks is the number of chunks.
 func (r *Records) Chunks() int { return len(r.chunks) }
 
+// Loaded reports whether chunk ci is in memory.
+func (r *Records) Loaded(ci int) bool { return r.chunks[ci].Load() != nil }
+
 func (r *Records) rec(seq int) []byte {
-	return r.chunks[seq/ChunkRecords].at(seq % ChunkRecords)
+	c := r.chunks[seq/ChunkRecords].Load()
+	if c == nil {
+		panic(fmt.Sprintf("mailindex: record %d read before its chunk was loaded", seq))
+	}
+	return c.at(seq % ChunkRecords)
 }
 
 // UID is the uid of the record at seq, from 0.
@@ -98,12 +108,12 @@ func ChunksFromBytes(raw []byte, layout RecordLayout) (*Records, error) {
 		return nil, fmt.Errorf("mailindex/chunks: %d bytes is not a whole number of %d-byte records: %w", len(raw), size, ErrShortRead)
 	}
 	n := len(raw) / int(size)
-	out := &Records{layout: layout, n: n, chunks: make([]*Chunk, 0, (n+ChunkRecords-1)/ChunkRecords)}
-	for start := 0; start < n; start += ChunkRecords {
-		end := min(start+ChunkRecords, n)
+	out := &Records{layout: layout, n: n, chunks: make([]atomicChunk, chunkCount(n))}
+	for ci := range out.chunks {
+		start, end := ci*ChunkRecords, min((ci+1)*ChunkRecords, n)
 		b := make([]byte, (end-start)*int(size))
 		copy(b, raw[start*int(size):end*int(size)])
-		out.chunks = append(out.chunks, &Chunk{raw: b, size: size, n: end - start})
+		out.chunks[ci].Store(&Chunk{raw: b, size: size, n: end - start})
 	}
 	return out, nil
 }
@@ -120,11 +130,16 @@ func ChunksFromRecords(recs []*Record, layout RecordLayout) (*Records, error) {
 	return ChunksFromBytes(raw, layout)
 }
 
-// Bytes is the records section as it lies on disk.
+// Bytes is the records section as it lies on disk; every chunk is loaded.
 func (r *Records) Bytes() []byte {
 	out := make([]byte, 0, r.n*int(r.layout.RecordSize))
-	for _, c := range r.chunks {
+	for ci := range r.chunks {
+		c := r.chunks[ci].Load()
 		out = append(out, c.raw[:c.n*int(c.size)]...)
 	}
 	return out
 }
+
+func chunkCount(n int) int { return (n + ChunkRecords - 1) / ChunkRecords }
+
+type atomicChunk = atomic.Pointer[Chunk]

@@ -127,6 +127,10 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 	if err := u.stampLineage(fs); err != nil {
 		return nil, err
 	}
+	snap, err := fs.snapshot(id)
+	if err != nil {
+		return nil, err
+	}
 	u.mu.Lock()
 	u.open[id] = fs
 	if u.byDir == nil {
@@ -134,7 +138,21 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 	}
 	u.byDir[indexDir] = id
 	u.mu.Unlock()
-	return fs.snapshot(id)
+	return snap, nil
+}
+
+// leaveRecordsOnDisk drops the handle's records once a lazy view serves its
+// reads; the next locked use reads the base in full (INDEX-MEMORY.md §3).
+func (fs *folderState) leaveRecordsOnDisk() {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.file == nil || fs.recordsLeft || fs.headerFixed {
+		return
+	}
+	header := *fs.file
+	header.Records = nil
+	fs.file = &header
+	fs.recordsLeft = true
 }
 
 // stampLineage gives a folder written before the lineage extension one, on the
@@ -470,24 +488,40 @@ func (fs *folderState) recalcVsizeLocked() {
 		total  uint64
 		maxUID uint32
 	)
-	for _, rec := range fs.file.Records {
-		total += uint64(decodeVsizeRec(rec.Ext[extNameVsize]))
-		if rec.UID > maxUID {
-			maxUID = rec.UID
-		}
+	for i := range fs.recordCount() {
+		v, _ := fs.recExt(i, extNameVsize)
+		total += uint64(decodeVsizeRec(v))
+		maxUID = max(maxUID, fs.recUID(i))
 	}
 	fs.vsize = hdrVsize{
 		Vsize:        total,
 		HighestUID:   maxUID,
-		MessageCount: uint32(len(fs.file.Records)),
+		MessageCount: uint32(fs.recordCount()),
 	}
+}
+
+// ensureVsizeView is ensureVsizeLocked for a view, whose recount may have to
+// load its records first.
+func (fs *folderState) ensureVsizeView() error {
+	if fs.vsizeCurrent() {
+		return nil
+	}
+	if err := fs.loadRecords(); err != nil {
+		return err
+	}
+	fs.recalcVsizeLocked()
+	return nil
+}
+
+func (fs *folderState) vsizeCurrent() bool {
+	return fs.vsize.MessageCount == fs.file.Header.MessagesCount &&
+		fs.vsize.HighestUID+1 == fs.file.Header.NextUID
 }
 
 // ensureVsizeLocked recomputes the aggregate only when the O(1) validity check
 // says it is stale, so a quota read does not rescan every message. Holds fs.mu.
 func (fs *folderState) ensureVsizeLocked() {
-	if fs.vsize.MessageCount == fs.file.Header.MessagesCount &&
-		fs.vsize.HighestUID+1 == fs.file.Header.NextUID {
+	if fs.vsizeCurrent() {
 		return
 	}
 	fs.recalcVsizeLocked()
@@ -533,6 +567,10 @@ func (fs *folderState) snapshot(id uint64) (*mailbox.Folder, error) {
 		unseen = fs.file.Header.MessagesCount - fs.file.Header.SeenMessagesCount
 	}
 	first := fs.firstRecentUID()
+	recent, err := fs.countFrom(first)
+	if err != nil {
+		return nil, err
+	}
 	return &mailbox.Folder{
 		ID:             id,
 		Name:           fs.folder,
@@ -542,7 +580,7 @@ func (fs *folderState) snapshot(id uint64) (*mailbox.Folder, error) {
 		Unseen:         unseen,
 		HighestModSeq:  highest,
 		FirstRecentUID: first,
-		Recent:         fs.countFrom(first),
+		Recent:         recent,
 		GUID:           fs.hdr.MailboxGUID,
 		Fsckd:          fs.file.Header.Flags&mailindex.HdrFlagFsckd != 0,
 	}, nil
@@ -557,11 +595,18 @@ func (fs *folderState) firstRecentUID() uint32 {
 	return fs.file.Header.FirstRecentUID
 }
 
-// countFrom counts the records at or above uid; records are in UID order.
-func (fs *folderState) countFrom(uid uint32) uint32 {
-	recs := fs.file.Records
-	i := sort.Search(len(recs), func(i int) bool { return recs[i].UID >= uid })
-	return uint32(len(recs) - i)
+// countFrom counts the records at or above uid; records are in UID order. At
+// NextUID there are none, and no record is read.
+func (fs *folderState) countFrom(uid uint32) (uint32, error) {
+	if uid >= fs.file.Header.NextUID {
+		return 0, nil
+	}
+	if err := fs.loadRecords(); err != nil {
+		return 0, err
+	}
+	n := fs.recordCount()
+	i := sort.Search(n, func(i int) bool { return fs.recUID(i) >= uid })
+	return uint32(n - i), nil
 }
 
 // ClaimRecent moves the \Recent mark to the next UID under the folder hold, so
@@ -802,7 +847,7 @@ func (u *userIndex) markGoneLocked(folderID uint64, fs *folderState) {
 //  2. Base unchanged, log grew: apply only the new log entries.
 //  3. Base changed: full re-read of base + remaining log.
 func (fs *folderState) reload() error {
-	if freezeReload {
+	if freezeReload && !fs.recordsLeft {
 		// Test seam: the snapshot a process keeps when a reload decides nothing
 		// changed. An explicit refresh sees through it, as it must.
 		return nil
@@ -871,7 +916,7 @@ func (fs *folderState) reloadLocked() error {
 
 	// Fast path, never taken when the log was replaced: a concurrent compaction
 	// rewrote the base too, and its new mtime may coincide with the cached one.
-	if !logReplaced && !baseReplaced && newBaseMod == fs.baseMod && newLogSize == fs.logSize {
+	if !logReplaced && !baseReplaced && !fs.recordsLeft && newBaseMod == fs.baseMod && newLogSize == fs.logSize {
 		slog.Debug("fileindex: reload fast-path",
 			"trace_id", fs.traceID, "folder", fs.folder,
 			"log_size", fs.logSize,
@@ -894,14 +939,14 @@ func (fs *folderState) reloadLocked() error {
 		"dur_ms", time.Since(t0).Milliseconds())
 
 	// Base file changed (or first open, or the log was replaced): full reload.
-	if newBaseMod != fs.baseMod || baseReplaced || fs.file == nil || logReplaced {
+	if newBaseMod != fs.baseMod || baseReplaced || fs.file == nil || logReplaced || fs.recordsLeft {
 		if baseErr != nil {
 			return fmt.Errorf("fileindex/reload: %w", baseErr)
 		}
 		// A rewritten base often holds exactly what this handle holds -- a
 		// compaction folding in the applied log. The digest proves it: several
 		// paths fold the same log, so offsets agreeing is not enough (#1228).
-		if fs.file != nil && !logReplaced {
+		if fs.file != nil && !logReplaced && !fs.recordsLeft {
 			if h, perr := peekLineage(fs.indexPath); perr == nil && h.Lineage != lineageUnknown &&
 				h.FoldedLineage == fs.lineage.Lineage && uint64(fs.logSize) >= h.FoldedOffset &&
 				h.RecordsDigest == digestRecords(fs.file) {
@@ -928,6 +973,7 @@ func (fs *folderState) reloadLocked() error {
 			return fmt.Errorf("fileindex/reload: %w", err)
 		}
 		fs.file = mf
+		fs.recordsLeft = false
 		if err := fs.refreshExtState(); err != nil {
 			return err
 		}
@@ -1616,38 +1662,44 @@ func (u *userIndex) GetMessagesUnlocked(folderID uint64, uids mailbox.SeqSet) ([
 func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
 	var out []*mailbox.MessageMeta
 	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
-		for _, rec := range fs.file.Records {
-			if !seqSetContains(uids, rec.UID) {
+		out = out[:0] // a read the base moved under runs again
+		if err := fs.loadRecords(); err != nil {
+			return err
+		}
+		for i := range fs.recordCount() {
+			uid, flags := fs.recUID(i), fs.recFlags(i)
+			if !seqSetContains(uids, uid) {
 				continue
 			}
-			backing, realUID := decodeVirtualRec(rec.Ext[extNameVirtual])
-			mapUID, saveDate := decodeMdboxRec(rec.Ext[extNameMdbox])
+			ext := func(name string) []byte { v, _ := fs.recExt(i, name); return v }
+			backing, realUID := decodeVirtualRec(ext(extNameVirtual))
+			mapUID, saveDate := decodeMdboxRec(ext(extNameMdbox))
 			meta := &mailbox.MessageMeta{
-				UID:            rec.UID,
+				UID:            uid,
 				MapUID:         mapUID,
 				SaveDate:       saveDate,
 				VirtualBacking: backing,
 				VirtualRealUID: realUID,
-				Flags:          indexFlagsToIMAP(uint8(rec.Flags)),
-				FlagsDirty:     rec.Flags&mailindex.FlagDirty != 0,
-				Size:           decodeVsizeRec(rec.Ext[extNameVsize]),
-				VSize:          decodeVsizeRec(rec.Ext[extNameVsize]),
-				AltTier:        rec.Flags&mailindex.FlagBackend != 0,
+				Flags:          indexFlagsToIMAP(uint8(flags)),
+				FlagsDirty:     flags&mailindex.FlagDirty != 0,
+				Size:           decodeVsizeRec(ext(extNameVsize)),
+				VSize:          decodeVsizeRec(ext(extNameVsize)),
+				AltTier:        flags&mailindex.FlagBackend != 0,
 			}
-			if data, ok := rec.Ext[extNameModSeq]; ok {
+			if data, ok := fs.recExt(i, extNameModSeq); ok {
 				meta.ModSeq = decodeModseqRec(data)
 			}
-			if data, ok := rec.Ext[extNameKeywords]; ok {
+			if data, ok := fs.recExt(i, extNameKeywords); ok {
 				meta.Keywords = keywordsFromBitmask(fs.keywords, decodeKeywordsRec(data))
 			}
-			if data, ok := rec.Ext[extNameCache]; ok {
+			if data, ok := fs.recExt(i, extNameCache); ok {
 				meta.CacheOffset = decodeCacheRec(data)
-				meta.CacheCRC = decodeCacheRec(rec.Ext[extNameCacheCRC])
+				meta.CacheCRC = decodeCacheRec(ext(extNameCacheCRC))
 			}
-			if data, ok := rec.Ext[extNameInternalDate]; ok {
+			if data, ok := fs.recExt(i, extNameInternalDate); ok {
 				meta.InternalDate = decodeIdateRec(data)
 			}
-			if data, ok := rec.Ext[extNameGUID]; ok {
+			if data, ok := fs.recExt(i, extNameGUID); ok {
 				meta.GUID = decodeGUIDRec(data)
 			}
 			out = append(out, meta)

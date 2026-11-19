@@ -43,6 +43,7 @@ func (fs *folderState) reconcileHeaderLocked() {
 }
 
 func (fs *folderState) headerCorrected(field string, was, now uint32) {
+	fs.headerFixed = true
 	metricHeaderCorrected.WithLabelValues(field).Inc()
 	slog.Warn("fileindex: header corrected from its records",
 		"trace_id", fs.traceID, "folder", fs.folder, "field", field, "was", was, "now", now)

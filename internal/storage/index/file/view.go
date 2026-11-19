@@ -13,7 +13,8 @@ import (
 // baseImage is one version of a base file, parsed once and never written to
 // again: compaction makes a new image, old readers keep the old one (#1809).
 type baseImage struct {
-	file     *mailindex.File
+	file     *mailindex.File // no Records: they are recs, loaded by chunk
+	recs     *mailindex.Records
 	keywords keywordsHdr
 	lineage  lineageHdr
 	ident    os.FileInfo
@@ -54,7 +55,7 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	var img *baseImage
 	for attempt := 0; ; attempt++ {
 		pre := st
-		parsed, perr := mailindex.Open(fs.indexPath)
+		parsed, recs, perr := mailindex.OpenLazy(fs.indexPath)
 		if perr != nil {
 			return nil, asCorrupt(fs.folder, perr)
 		}
@@ -66,14 +67,14 @@ func imageFor(fs *folderState) (*baseImage, error) {
 			return nil, serr
 		}
 		if os.SameFile(pre, after) && pre.Size() == after.Size() && pre.ModTime().Equal(after.ModTime()) {
-			img = &baseImage{file: parsed, ident: pre, size: pre.Size(), mod: pre.ModTime()}
+			img = &baseImage{file: parsed, recs: recs, ident: pre, size: pre.Size(), mod: pre.ModTime()}
 			break
 		}
 		st = after
 		if attempt >= baseReadAttempts {
 			// Labelled with the file it came from: older, never wrong, and the
 			// next read sees the file has moved.
-			img = &baseImage{file: parsed, ident: pre, size: pre.Size(), mod: pre.ModTime()}
+			img = &baseImage{file: parsed, recs: recs, ident: pre, size: pre.Size(), mod: pre.ModTime()}
 			metricBaseReadGaveUp.Inc()
 			break
 		}
@@ -114,6 +115,7 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		indexPath: fs.indexPath,
 		traceID:   traceID,
 		file:      img.file,
+		recs:      img.recs,
 		keywords:  img.keywords,
 		lineage:   img.lineage,
 	}
@@ -122,7 +124,9 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		if rerr := view.refreshExtState(); rerr != nil {
 			return nil, 0, nil, rerr
 		}
-		view.ensureVsizeLocked()
+		if verr := view.ensureVsizeView(); verr != nil {
+			return nil, 0, nil, verr
+		}
 		return view, 0, img, nil
 	}
 	// Where this log meets this base, by the lineage table: an unpaired one
@@ -135,13 +139,19 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		if rerr := view.refreshExtState(); rerr != nil {
 			return nil, 0, nil, rerr
 		}
-		view.ensureVsizeLocked()
+		if verr := view.ensureVsizeView(); verr != nil {
+			return nil, 0, nil, verr
+		}
 		return view, lg.size, img, nil // the base already holds everything
 	}
 
 	// Only now is a copy paid for: the tail has something to apply, and the
 	// shared image must not carry it.
-	view.file = cloneIndexFile(img.file)
+	file, merr := view.materialized()
+	if merr != nil {
+		return nil, 0, nil, merr
+	}
+	view.file, view.recs = file, nil
 	end, aerr := view.applyLogFrom(lg, from)
 	if aerr != nil {
 		return nil, 0, nil, aerr
