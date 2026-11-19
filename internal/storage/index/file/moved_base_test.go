@@ -243,8 +243,8 @@ func TestEveryReadAnswersTheSameThroughALazyView(t *testing.T) {
 		t.Fatal(err)
 	}
 	tx.UpdateFlags(3, mailbox.FlagsUpdate{Flags: []string{`\Flagged`}, Keywords: []string{"$Work"}})
-	tx.UpdateFlags(1500, mailbox.FlagsUpdate{Flags: []string{`\Answered`, `\Deleted`}})
-	tx.Expunge(2049)
+	tx.UpdateFlags(mailindex.ChunkRecords+20, mailbox.FlagsUpdate{Flags: []string{`\Answered`, `\Deleted`}})
+	tx.Expunge(2*mailindex.ChunkRecords + 1)
 	if _, err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestEveryReadAnswersTheSameThroughALazyView(t *testing.T) {
 		}
 		msgs, err := h.GetMessages(f.ID, mailbox.SeqSet{})
 		must("messages", msgs, err)
-		some, err := h.GetMessages(f.ID, mailbox.SeqSet{{From: 3, To: 3}, {From: 1500, To: 2050}})
+		some, err := h.GetMessages(f.ID, mailbox.SeqSet{{From: 3, To: 3}, {From: mailindex.ChunkRecords + 20, To: 2*mailindex.ChunkRecords + 2}})
 		must("some messages", some, err)
 		b, m, err := hu.FolderVSize(f.ID)
 		must("vsize", [2]uint64{b, uint64(m)}, err)

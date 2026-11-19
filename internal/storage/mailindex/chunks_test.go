@@ -113,7 +113,7 @@ func TestChunksAllocatePerChunk(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if allocs > 2*10+4 {
+	if allocs > 2*10+5 { // two a chunk, and the set, its list and its writer
 		t.Errorf("%v allocations for 10 chunks of %d records, want about one a chunk", allocs, ChunkRecords)
 	}
 }

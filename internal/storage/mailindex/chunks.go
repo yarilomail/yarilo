@@ -8,8 +8,9 @@ import (
 )
 
 // ChunkRecords is how many records one chunk holds: the unit a change copies
-// and a lazy read loads (INDEX-MEMORY.md §2).
-const ChunkRecords = 1024
+// and a lazy read loads; 128 is the cheapest copy under a snapshot at 100k
+// (INDEX-MEMORY.md §2).
+const ChunkRecords = 128
 
 // ExtID names a record extension by its place in a layout, resolved once, so
 // a read a message is an offset, not a map lookup.
@@ -49,6 +50,10 @@ type Records struct {
 	chunks []atomicChunk
 	n      int
 	src    *lazySource
+	// starts is each chunk's first seq once an expunge left chunks of
+	// unequal length; nil while every chunk but the last is full.
+	starts []int
+	w      *writer // nil on a snapshot, which is never written
 }
 
 // Layout is the records' layout.
@@ -63,12 +68,21 @@ func (r *Records) Chunks() int { return len(r.chunks) }
 // Loaded reports whether chunk ci is in memory.
 func (r *Records) Loaded(ci int) bool { return r.chunks[ci].Load() != nil }
 
+func (r *Records) locate(seq int) (ci, i int) {
+	if r.starts == nil {
+		return seq / ChunkRecords, seq % ChunkRecords
+	}
+	ci = sort.Search(len(r.starts), func(k int) bool { return r.starts[k] > seq }) - 1
+	return ci, seq - r.starts[ci]
+}
+
 func (r *Records) rec(seq int) []byte {
-	c := r.chunks[seq/ChunkRecords].Load()
+	ci, i := r.locate(seq)
+	c := r.chunks[ci].Load()
 	if c == nil {
 		panic(fmt.Sprintf("mailindex: record %d read before its chunk was loaded", seq))
 	}
-	return c.at(seq % ChunkRecords)
+	return c.at(i)
 }
 
 // UID is the uid of the record at seq, from 0.
@@ -108,10 +122,10 @@ func ChunksFromBytes(raw []byte, layout RecordLayout) (*Records, error) {
 		return nil, fmt.Errorf("mailindex/chunks: %d bytes is not a whole number of %d-byte records: %w", len(raw), size, ErrShortRead)
 	}
 	n := len(raw) / int(size)
-	out := &Records{layout: layout, n: n, chunks: make([]atomicChunk, chunkCount(n))}
+	out := &Records{layout: layout, n: n, chunks: make([]atomicChunk, chunkCount(n)), w: newWriter(chunkCount(n))}
 	for ci := range out.chunks {
 		start, end := ci*ChunkRecords, min((ci+1)*ChunkRecords, n)
-		b := make([]byte, (end-start)*int(size))
+		b := make([]byte, (end-start)*int(size), ChunkRecords*int(size))
 		copy(b, raw[start*int(size):end*int(size)])
 		out.chunks[ci].Store(&Chunk{raw: b, size: size, n: end - start})
 	}
