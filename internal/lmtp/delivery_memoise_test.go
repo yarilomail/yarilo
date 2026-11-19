@@ -69,8 +69,8 @@ func TestLMTP_DeliveryUsesTheMemoisedBackend(t *testing.T) {
 
 	conn, sc := dialLMTP(t, ln.Addr().String())
 	sendLHLO(t, conn, sc)
-	for i := 0; i < 2; i++ {
-		resp := deliver(t, conn, sc, "sender@external.com", "alice@example.com", testMsg)
+	for i, rcpt := range []string{"alice@example.com", "bob@example.com"} {
+		resp := deliver(t, conn, sc, "sender@external.com", rcpt, testMsg)
 		if len(resp) == 0 || resp[0][0] != '2' {
 			t.Fatalf("delivery %d not accepted: %v", i+1, resp)
 		}

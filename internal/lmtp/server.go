@@ -240,6 +240,9 @@ type session struct {
 	// lockID names this connection in every lock owner it takes -- per
 	// connection, not per delivery: one id covers every message on the link.
 	lockID string
+
+	// held is the recipients' open stores and indexes, oldest use first.
+	held []*rcptHandles
 }
 
 // mailopsConfig is this server's wiring of the mutation layer.
@@ -677,17 +680,12 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 			continue
 		}
 
-		mboxBackend := mailbox.SelectPersonalBackend(s.opts.Mailbox, s.opts.MailboxByDriver, userInfo.Driver)
-		rcptBox := mboxBackend.OpenUser(userInfo)
-		rcptIdx := s.opts.Index.OpenUser(userInfo)
-		rcptMbox := mailboxbase.Open(rcptBox, rcptIdx, mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.personalAuto(userInfo)))
-		rcptBox.Init() //nolint:errcheck // idempotent; provisioned in rcptLocal
+		held := s.handlesFor(userInfo)
+		rcptBox, rcptMbox := held.box, held.mbox
 
 		ops := mailops.NewDelivery(s.mailopsConfig(), rcptMbox, userInfo)
 		if err := s.quotaCheck(ops, folder, int64(len(msg))); err != nil {
 			slog.Warn("lmtp: delivery rejected by quota", "rcpt", rcpt, "user", username, "folder", folder, "err", err.Message)
-			rcptBox.Close() //nolint:errcheck
-			rcptIdx.Close() //nolint:errcheck
 			setStatus(status, rcpt, deliveryStart, err)
 			continue
 		}
@@ -728,15 +726,11 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 					slog.Warn("lmtp: sieve init user", "user", username, "err", ierr)
 				}
 			} else if result.Reject != nil {
-				rcptBox.Close() //nolint:errcheck
-				rcptIdx.Close() //nolint:errcheck
 				code, enh := sieveRejectCode(result.Reject)
 				slog.Info("lmtp: sieve rejected", "rcpt", rcpt, "reason", result.Reject.Reason)
 				setStatus(status, rcpt, deliveryStart, &goSmtp.SMTPError{Code: code, EnhancedCode: enh, Message: result.Reject.Reason})
 				continue
 			} else if len(result.Deliveries) == 0 {
-				rcptBox.Close() //nolint:errcheck
-				rcptIdx.Close() //nolint:errcheck
 				slog.Info("lmtp: sieve discard", "rcpt", rcpt)
 				setStatus(status, rcpt, deliveryStart, nil)
 				continue
@@ -780,9 +774,8 @@ func (s *session) LMTPData(r io.Reader, status goSmtp.StatusCollector) error {
 				break
 			}
 		}
-		rcptBox.Close() //nolint:errcheck
-		rcptIdx.Close() //nolint:errcheck
 		if deliverErr != nil {
+			s.dropHandles(held)
 			slog.Error("lmtp: delivery failed", "rcpt", rcpt, "err", deliverErr)
 			deliverErr = deliveryError(deliverErr, s.opts.Config.VerboseReplies)
 		}
@@ -805,6 +798,7 @@ func (s *session) Reset() {
 
 func (s *session) Logout() error {
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "QUIT")
+	s.closeHeld()
 	return nil
 }
 
