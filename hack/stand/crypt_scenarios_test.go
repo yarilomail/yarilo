@@ -41,7 +41,8 @@ func TestTheScenarioCountsReadTheTotals(t *testing.T) {
 }
 
 // The keys go only once status --all shows no encrypted message, however the
-// run ended; otherwise the stand keeps them with write off.
+// run ended; otherwise the stand keeps them with write off. A cleanup that did
+// not finish is a FAIL row, so the run cannot end green over it.
 func TestTheKeysGoOnlyWhenNoMailIsEncrypted(t *testing.T) {
 	src := scenarioSource(t)
 	if n := strings.Count(src, `mailcrypt-keys.sh" delete`); n != 1 {
@@ -49,9 +50,14 @@ func TestTheKeysGoOnlyWhenNoMailIsEncrypted(t *testing.T) {
 	}
 	finish := regexp.MustCompile(`(?s)\nfinish\(\) \{.*?\n\}\n`).FindString(src)
 	for _, want := range []string{
-		`if [ "$(encrypted "$left")" = 0 ]; then
-      deploy restore && bash "$HERE/mailcrypt-keys.sh" delete`,
-		`deploy keys-kept -f "$VALUES/values-sandbox-mailcrypt-keys.yaml"`,
+		`elif [ "$(encrypted "$left")" = 0 ]; then
+      if ! deploy restore; then
+        row FAIL cleanup`,
+		`elif ! bash "$HERE/mailcrypt-keys.sh" delete; then
+        row FAIL cleanup`,
+		`deploy keys-kept -f "$VALUES/values-sandbox-mailcrypt-keys.yaml" ||
+        row FAIL cleanup`,
+		`row FAIL cleanup "status --all did not answer`,
 	} {
 		if !strings.Contains(finish, want) {
 			t.Errorf("finish() lacks %s", want)

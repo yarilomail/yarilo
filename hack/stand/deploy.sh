@@ -31,7 +31,12 @@ stand_deploy() {
   kube rollout status sts/yarilo-backend --timeout=280s >> "$out/deploy.txt" 2>&1 || rc=1
   kill "$watcher" 2>/dev/null
   wait "$watcher" 2>/dev/null
-  echo "-- backend not Ready during the rollout: $(tr '\n' ' ' < "$out/backend-downtime.txt")"
+  if [ -s "$out/backend-downtime.txt" ]; then
+    echo "-- backend not Ready during the rollout: $(tr '\n' ' ' < "$out/backend-downtime.txt")"
+  else
+    echo "-- backend not Ready during the rollout: unmeasured, the watcher wrote nothing" >&2
+    rc=1
+  fi
   return "$rc"
 }
 
@@ -91,25 +96,25 @@ EOF
 
 # stand_watch_backend counts, once a second until killed, the seconds each
 # backend pod is not Ready; a pod that does not exist counts as not Ready.
+# Plain arrays only: bash 3.2, a laptop's, has no associative ones.
 stand_watch_backend() {
-  local file="$1" replicas pod ready n
+  local file="$1" replicas n ready prev now
+  local -a pods=() down=()
   replicas=$(kube get sts yarilo-backend -o jsonpath='{.spec.replicas}' 2>/dev/null)
-  declare -A down=()
-  for n in $(seq 0 $(( ${replicas:-1} - 1 ))); do down["yarilo-backend-$n"]=0; done
+  for n in $(seq 0 $(( ${replicas:-1} - 1 ))); do pods[n]="yarilo-backend-$n"; down[n]=0; done
   write() {
     : > "$file"
-    for pod in $(printf '%s\n' "${!down[@]}" | sort); do echo "$pod ${down[$pod]}" >> "$file"; done
+    for n in "${!pods[@]}"; do echo "${pods[n]} ${down[n]}" >> "$file"; done
   }
   trap 'write; exit 0' TERM
   write
-  local prev now
   prev=$(date +%s)
   while :; do
     now=$(date +%s)
-    for pod in "${!down[@]}"; do
-      ready=$(kube get pod "$pod" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+    for n in "${!pods[@]}"; do
+      ready=$(kube get pod "${pods[n]}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
       # The time since the last look, not one per look: a look takes a while.
-      [ "$ready" = "True" ] || down[$pod]=$(( ${down[$pod]} + now - prev ))
+      [ "$ready" = "True" ] || down[n]=$(( ${down[n]} + now - prev ))
     done
     prev=$now
     sleep 1 &

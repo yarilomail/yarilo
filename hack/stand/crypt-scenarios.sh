@@ -8,14 +8,16 @@
 #
 #   mixed     a folder of each type holding plaintext and age mail is rewritten
 #             to current, nothing failed
-#   load      a user imaptest is working on is re-encrypted; a rerun after the
-#             load leaves nothing to do and imaptest saw no error
+#   load-<type>  on each type, a user imaptest is working on is re-encrypted
+#             while imaptest runs (checked, not assumed); a rerun after the load
+#             leaves nothing to do and imaptest saw no error
 #   kill      the pod running a job is deleted mid-run; the rerun finishes it
 #   rotate    a new key beside the old, re-encrypt --all, 0 other_key and 0
 #             reference, the old key removed, 0 no_key (§13.10)
 #   plain     --all --to plain leaves no encrypted message on the stand
-#   speed     messages a second per type, and the time of status on a user
-#             holding CRYPT_BIG messages
+#   speed     messages a second per type and source state (plain, the old key,
+#             age back to plain), and the time of status on a user holding
+#             CRYPT_BIG messages
 #
 # The keys are mounted for the run only. They are removed only when status
 # --all shows no encrypted message; otherwise the stand stays on its keys with
@@ -40,12 +42,13 @@ VALUES="$REPO/helm_values"
 mkdir -p "$OUT"
 : > "$ROWS"
 
-declare -A USERS=([mdbox]=u45@d00001.test [maildir]=u95@d00002.test [sdbox]=u145@d00003.test)
+TYPES="mdbox maildir sdbox"
+user_of() { case "$1" in mdbox) echo u45@d00001.test ;; maildir) echo u95@d00002.test ;; sdbox) echo u145@d00003.test ;; esac; }
+# The load users are the first of each imaptest range accept.sh runs.
+load_of() { case "$1" in mdbox) echo "u3@d00001.test d00001.test 3-20" ;; maildir) echo "u53@d00002.test d00002.test 53-70" ;; sdbox) echo "u103@d00003.test d00003.test 103-120" ;; esac; }
+LOAD_N="${CRYPT_LOAD_N:-1000}"
 KILL_USER=u96@d00002.test
 BIG_USER=u46@d00001.test
-LOAD_DOMAIN=d00002.test
-LOAD_USERS=51-70
-LOAD_USER=u51@d00002.test
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 . "$HERE/deploy.sh"
@@ -108,12 +111,21 @@ finish() {
       crypt reencrypt --all --to plain --rate 0 >> "$OUT/cleanup.log" 2>&1
     fi
     left=$(status_of --all)
-    if [ "$(encrypted "$left")" = 0 ]; then
-      deploy restore && bash "$HERE/mailcrypt-keys.sh" delete
+    if [ "$left" = unread ]; then
+      row FAIL cleanup "status --all did not answer; the stand is left as it is, Secret $SECRET kept"
+    elif [ "$(encrypted "$left")" = 0 ]; then
+      if ! deploy restore; then
+        row FAIL cleanup "no mail is encrypted, but the restore to the stand's values did not settle; Secret $SECRET kept"
+      elif ! bash "$HERE/mailcrypt-keys.sh" delete; then
+        row FAIL cleanup "the stand is back on its values, but Secret $SECRET was not deleted"
+      else
+        echo "PASS cleanup image=$TAG no encrypted message; the stand is on its values, the keys are gone" | tee -a "$ROWS"
+      fi
     else
       where=$(crypt status --all 2>&1 | awk -F': ' '/^[^ ]+: / && / (current|other_key|reference|no_key) [1-9]/ { print $1 }' | tr '\n' ' ')
       row FAIL cleanup "encrypted mail is left: $left; users: ${where:-see $OUT/status.log}; the stand stays on its keys with write off, Secret $SECRET kept"
-      deploy keys-kept -f "$VALUES/values-sandbox-mailcrypt-keys.yaml"
+      deploy keys-kept -f "$VALUES/values-sandbox-mailcrypt-keys.yaml" ||
+        row FAIL cleanup "the stand did not settle on its keys with write off"
     fi
   fi
   echo "crypt-scenarios: $(grep -c '^PASS' "$ROWS") passed, $(grep -c '^FAIL' "$ROWS") failed"
@@ -128,70 +140,85 @@ bash "$HERE/mailcrypt-keys.sh" create || exit 1
 keys_mounted=1
 trap finish EXIT
 deploy keys -f "$VALUES/values-sandbox-mailcrypt-keys.yaml" || exit 1
-for t in "${!USERS[@]}"; do fill_to "${USERS[$t]}" $(( $(messages "${USERS[$t]}") + N )); done
+for t in $TYPES; do u=$(user_of "$t"); fill_to "$u" $(( $(messages "$u") + N )); done
 
 echo "== write: age, checked live"
 deploy write -f "$VALUES/values-sandbox-mailcrypt-write.yaml" || exit 1
 crypt keys > "$OUT/keys.txt" 2>&1 || { row FAIL live "backend-api does not answer crypt keys"; exit 1; }
 awk '$1 ~ /^age1pq1/ && $3 == "yes" { ok = 1 } END { exit !ok }' "$OUT/keys.txt" || { row FAIL live "no key new mail is sealed to: $(tr '\n' ' ' < "$OUT/keys.txt" | cut -c1-200)"; exit 1; }
-probe="${USERS[maildir]}"
+probe=$(user_of maildir)
 before=$(status_of "$probe")
 fill_to "$probe" $(( $(messages "$probe") + 1 ))
 after=$(status_of "$probe")
 [ "$(field "$after" current)" -gt "$(field "$before" current)" ] ||
   { row FAIL live "a delivery under write: age was not sealed: before $before after $after"; exit 1; }
-for t in "${!USERS[@]}"; do fill_to "${USERS[$t]}" $(( $(messages "${USERS[$t]}") + N )); done
+for t in $TYPES; do u=$(user_of "$t"); fill_to "$u" $(( $(messages "$u") + N )); done
 
 echo "== mixed, and speed per type"
-for t in mdbox maildir sdbox; do
-  u="${USERS[$t]}"
-  before=$(status_of "$u")
+# timed runs crypt reencrypt and adds "<label> <messages> <seconds>" to speed.txt.
+timed() {
+  local label="$1" moved="$2" start code
+  shift 2
   start=$(date +%s)
-  crypt reencrypt "$u" --rate 0 >> "$OUT/reencrypt-$t.log" 2>&1
+  crypt reencrypt "$@" >> "$OUT/reencrypt.log" 2>&1
   code=$?
-  secs=$(( $(date +%s) - start ))
+  echo "$label $moved $(( $(date +%s) - start ))" >> "$OUT/speed.txt"
+  return "$code"
+}
+
+for t in $TYPES; do
+  u=$(user_of "$t")
+  before=$(status_of "$u")
+  timed "$t:plain" "$(field "$before" plain)" "$u" --rate 0
+  code=$?
   after=$(status_of "$u")
-  moved=$(field "$before" plain)
   if [ "$code" = 0 ] && [ "$(field "$before" plain)" -gt 0 ] && [ "$(field "$before" current)" -gt 0 ] &&
     [ "$(field "$after" plain)" = 0 ] && [ "$(field "$after" failed)" = 0 ] && [ "$(field "$after" other_key)" = 0 ]; then
     row PASS "mixed-$t" "$u before[$before] after[$after]"
   else
     row FAIL "mixed-$t" "$u exit $code before[$before] after[$after]"
   fi
-  echo "speed-$t $moved messages in ${secs}s" >> "$OUT/speed.txt"
 done
 
-echo "== speed: status on $BIG messages"
+echo "== status on $BIG messages"
 fill_to "$BIG_USER" "$BIG"
 start=$(date +%s)
 big=$(status_of "$BIG_USER")
-secs=$(( $(date +%s) - start ))
-total=$(( $(field "$big" plain) + $(encrypted "$big") ))
-if [ "$total" -ge "$BIG" ]; then
-  row PASS speed "$(tr '\n' ';' < "$OUT/speed.txt") status of $BIG_USER ($total messages) ${secs}s"
-else
-  row FAIL speed "$BIG_USER holds $total of $BIG: $big"
-fi
+big_secs=$(( $(date +%s) - start ))
 
-echo "== under imaptest"
-crypt reencrypt "$LOAD_USER" --to plain --rate 0 >> "$OUT/load.log" 2>&1
-before=$(status_of "$LOAD_USER")
-kube delete job imaptest --ignore-not-found > /dev/null
-sed -e "s/u%d@d00001\.test/u%d@$LOAD_DOMAIN/" -e "s/users=1-20/users=$LOAD_USERS/" "$REPO/hack/imaptest/job.yaml" | kube apply -f - > /dev/null
-sleep 20
-crypt reencrypt "$LOAD_USER" --rate 0 >> "$OUT/load.log" 2>&1
-during=$?
-kube wait --for=condition=complete --timeout=300s job/imaptest > /dev/null 2>&1
-kube logs job/imaptest -c imaptest > "$OUT/imaptest-load.log" 2>&1
-errors=$(grep -ac '^Error' "$OUT/imaptest-load.log" || true)
-crypt reencrypt "$LOAD_USER" --rate 0 >> "$OUT/load.log" 2>&1
-rerun=$?
-after=$(status_of "$LOAD_USER")
-if [ "$rerun" = 0 ] && [ "${errors:-1}" = 0 ] && [ "$(field "$after" plain)" = 0 ] && [ "$(field "$after" failed)" = 0 ]; then
-  row PASS load "$LOAD_USER during-run exit $during, imaptest errors 0, before[$before] after[$after]"
-else
-  row FAIL load "$LOAD_USER during-run exit $during, rerun exit $rerun, imaptest errors ${errors:-unread}, before[$before] after[$after]"
-fi
+echo "== under imaptest, each type"
+job_done() { [ "$(kube get job imaptest -o jsonpath='{.status.succeeded}' 2>/dev/null)" = 1 ]; }
+load_running() { kube get pods -l job-name=imaptest -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q Running; }
+for t in $TYPES; do
+  set -- $(load_of "$t")
+  lu="$1" dom="$2" range="$3"
+  fill_to "$lu" $(( $(messages "$lu") + LOAD_N ))
+  crypt reencrypt "$lu" --to plain --rate 0 >> "$OUT/load.log" 2>&1
+  before=$(status_of "$lu")
+  kube delete job imaptest --ignore-not-found --wait=true > /dev/null
+  sed -e "s/u%d@d00001\.test/u%d@$dom/" -e "s/users=1-20/users=$range/" "$REPO/hack/imaptest/job.yaml" | kube apply -f - > /dev/null
+  for _ in $(seq 1 60); do load_running && break; sleep 2; done
+  sleep 10
+  # The overlap is the row: imaptest running when the job starts and still
+  # running when it ends.
+  load_running && started_under=1 || started_under=0
+  crypt reencrypt "$lu" --rate 30 >> "$OUT/load.log" 2>&1
+  during=$?
+  job_done && ended_under=0 || ended_under=1
+  kube wait --for=condition=complete --timeout=300s job/imaptest > /dev/null 2>&1
+  kube logs job/imaptest -c imaptest > "$OUT/imaptest-load-$t.log" 2>&1
+  errors=$(grep -ac '^Error' "$OUT/imaptest-load-$t.log" || true)
+  crypt reencrypt "$lu" --rate 0 >> "$OUT/load.log" 2>&1
+  rerun=$?
+  after=$(status_of "$lu")
+  if [ "$started_under$ended_under" != 11 ]; then
+    row FAIL "load-$t" "$lu: the job did not run inside imaptest (running at start $started_under, at end $ended_under); before[$before] after[$after]"
+  elif [ "$rerun" = 0 ] && [ "${errors:-1}" = 0 ] && [ "$(field "$after" plain)" = 0 ] && [ "$(field "$after" failed)" = 0 ]; then
+    row PASS "load-$t" "$lu under imaptest, run exit $during, imaptest errors 0, before[$before] after[$after]"
+  else
+    row FAIL "load-$t" "$lu run exit $during, rerun exit $rerun, imaptest errors ${errors:-unread}, before[$before] after[$after]"
+  fi
+done
 
 echo "== pod killed mid-run"
 fill_to "$KILL_USER" "$KILL_N"
@@ -230,6 +257,10 @@ fi
 echo "== rotation (§13.10)"
 bash "$HERE/mailcrypt-keys.sh" rotate-add && restart_backend rotate-add || { row FAIL rotate "the new key did not reach the pods"; exit 1; }
 before=$(status_of --all)
+for t in $TYPES; do
+  u=$(user_of "$t")
+  timed "$t:old-key" "$(field "$(status_of "$u")" other_key)" "$u" --rate 0
+done
 crypt reencrypt --all --jobs 2 --rate 0 >> "$OUT/rotate.log" 2>&1
 code=$?
 mid=$(status_of --all)
@@ -244,6 +275,10 @@ fi
 
 echo "== back to plaintext"
 before=$(status_of --all)
+for t in $TYPES; do
+  u=$(user_of "$t")
+  timed "$t:to-plain" "$(encrypted "$(status_of "$u")")" "$u" --to plain --rate 0
+done
 crypt reencrypt --all --to plain --jobs 2 --rate 0 >> "$OUT/plain.log" 2>&1
 code=$?
 after=$(status_of --all)
@@ -252,4 +287,13 @@ if [ "$code" = 0 ] && [ "$(encrypted "$after")" = 0 ] && [ "$(field "$after" fai
   row PASS plain "before[$before] after[$after]"
 else
   row FAIL plain "exit $code; before[$before] after[$after]"
+fi
+
+echo "== speed"
+rates=$(awk '{ printf "%s %d msgs %ds (%s/s); ", $1, $2, $3, ($3 > 0 ? int($2 / $3) : "inf") }' "$OUT/speed.txt")
+total=$(( $(field "$big" plain) + $(encrypted "$big") ))
+if [ "$(wc -l < "$OUT/speed.txt")" -ge 9 ] && [ "$total" -ge "$BIG" ]; then
+  row PASS speed "$rates status of $BIG_USER ($total messages) ${big_secs}s"
+else
+  row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages"
 fi

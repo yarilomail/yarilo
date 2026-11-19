@@ -123,11 +123,12 @@ The six rows of MAILCRYPT §13.12, each a PASS or FAIL line in
 | Row | Passes when |
 |:---|:---|
 | `mixed-<type>` | a folder of plaintext and age mail on each type is rewritten: plain 0, other_key 0, failed 0 |
-| `speed` | always measured: messages a second per type, and status on a user of `CRYPT_BIG` (100000) messages |
-| `load` | a user imaptest works on is re-encrypted; a rerun after the load leaves plain 0 and imaptest logged no error |
+| `speed` | messages a second for each type and source state (plain to age, the old key to the new, age to plain), nine figures, and status on a user of `CRYPT_BIG` (100000) messages |
+| `load-<type>` | on each type, a user of imaptest's range is re-encrypted while imaptest runs: running when the job starts and when it ends, or the row fails; a rerun after the load leaves plain 0 and imaptest logged no error |
 | `kill` | the backend pod holding a running job is deleted; the rerun finishes, plain 0, failed 0 |
 | `rotate` | a new key beside the old (`mailcrypt-keys.sh rotate-add`), `--all`: other_key 0 and reference 0; the old key removed (`rotate-drop`): no_key 0 |
 | `plain` | `--all --to plain` leaves no encrypted message |
+| `cleanup` | the stand is back on its values and the Secret is gone; a restore or a delete that did not finish, or encrypted mail left, is a FAIL and the run exits 1 |
 
 Before the rows, the run checks the stand live: backend-api answers `crypt
 keys`, a hybrid key is the one new mail is sealed to, and a delivery under

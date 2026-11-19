@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -110,5 +111,40 @@ func TestEveryRolloutHandsTheStepItsChart(t *testing.T) {
 	raw, _ := os.ReadFile("deploy.sh")
 	if strings.Contains(string(raw), `"$REPO/helm"`) || strings.Contains(string(raw), `"$CHART/helm"`) {
 		t.Error("deploy.sh names a chart of its own; it upgrades the one it is handed")
+	}
+}
+
+// The watcher counts the seconds a backend pod is not Ready, elapsed time and
+// not looks, and the Ready one stays at zero.
+func TestTheWatcherCountsTheSecondsABackendIsDown(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "down")
+	script := `kube() { case "$*" in *replicas*) echo 2 ;; *yarilo-backend-1*) echo False ;; *) echo True ;; esac; }
+. ./deploy.sh; stand_watch_backend "$1" & w=$!; sleep 3; kill $w; wait $w`
+	if err := exec.CommandContext(t.Context(), "bash", "-c", script, "watch", file).Run(); err != nil {
+		t.Fatalf("watcher: %v", err)
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Fields(string(raw))
+	if len(got) != 4 || got[0] != "yarilo-backend-0" || got[1] != "0" || got[2] != "yarilo-backend-1" || got[3] < "2" {
+		t.Errorf("watcher wrote %q, want backend-0 at 0 and backend-1 at 2 s or more", raw)
+	}
+}
+
+// A stand script runs from a laptop too, whose bash is 3.2: none needs bash 4.
+func TestNoStandScriptNeedsBash4(t *testing.T) {
+	bash4 := regexp.MustCompile(`declare -A|local -A|\bmapfile\b|\breadarray\b|\$\{[a-zA-Z_]+(,,|\^\^)\}`)
+	for _, f := range scripts(t) {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(raw), "\n") {
+			if bash4.MatchString(line) && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+				t.Errorf("%s:%d needs bash 4: %s", f, i+1, strings.TrimSpace(line))
+			}
+		}
 	}
 }
