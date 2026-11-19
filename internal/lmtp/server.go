@@ -21,6 +21,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/sieve"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
@@ -534,7 +535,9 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	if ns == nil {
 		return rcptBox, rcptMbox, folder, noop
 	}
-	loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
+	// The location is read unexpanded, as delivery always has (#2605).
+	nsd := deliveryNamespace(ns)
+	_, ok, err := mailbox.ParseLocation(ns.Location, nil)
 	if err != nil || !ok {
 		slog.Warn("lmtp: namespace location parse failed, using personal store",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
@@ -544,7 +547,7 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	if rel == "" {
 		rel = "INBOX" // delivery to a bare namespace prefix → its INBOX
 	}
-	ui, err := mailbox.NamespaceUserInfo(userInfo, loc, ns.Separator, mailbox.StoreKindOf(ns.Type, ns.Prefix))
+	ui, _, err := nsopen.Fixed(nsd, userInfo, nil, nsopen.Kind(nsd))
 	if err != nil {
 		slog.Warn("lmtp: namespace not usable, delivering to INBOX",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
@@ -555,22 +558,24 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 			"rcpt", userInfo.Username, "prefix", ns.Prefix, "folder", rel)
 		return rcptBox, rcptMbox, "INBOX", noop
 	}
-	mb := s.opts.Mailbox
-	if f := s.opts.MailboxByDriver; f != nil && loc.Driver != "" {
-		mb = f(loc.Driver)
-	}
-	box := mb.OpenUser(ui)
-	if err := box.Init(); err != nil {
+	// No per-prefix override: delivery opens the store its location's driver names (#2605).
+	mb := nsopen.Backends{Mailbox: s.opts.Mailbox, ByDriver: s.opts.MailboxByDriver}.For("", ui)
+	o, err := nsopen.Open(mb, s.opts.Index, ui, nsopen.Init, false,
+		mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.boxAuto(userInfo, s.namespaceIndex(ns), ui)))
+	if err != nil {
 		slog.Warn("lmtp: namespace store init failed, using personal store",
 			"prefix", ns.Prefix, "err", err)
-		box.Close() //nolint:errcheck
 		return rcptBox, rcptMbox, folder, noop
 	}
-	idx := s.opts.Index.OpenUser(ui)
-	return box, mailboxbase.Open(box, idx, mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.boxAuto(userInfo, s.namespaceIndex(ns), ui))), rel, func() {
-		box.Close() //nolint:errcheck
-		idx.Close() //nolint:errcheck
+	return o.Store, o.Box, rel, func() {
+		o.Store.Close() //nolint:errcheck
+		o.Index.Close() //nolint:errcheck
 	}
+}
+
+// deliveryNamespace is ns as the opener reads it.
+func deliveryNamespace(ns *config.NamespaceConfig) nsopen.Namespace {
+	return nsopen.Namespace{Type: ns.Type, Prefix: ns.Prefix, Separator: ns.Separator, Location: ns.Location}
 }
 
 // postAllowed reports whether the recipient holds the 'p' (post) right on the
@@ -585,13 +590,12 @@ func (s *session) postAllowed(ui *mailbox.UserInfo, ns *config.NamespaceConfig, 
 	// acl_defaults_from_inbox applies to private / shared namespaces only.
 	defaultsFromInbox := s.opts.ACLDefaultsFromInbox && ns.Type != "public"
 	lockOwner := locks.Owner(ui.Username, s.stampLockID(ui).LockID())
-	store := acl.New(ui.Home, ui.MailPath, ui.Driver, ui.Separator, ui.StorageEscapeChar, ui.Username, lockOwner, acl.Policy{
+	store := nsopen.ACL(ui.Home, ui, ui.Username, lockOwner, acl.Policy{
 		DefaultsFromInbox: defaultsFromInbox,
 		GlobalsOnly:       s.opts.ACLGlobalsOnly,
 		Global:            s.opts.ACLGlobal,
 		CacheTTL:          s.opts.ACLCacheTTL,
 	}, s.opts.Locker)
-	store.SetLockName(ui.LockName)
 	var sep byte = '/'
 	if ns.Separator != "" {
 		sep = ns.Separator[0]

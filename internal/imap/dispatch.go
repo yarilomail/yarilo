@@ -11,6 +11,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
@@ -192,14 +193,12 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 			if ownStore {
 				// A second private namespace with storage of its own -- a
 				// virtual one -- is the user's, but not their INBOX store.
-				loc, ok, err := mailbox.ParseLocation(spec.Location, personalUI)
+				nsUI, ok, err := nsopen.Fixed(spec.nsopen(), personalUI, personalUI, mailbox.UserStore)
 				if err != nil {
-					return nil, nil, fmt.Errorf("imap: personal namespace location: %w", err)
+					return nil, nil, fmt.Errorf("imap: personal namespace: %w", err)
 				}
 				if ok {
-					if ui, err = mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator), mailbox.UserStore); err != nil {
-						return nil, nil, fmt.Errorf("imap: personal namespace: %w", err)
-					}
+					ui = nsUI
 				}
 			}
 			h, err := s.openHandle(spec, "personal", ui, owner, mailbox.SubsFileFor(shapes, i, spec.Prefix, string(spec.Separator)))
@@ -230,30 +229,19 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 			}
 			// Against this session's own identity: "%h" became empty
 			// otherwise, and a per-user namespace could not be written.
-			loc, ok, err := mailbox.ParseLocation(spec.Location, personalUI)
+			ui, ok, err := nsopen.Fixed(spec.nsopen(), personalUI, personalUI, nsopen.Kind(spec.nsopen()))
 			if err != nil {
-				return nil, nil, fmt.Errorf("imap: %s namespace location: %w", spec.Type, err)
+				return nil, nil, fmt.Errorf("imap: %s namespace: %w", spec.Type, err)
 			}
 			if !ok {
 				continue
 			}
 			subsFile := mailbox.NamespaceSubsFile(spec.Prefix, string(spec.Separator), string(spec.Type))
-			// MailPath as well as Home, plus driver and modifiers, so the
-			// mailbox backend, fileindex and ACL store resolve to one root;
-			// otherwise the ACL store (falls back to Home) and a maildir
-			// backend (falls back to Home/Maildir) disagree. Shared with the
-			// admin API, which built the same structure from two fields and
-			// therefore disagreed with this one (#1109).
-			ui, err := mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator),
-				mailbox.StoreKindOf(string(spec.Type), spec.Prefix))
-			if err != nil {
-				return nil, nil, fmt.Errorf("imap: %s namespace: %w", spec.Type, err)
-			}
 			h, err := s.openHandle(spec, nsSlug(spec), ui, owner, subsFile)
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: open %s namespace: %w", spec.Type, err)
 			}
-			h.location = loc.Path
+			h.location = ui.Home
 			out[spec.Prefix] = h
 		}
 	}
@@ -284,7 +272,7 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 			if !isOwnerTemplated(spec) {
 				continue
 			}
-			ownerUI, err := mailbox.StampOwnerLocation(personalUI, personalUI, spec.Location, byte(spec.Separator))
+			ownerUI, err := nsopen.Owner(spec.nsopen(), personalUI, personalUI)
 			if err != nil {
 				continue
 			}
@@ -303,56 +291,31 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 // selected by the resolved user's driver (see mailboxBackendFor).
 func (s *session) openHandle(spec NamespaceSpec, name string, ui *mailbox.UserInfo, owner, subsFile string) (*nsHandle, error) {
 	ui.Separator = string(spec.Separator)
-	mb := s.mailboxBackendFor(spec, ui)
-	box := mb.OpenUser(ui)
-	if err := box.Init(); err != nil {
-		return nil, fmt.Errorf("mailbox init: %w", err)
+	// The namespace-instance owner. A personal namespace is owned by the user
+	// it was opened for; a fixed shared/public one by nobody (#1130).
+	nsOwner := ""
+	if spec.Type == NamespacePersonal {
+		nsOwner = ui.Username
 	}
-	idx := s.srv.opts.Index.OpenUser(ui)
-	// Before anything lists this store: a store another implementation left
-	// has its folders named the way its configuration spelled them, and a
-	// listing served from that shows names this deployment cannot select
-	// (#1609). Non-fatal -- a store with nothing foreign in it does no work
-	// here, and one that could not be renamed is still served, wrongly named,
-	// exactly as before.
-	if a, ok := idx.(mailbox.ForeignNameAdopter); ok {
-		if err := a.AdoptForeignNames(); err != nil {
-			slog.Warn("imap: foreign folder names not adopted", "user", ui.Username, "err", err)
-		}
+	h := &nsHandle{name: name, spec: spec, userInfo: ui, owner: nsOwner}
+	o, err := nsopen.Open(s.mailboxBackendFor(spec, ui), s.srv.opts.Index, ui, nsopen.Init, true, mailboxbase.WithAuto(s.boxAuto(h)))
+	if err != nil {
+		return nil, err
 	}
-	// Subscriptions live in the control root. One spelling of that rule, so
-	// this cannot drift from where the other services write (#1437).
-	subsRoot := mailbox.ControlRoot(ui)
-	store := subs.New(subsRoot, subsFile, ui.Username, owner, s.srv.opts.Locker)
-	store.SetLockName(ui.LockName)
+	if o.AdoptErr != nil {
+		slog.Warn("imap: foreign folder names not adopted", "user", ui.Username, "err", o.AdoptErr)
+	}
 	// acl_defaults_from_inbox applies to personal/shared namespaces only.
 	defaultsFromInbox := s.srv.opts.ACLDefaultsFromInbox &&
 		(spec.Type == NamespacePersonal || spec.Type == NamespaceShared)
-	aclStore := acl.New(ui.Home, ui.MailPath, ui.Driver, ui.Separator, ui.StorageEscapeChar, ui.Username, owner, acl.Policy{
+	h.box, h.mbox = o.Store, o.Box
+	h.subs = nsopen.Subs(ui, subsFile, owner, s.srv.opts.Locker)
+	h.acl = nsopen.ACL(ui.Home, ui, ui.Username, owner, acl.Policy{
 		DefaultsFromInbox: defaultsFromInbox,
 		GlobalsOnly:       s.srv.opts.ACLGlobalsOnly,
 		CacheTTL:          s.srv.opts.ACLCacheTTL,
 		Global:            s.srv.opts.ACLGlobal,
 	}, s.srv.opts.Locker)
-	aclStore.SetLockName(ui.LockName)
-	// The namespace-instance owner. A personal namespace is owned by the user
-	// it was opened for; a fixed shared/public one by nobody. Owner-templated
-	// namespaces (B1) set this to the resolved owner, and isOwner then works for
-	// them through the same definition rather than a second one.
-	nsOwner := ""
-	if spec.Type == NamespacePersonal {
-		nsOwner = ui.Username
-	}
-	h := &nsHandle{
-		name:     name,
-		spec:     spec,
-		box:      box,
-		subs:     store,
-		acl:      aclStore,
-		userInfo: ui,
-		owner:    nsOwner,
-	}
-	h.mbox = mailboxbase.Open(box, idx, mailboxbase.WithAuto(s.boxAuto(h)))
 	return h, nil
 }
 
@@ -380,13 +343,9 @@ func (h *nsHandle) folderACL() mailops.FolderACL {
 // namespace it applies to every owner alike (one backend, one prefix) -- correct
 // only when all owners share a format.
 func (s *session) mailboxBackendFor(spec NamespaceSpec, ui *mailbox.UserInfo) mailbox.MailboxBackend {
-	if override, ok := s.srv.opts.NamespaceMailboxes[spec.Prefix]; ok && override != nil {
-		return override
-	}
-	if ui != nil && ui.Driver != "" {
-		return mailbox.SelectPersonalBackend(s.srv.opts.Mailbox, s.srv.opts.MailboxByDriver, ui.Driver)
-	}
-	return s.srv.opts.Mailbox
+	return nsopen.Backends{
+		Mailbox: s.srv.opts.Mailbox, ByDriver: s.srv.opts.MailboxByDriver, Overrides: s.srv.opts.NamespaceMailboxes,
+	}.For(spec.Prefix, ui)
 }
 
 // specShapes is the set as pkg/mailbox reads it: the loader validates by the
