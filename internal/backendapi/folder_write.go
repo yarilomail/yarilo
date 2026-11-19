@@ -11,7 +11,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/v2/internal/mailboxcreate"
-	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -359,51 +359,24 @@ func hasDeletedFlag(flags []string) bool {
 // made through the admin API would resolve its rights differently from one made
 // by a client (#1111).
 func (s *Server) materialiseFolderACL(bundle *nsBundle, folder string) error {
-	store := acl.New(
-		bundle.folderHome(),
-		bundle.info.MailPath,
-		bundle.info.Driver,
-		bundle.info.Separator,
-		bundle.info.StorageEscapeChar,
-		bundle.info.Username,
-		locks.Owner(bundle.info.Username, bundle.info.LockID()),
-		acl.Policy{},
-		s.opts.Locker)
-	store.SetLockName(bundle.info.LockName)
+	store := nsopen.ACL(bundle.folderHome(), bundle.info, bundle.info.Username,
+		locks.Owner(bundle.info.Username, bundle.info.LockID()), adminACLPolicy, s.opts.Locker)
 	return store.MaterialiseOnCreate(folder)
 }
 
 // dropFolderACL removes the per-folder yarilo-acl file and its namespace-wide
 // list entry. Idempotent: acl.Store.Remove is a no-op when no file exists.
 func (s *Server) dropFolderACL(bundle *nsBundle, folder string) error {
-	store := acl.New(
-		bundle.folderHome(),
-		bundle.info.MailPath,
-		bundle.info.Driver,
-		bundle.info.Separator,
-		bundle.info.StorageEscapeChar,
-		bundle.info.Username,
-		locks.Owner(bundle.info.Username, bundle.info.LockID()),
-		acl.Policy{},
-		s.opts.Locker)
-	store.SetLockName(bundle.info.LockName)
+	store := nsopen.ACL(bundle.folderHome(), bundle.info, bundle.info.Username,
+		locks.Owner(bundle.info.Username, bundle.info.LockID()), adminACLPolicy, s.opts.Locker)
 	return store.Remove(folder)
 }
 
 // renameFolderACL moves the per-folder yarilo-acl file across index dirs and
 // rewrites the namespace-wide list entries. Idempotent.
 func (s *Server) renameFolderACL(bundle *nsBundle, oldFolder, newFolder string) error {
-	store := acl.New(
-		bundle.folderHome(),
-		bundle.info.MailPath,
-		bundle.info.Driver,
-		bundle.info.Separator,
-		bundle.info.StorageEscapeChar,
-		bundle.info.Username,
-		locks.Owner(bundle.info.Username, bundle.info.LockID()),
-		acl.Policy{},
-		s.opts.Locker)
-	store.SetLockName(bundle.info.LockName)
+	store := nsopen.ACL(bundle.folderHome(), bundle.info, bundle.info.Username,
+		locks.Owner(bundle.info.Username, bundle.info.LockID()), adminACLPolicy, s.opts.Locker)
 	return store.Rename(oldFolder, newFolder)
 }
 

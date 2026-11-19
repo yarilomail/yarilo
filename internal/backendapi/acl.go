@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -619,8 +620,7 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 			present[f] = exists
 		}
 	}
-	store := acl.New(bundle.folderHome(), bundle.info.MailPath, bundle.info.Driver, bundle.info.Separator, bundle.info.StorageEscapeChar, uc.info.Username, uc.lockOwner(), acl.Policy{}, s.opts.Locker)
-	store.SetLockName(bundle.info.LockName)
+	store := nsopen.ACL(bundle.folderHome(), bundle.info, uc.info.Username, uc.lockOwner(), adminACLPolicy, s.opts.Locker)
 	// Admin grants feed owner discovery like IMAP ones: the registry hangs off
 	// the index write, so both surfaces sync it through the one chain (#1168).
 	// The personal store gets it too when it backs an owner-templated space
@@ -634,11 +634,7 @@ func (s *Server) openACLStore(w http.ResponseWriter, r *http.Request, readOnly b
 			if !mailbox.PrefixIsOwnerTemplated(ns.Prefix) {
 				continue
 			}
-			sep := byte('/')
-			if ns.Separator != "" {
-				sep = ns.Separator[0]
-			}
-			ownerUI, serr := mailbox.StampOwnerLocation(uc.info, uc.info, ns.Location, sep)
+			ownerUI, serr := nsopen.Owner(ownerNamespace(ns), uc.info, uc.info)
 			if serr != nil {
 				continue
 			}

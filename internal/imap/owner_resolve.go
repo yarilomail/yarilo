@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -31,5 +32,10 @@ func resolveOwnerUserInfo(
 		return nil, fmt.Errorf("imap: owner %q not found: %w", owner, err)
 	}
 	// One producer for the precedence; the lookup above is this path's own.
-	return mailbox.StampOwnerLocation(found, base, spec.Location, byte(spec.Separator))
+	return nsopen.Owner(spec.nsopen(), found, base)
+}
+
+// nsopen is the part of spec that places its store.
+func (spec NamespaceSpec) nsopen() nsopen.Namespace {
+	return nsopen.Namespace{Type: string(spec.Type), Prefix: spec.Prefix, Separator: string(spec.Separator), Location: spec.Location}
 }

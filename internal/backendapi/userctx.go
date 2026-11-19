@@ -10,7 +10,9 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/auth/protocol"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/internal/userdbinfo"
+	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -283,28 +285,20 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 		// storage-name form (#1078, #1092), not the owner: it must not vary per
 		// user the day the userdb starts answering those fields, so it comes from
 		// the resolver's deployment defaults, not from uc.info.
-		nsInfo, err = mailbox.StampOwnerLocation(uc.info, s.deploymentBase(), spec.Location, sepByte(spec.Separator))
+		nsInfo, err = nsopen.Owner(ownerNamespace(spec), uc.info, s.deploymentBase())
 		if err != nil {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
 		}
 	} else {
 		// Against the user's own identity, as the session servers parse it: "%h"
 		// is otherwise left unexpanded, and a per-user location is not found.
-		loc, valid, perr := mailbox.ParseLocation(spec.Location, uc.info)
-		if perr != nil {
-			return nil, fmt.Errorf("backendapi/userctx: namespace %q location: %w", name, perr)
+		var valid bool
+		nsInfo, valid, err = nsopen.Fixed(fixedNamespace(spec), uc.info, uc.info, nsopen.Kind(fixedNamespace(spec)))
+		if err != nil {
+			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
 		}
 		if !valid {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q location empty", name)
-		}
-		// Username and Home alone are not enough: the consumers fall into
-		// different defaults for everything else, so the mailbox backend looked
-		// under <location>/Maildir while the ACL store looked in <location> and
-		// every per-mailbox ACL call here answered "folder not found" (#1109).
-		// One builder, shared with the IMAP path that had it right.
-		nsInfo, err = mailbox.NamespaceUserInfo(uc.info, loc, spec.Separator, mailbox.StoreKindOf(spec.Type, spec.Prefix))
-		if err != nil {
-			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
 		}
 	}
 	// No Init unless the caller opened eagerly; no refusal either, since outside
@@ -390,25 +384,26 @@ func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, 
 	if s.opts.Index == nil {
 		return nil, fmt.Errorf("backendapi: no index backend wired")
 	}
-	box := mb.OpenUser(ui)
+	settle := nsopen.Deferred
 	if mode == openEager {
-		if err := box.Init(); err != nil {
-			return nil, fmt.Errorf("mailbox init: %w", err)
-		}
+		settle = nsopen.Init
 	}
-	idx := s.opts.Index.OpenUser(ui)
 	// A read settles nothing: the adoption and the reconcile belong to a
 	// session that owns the mailbox, not to a diagnostic reading it (#1774).
 	var boxOpts []mailboxbase.BoxOption
 	if mode == openRead {
 		boxOpts = append(boxOpts, mailboxbase.ReadOnly())
 	}
+	o, err := nsopen.Open(mb, s.opts.Index, ui, settle, false, boxOpts...)
+	if err != nil {
+		return nil, err
+	}
 	bundle := &nsBundle{
 		spec:     spec,
 		info:     ui,
-		box:      box,
-		idx:      idx,
-		mbox:     mailboxbase.Open(box, idx, boxOpts...),
+		box:      o.Store,
+		idx:      o.Index,
+		mbox:     o.Box,
 		location: ui.Home,
 	}
 	return bundle, nil
@@ -417,17 +412,9 @@ func (s *Server) openNSInner(spec config.NamespaceConfig, ui *mailbox.UserInfo, 
 // mailboxBackendFor returns the backend for a namespace: the per-namespace
 // override wins, otherwise the global default.
 func (s *Server) mailboxBackendFor(spec config.NamespaceConfig, ui *mailbox.UserInfo) mailbox.MailboxBackend {
-	if override, ok := s.opts.NamespaceMailboxes[spec.Prefix]; ok && override != nil {
-		return override
-	}
-	// Then the driver the namespace's own location names, not the
-	// deployment-wide one. Selecting by prefix agreed with the location only
-	// while every namespace used one format -- which is the case the Driver
-	// field was added for (#1109).
-	if ui != nil && ui.Driver != "" {
-		return s.mailboxForDriver(ui.Driver)
-	}
-	return s.opts.Mailbox
+	return nsopen.Backends{
+		Mailbox: s.opts.Mailbox, ByDriver: s.opts.MailboxByDriver, Overrides: s.opts.NamespaceMailboxes,
+	}.For(spec.Prefix, ui)
 }
 
 // personalSpec returns the first declared personal namespace.
@@ -538,3 +525,19 @@ func dirExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && st.IsDir()
 }
+
+// fixedNamespace is spec as the opener reads it, the separator as written.
+func fixedNamespace(spec config.NamespaceConfig) nsopen.Namespace {
+	return nsopen.Namespace{Type: spec.Type, Prefix: spec.Prefix, Separator: spec.Separator, Location: spec.Location}
+}
+
+// ownerNamespace is fixedNamespace with an unset separator read as "/".
+func ownerNamespace(spec config.NamespaceConfig) nsopen.Namespace {
+	ns := fixedNamespace(spec)
+	ns.Separator = string(sepByte(spec.Separator))
+	return ns
+}
+
+// adminACLPolicy is the admin API's: it edits the files themselves, so no
+// global rule or INBOX default stands in for what a file says.
+var adminACLPolicy = acl.Policy{}

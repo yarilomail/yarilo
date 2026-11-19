@@ -5,6 +5,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
@@ -71,12 +72,9 @@ func (s *session) subscriberFor(personal *mailbox.UserInfo, folder string) func(
 	if ns == nil {
 		return s.personalAuto(personal).Subscribe
 	}
-	loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
+	nsd := deliveryNamespace(ns)
+	ui, ok, err := nsopen.Fixed(nsd, personal, nil, nsopen.Kind(nsd))
 	if err != nil || !ok {
-		return nil
-	}
-	ui, err := mailbox.NamespaceUserInfo(personal, loc, ns.Separator, mailbox.StoreKindOf(ns.Type, ns.Prefix))
-	if err != nil {
 		return nil
 	}
 	return s.boxAuto(personal, s.namespaceIndex(ns), ui).Subscribe
