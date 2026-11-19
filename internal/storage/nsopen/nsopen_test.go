@@ -1,6 +1,7 @@
 package nsopen_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
@@ -88,5 +89,40 @@ func TestBackendsFor(t *testing.T) {
 		if got := b.For(tc.prefix, tc.ui); got != tc.want {
 			t.Errorf("%s: For = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+type store struct {
+	mailbox.UserMailbox
+	initErr       error
+	inits, closes int
+}
+
+func (s *store) Init() error  { s.inits++; return s.initErr }
+func (s *store) Close() error { s.closes++; return nil }
+
+type storeBackend struct{ s *store }
+
+func (b storeBackend) OpenUser(*mailbox.UserInfo) mailbox.UserMailbox { return b.s }
+
+// A store whose Init fails is closed by the opener: no caller holds it (#2606).
+func TestOpenClosesAStoreThatDoesNotInit(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		mode               nsopen.Mode
+		initErr            error
+		wantErr            bool
+		wantInits, wantCls int
+	}{
+		{"init fails", nsopen.Init, errors.New("no room"), true, 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &store{initErr: tc.initErr}
+			_, err := nsopen.Open(storeBackend{s}, nil, &mailbox.UserInfo{}, tc.mode, false)
+			if (err != nil) != tc.wantErr || s.inits != tc.wantInits || s.closes != tc.wantCls {
+				t.Errorf("Open = err %v, inits %d, closes %d; want err %v, inits %d, closes %d",
+					err, s.inits, s.closes, tc.wantErr, tc.wantInits, tc.wantCls)
+			}
+		})
 	}
 }

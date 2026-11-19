@@ -90,12 +90,13 @@ type Opened struct {
 	AdoptErr error
 }
 
-// Open opens ui's store on mb. adoptForeign renames folders another
+// Open opens ui's store on mb, closing it when Init fails. adoptForeign renames folders another
 // implementation left named its own way before anything lists them (#1609).
 func Open(mb mailbox.MailboxBackend, idx mailbox.IndexBackend, ui *mailbox.UserInfo, mode Mode, adoptForeign bool, opts ...mailboxbase.BoxOption) (*Opened, error) {
 	store := mb.OpenUser(ui)
 	if mode == Init {
 		if err := store.Init(); err != nil {
+			store.Close() //nolint:errcheck
 			return nil, fmt.Errorf("mailbox init: %w", err)
 		}
 	}
