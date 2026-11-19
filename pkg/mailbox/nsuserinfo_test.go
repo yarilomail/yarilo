@@ -27,7 +27,7 @@ func TestNamespaceUserInfoCarriesEveryFieldAConsumerWouldDefault(t *testing.T) {
 		IndexDir: "/idx", VolatileDir: "/vol", ControlDir: "/ctl", AltDir: "/alt",
 	}
 
-	ui, err := mailbox.NamespaceUserInfo(base, loc, ".")
+	ui, err := mailbox.NamespaceUserInfo(base, loc, ".", mailbox.UserStore)
 	if err != nil {
 		t.Fatalf("NamespaceUserInfo: %v", err)
 	}
@@ -67,11 +67,36 @@ func TestNamespaceUserInfoCarriesEveryFieldAConsumerWouldDefault(t *testing.T) {
 // that is the defaulting this constructor exists to prevent, and producing it
 // from here would be the worst place to reintroduce it.
 func TestNamespaceUserInfoRefusesAnEmptyRoot(t *testing.T) {
-	ui, err := mailbox.NamespaceUserInfo(&mailbox.UserInfo{Username: "u1@test"}, mailbox.Location{Driver: "maildir"}, "/")
+	ui, err := mailbox.NamespaceUserInfo(&mailbox.UserInfo{Username: "u1@test"}, mailbox.Location{Driver: "maildir"}, "/", mailbox.UserStore)
 	if err == nil {
 		t.Fatalf("an empty location produced %+v", ui)
 	}
 	if !strings.Contains(err.Error(), "root path") {
 		t.Errorf("error %q does not say what is missing", err)
+	}
+}
+
+// Only a namespace that is neither personal nor resolved per owner shares
+// one store between users, and only it gets the store's lock name (#2598).
+func TestStoreKindOf(t *testing.T) {
+	for _, c := range []struct {
+		typ, prefix string
+		want        mailbox.StoreKind
+	}{
+		{"personal", "", mailbox.UserStore},
+		{"personal", "Archive/", mailbox.UserStore},
+		{"shared", "user/%u/", mailbox.UserStore},
+		{"shared", "Public/", mailbox.SharedByAll},
+		{"public", "Public/", mailbox.SharedByAll},
+	} {
+		if got := mailbox.StoreKindOf(c.typ, c.prefix); got != c.want {
+			t.Errorf("%s %q: %v, want %v", c.typ, c.prefix, got, c.want)
+		}
+	}
+	base := &mailbox.UserInfo{Username: "a@x", Home: "/home/a"}
+	shared, _ := mailbox.NamespaceUserInfo(base, mailbox.Location{Path: "/srv/public/"}, "/", mailbox.SharedByAll)
+	own, _ := mailbox.NamespaceUserInfo(base, mailbox.Location{Path: "/home/a/archive"}, "/", mailbox.UserStore)
+	if shared.LockUser() != "store:/srv/public" || own.LockUser() != "a@x" {
+		t.Fatalf("lock names %q and %q", shared.LockUser(), own.LockUser())
 	}
 }

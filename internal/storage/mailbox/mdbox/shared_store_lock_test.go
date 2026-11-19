@@ -18,11 +18,11 @@ func publicMdbox(t *testing.T, root, user string, dial func() locks.Locker) *use
 	if err != nil || !ok {
 		t.Fatalf("location: %v", err)
 	}
-	ui, err := mailbox.NamespaceUserInfo(base, loc, "/")
+	ui, err := mailbox.NamespaceUserInfo(base, loc, "/", mailbox.SharedByAll)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mb := New(WithLocker(dial())).OpenUser(mailbox.SharedStore(ui))
+	mb := New(WithLocker(dial())).OpenUser(ui)
 	if err := mb.Init(); err != nil {
 		t.Fatal(err)
 	}

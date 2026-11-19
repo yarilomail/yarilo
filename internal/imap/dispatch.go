@@ -197,7 +197,7 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 					return nil, nil, fmt.Errorf("imap: personal namespace location: %w", err)
 				}
 				if ok {
-					if ui, err = mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator)); err != nil {
+					if ui, err = mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator), mailbox.UserStore); err != nil {
 						return nil, nil, fmt.Errorf("imap: personal namespace: %w", err)
 					}
 				}
@@ -244,11 +244,11 @@ func (s *session) openHandles(personalUI *mailbox.UserInfo) (map[string]*nsHandl
 			// backend (falls back to Home/Maildir) disagree. Shared with the
 			// admin API, which built the same structure from two fields and
 			// therefore disagreed with this one (#1109).
-			ui, err := mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator))
+			ui, err := mailbox.NamespaceUserInfo(personalUI, loc, string(spec.Separator),
+				mailbox.StoreKindOf(string(spec.Type), spec.Prefix))
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: %s namespace: %w", spec.Type, err)
 			}
-			ui = mailbox.SharedStore(ui)
 			h, err := s.openHandle(spec, nsSlug(spec), ui, owner, subsFile)
 			if err != nil {
 				return nil, nil, fmt.Errorf("imap: open %s namespace: %w", spec.Type, err)

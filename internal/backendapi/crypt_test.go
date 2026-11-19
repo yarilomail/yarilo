@@ -302,7 +302,7 @@ func TestCryptStatusWalksEveryNamespaceWithAStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := mailbox.NamespaceUserInfo(base, loc, archive.Separator)
+	info, err := mailbox.NamespaceUserInfo(base, loc, archive.Separator, mailbox.UserStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,5 +371,35 @@ func breakFolderIndex(t *testing.T, home, folder string) {
 	}
 	if err := os.WriteFile(idx, bytes.Repeat([]byte{0xff}, 4096), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// backend-api opens a public namespace under the store's lock name, and the
+// personal one under the user's (#2598).
+func TestNamespaceBundleNamesTheSharedStore(t *testing.T) {
+	dir := t.TempDir()
+	srv := New(Options{
+		Mailbox:  mailbox.Validating(maildir.New(), mailbox.DefaultNameRules()),
+		Index:    file.New(),
+		Resolver: &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n"},
+		Namespaces: []config.NamespaceConfig{
+			{Type: "personal", Prefix: "", Separator: "/", List: "yes", Inbox: true},
+			{Type: "shared", Prefix: "Public/", Separator: "/", List: "yes", Location: "maildir:" + dir},
+		},
+	})
+	uc, err := srv.openUserContextReadOnly("alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uc.Close()
+	pub, err := uc.ns(srv, "public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pub.info.LockUser(); got != "store:"+dir {
+		t.Errorf("public lock name %q, want store:%s", got, dir)
+	}
+	if got := uc.info.LockUser(); got != "alice@example.com" {
+		t.Errorf("personal lock name %q", got)
 	}
 }

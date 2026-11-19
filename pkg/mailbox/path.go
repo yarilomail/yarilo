@@ -31,16 +31,26 @@ func (u *UserInfo) LockUser() string {
 	return u.Username
 }
 
-// SharedStore marks ui as a store shared by every user who opens it (a
-// non-templated shared or public namespace): its lock keys name the store's
-// path, so two users' sessions on it exclude each other (#2598).
-func SharedStore(ui *UserInfo) *UserInfo {
-	root := ui.MailPath
-	if root == "" {
-		root = ui.Home
+// StoreKind says whose store a namespace opens.
+type StoreKind int
+
+const (
+	// UserStore is the user's own store, or an owner's resolved per owner:
+	// its lock keys name that user.
+	UserStore StoreKind = iota
+	// SharedByAll is one fixed store for every user who opens it (a shared
+	// or public namespace with no owner): its lock keys name the store, so
+	// two users' sessions on it exclude each other (#2598).
+	SharedByAll
+)
+
+// StoreKindOf is the kind of store a namespace of type nsType and prefix
+// opens.
+func StoreKindOf(nsType, prefix string) StoreKind {
+	if strings.EqualFold(nsType, "personal") || PrefixIsOwnerTemplated(prefix) {
+		return UserStore
 	}
-	ui.LockName = "store:" + filepath.Clean(root)
-	return ui
+	return SharedByAll
 }
 
 // UserInfo carries the per-session storage identity for a user, resolved once
@@ -117,9 +127,8 @@ type UserInfo struct {
 	SessionID string
 
 	// LockName is the name a store's lock keys are built from, when it is
-	// not Username: a shared store with no owner is one store for every user
-	// who opens it, so its keys name the store (SharedStore). Read through
-	// LockUser.
+	// not Username: a SharedByAll store's, set by NamespaceUserInfo. Read
+	// through LockUser.
 	LockName string
 
 	// MailPath, when non-empty, is the mail storage root, separated from Home

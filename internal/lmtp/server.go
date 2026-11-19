@@ -427,12 +427,6 @@ func (s *session) prependHeaders(data []byte, rcpt, finalRcpt string) []byte {
 // matchNamespace returns the configured namespace whose (non-empty) prefix is
 // the longest prefix of folder, or nil when the folder belongs to the personal
 // store. Longest-prefix match so nested namespaces resolve to the most specific.
-// sharedStore is a namespace whose store is one for every user: neither
-// personal nor resolved per owner. Its lock keys name the store (#2598).
-func sharedStore(ns *config.NamespaceConfig) bool {
-	return ns.Type != "personal" && !mailbox.PrefixIsOwnerTemplated(ns.Prefix)
-}
-
 func (s *session) matchNamespace(folder string) *config.NamespaceConfig {
 	var best *config.NamespaceConfig
 	for i := range s.opts.Namespaces {
@@ -550,10 +544,7 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	if rel == "" {
 		rel = "INBOX" // delivery to a bare namespace prefix → its INBOX
 	}
-	ui, err := mailbox.NamespaceUserInfo(userInfo, loc, ns.Separator)
-	if err == nil && sharedStore(ns) {
-		ui = mailbox.SharedStore(ui)
-	}
+	ui, err := mailbox.NamespaceUserInfo(userInfo, loc, ns.Separator, mailbox.StoreKindOf(ns.Type, ns.Prefix))
 	if err != nil {
 		slog.Warn("lmtp: namespace not usable, delivering to INBOX",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)

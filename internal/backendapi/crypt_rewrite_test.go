@@ -380,7 +380,11 @@ func TestReencryptSharedNamespace(t *testing.T) {
 			const user = "alice@example.com"
 			materialiseHome(t, ts, user)
 			store := map[string]mailbox.MailboxBackend{"maildir": maildir.New(), "sdbox": dboxv2.New(), "mdbox": mdbox.New()}[driver]
-			info := mailbox.SharedStore(&mailbox.UserInfo{Username: user, Home: dir, MailPath: dir, Driver: driver, Separator: "/"})
+			info, err := mailbox.NamespaceUserInfo(&mailbox.UserInfo{Username: user, Home: t.TempDir()},
+				mailbox.Location{Driver: driver, Path: dir}, "/", mailbox.SharedByAll)
+			if err != nil {
+				t.Fatal(err)
+			}
 			saveWith(t, store, info, "Subject: public\r\n\r\nx\r\n")
 			if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
 				map[string]any{"user": user, "namespace": "public"}); st != http.StatusAccepted {

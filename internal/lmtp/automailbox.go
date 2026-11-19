@@ -71,12 +71,9 @@ func (s *session) subscriberFor(personal *mailbox.UserInfo, folder string) func(
 	if err != nil || !ok {
 		return nil
 	}
-	ui, err := mailbox.NamespaceUserInfo(personal, loc, ns.Separator)
+	ui, err := mailbox.NamespaceUserInfo(personal, loc, ns.Separator, mailbox.StoreKindOf(ns.Type, ns.Prefix))
 	if err != nil {
 		return nil
-	}
-	if sharedStore(ns) {
-		ui = mailbox.SharedStore(ui)
 	}
 	return s.boxAuto(personal, s.namespaceIndex(ns), ui).Subscribe
 }

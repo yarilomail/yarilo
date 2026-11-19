@@ -1,6 +1,9 @@
 package mailbox
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // NamespaceUserInfo builds the UserInfo a non-personal namespace's storage
 // handles resolve against: the session's identity, with every path field taken
@@ -19,6 +22,9 @@ import "fmt"
 // falls back to the deployment-wide driver rather than the one the namespace's
 // location names, which is correct only while every namespace uses one format.
 //
+// kind says whose store it is (StoreKindOf): a SharedByAll one names the
+// store in its lock keys, whoever opens it.
+//
 // separator comes from the namespace spec rather than from base: it is a
 // property of the namespace, and the personal one may use another.
 //
@@ -27,7 +33,7 @@ import "fmt"
 // constructor that accepted an empty root would reintroduce the class it is
 // meant to close -- and it would do so from the one place that is supposed to
 // make it impossible. The reference asserts at the same point.
-func NamespaceUserInfo(base *UserInfo, loc Location, separator string) (*UserInfo, error) {
+func NamespaceUserInfo(base *UserInfo, loc Location, separator string, kind StoreKind) (*UserInfo, error) {
 	if loc.Path == "" {
 		return nil, fmt.Errorf("mailbox: namespace location has no root path")
 	}
@@ -65,6 +71,9 @@ func NamespaceUserInfo(base *UserInfo, loc Location, separator string) (*UserInf
 		ui.Groups = base.Groups
 		ui.ACLUser = base.ACLUser
 		ui.ACLGroups = base.ACLGroups
+	}
+	if kind == SharedByAll {
+		ui.LockName = "store:" + filepath.Clean(loc.Path)
 	}
 	return ui, nil
 }

@@ -57,7 +57,7 @@ func TestTheAssembledVirtualNamespaceHasItsFolders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vui, err := mailbox.NamespaceUserInfo(personal, loc, "/")
+	vui, err := mailbox.NamespaceUserInfo(personal, loc, "/", mailbox.UserStore)
 	if err != nil {
 		t.Fatal(err)
 	}

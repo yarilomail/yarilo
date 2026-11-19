@@ -302,12 +302,9 @@ func (uc *userContext) ns(s *Server, name string) (*nsBundle, error) {
 		// under <location>/Maildir while the ACL store looked in <location> and
 		// every per-mailbox ACL call here answered "folder not found" (#1109).
 		// One builder, shared with the IMAP path that had it right.
-		nsInfo, err = mailbox.NamespaceUserInfo(uc.info, loc, spec.Separator)
+		nsInfo, err = mailbox.NamespaceUserInfo(uc.info, loc, spec.Separator, mailbox.StoreKindOf(spec.Type, spec.Prefix))
 		if err != nil {
 			return nil, fmt.Errorf("backendapi/userctx: namespace %q: %w", name, err)
-		}
-		if spec.Type != "personal" && !mailbox.PrefixIsOwnerTemplated(spec.Prefix) {
-			nsInfo = mailbox.SharedStore(nsInfo)
 		}
 	}
 	// No Init unless the caller opened eagerly; no refusal either, since outside

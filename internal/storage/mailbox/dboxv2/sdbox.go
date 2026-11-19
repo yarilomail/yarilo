@@ -1078,11 +1078,11 @@ func (u *userMailbox) LockUser() string { return u.lockUser }
 // DriverName is the label this driver's messages are counted under.
 func (u *userMailbox) DriverName() string { return driverName }
 
-// syncFile is the durability call. A test seam: a row counts it, because
-// nothing else in the package observes whether it happened (#1847).
 // folderLockWait bounds the wait for a folder's lock. Test seam.
 var folderLockWait = 35 * time.Second
 
+// syncFile is the durability call. A test seam: a row counts it, because
+// nothing else in the package observes whether it happened (#1847).
 var syncFile = (*os.File).Sync
 
 // FsyncMode is what a delivery makes durable here, so the wiring of the
