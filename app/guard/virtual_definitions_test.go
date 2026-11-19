@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -13,7 +12,8 @@ import (
 // The stand's own configuration, not a shape invented here: the namespace is
 // usable only where its definitions are mounted at the mail_path naming them.
 func TestSharedVirtualDefinitionsReachTheContainersThatReadThem(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	t.Parallel()
+	out, err := helmOutput(t, "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

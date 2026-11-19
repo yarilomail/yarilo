@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -72,7 +71,8 @@ func scriptsShape(t *testing.T, out []byte, vol string) (keys []string, mounts m
 // The stand's values: the global scripts are a ConfigMap mounted at
 // sieve_global where Sieve runs, lmtp and imap, and nowhere else (#2283).
 func TestSieveGlobalScriptsReachLMTPAndIMAP(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	t.Parallel()
+	out, err := helmOutput(t, "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
@@ -88,6 +88,7 @@ func TestSieveGlobalScriptsReachLMTPAndIMAP(t *testing.T) {
 
 // No global scripts in values render nothing: no ConfigMap, volume or mount.
 func TestNoSieveGlobalScriptsRenderNothing(t *testing.T) {
+	t.Parallel()
 	out, err := renderWith(t, "")
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)

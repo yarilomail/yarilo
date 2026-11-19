@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"slices"
 	"testing"
 )
@@ -9,7 +8,8 @@ import (
 // The stand's values: the imapsieve scripts reach the imap container of the
 // co-located backend at imapsieve_script_dir, and no other container (#2292).
 func TestIMAPSieveScriptsReachTheBackendIMAP(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	t.Parallel()
+	out, err := helmOutput(t, "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
@@ -24,6 +24,7 @@ func TestIMAPSieveScriptsReachTheBackendIMAP(t *testing.T) {
 
 // No imapsieve scripts in values render nothing: no ConfigMap, volume or mount.
 func TestNoIMAPSieveScriptsRenderNothing(t *testing.T) {
+	t.Parallel()
 	out, err := renderWith(t, "")
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)

@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,7 +11,8 @@ import (
 // Containers share one network namespace, so one without a port of its own is
 // read off a neighbour's page (#1999); names are the pod's, not one container's (#2068).
 func TestEveryBackendContainerHasItsOwnTelemetryPort(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	t.Parallel()
+	out, err := helmOutput(t, "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

@@ -2,7 +2,6 @@ package guard_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,7 +40,8 @@ var chartDifferences = []struct {
 }
 
 func TestChartRenderDiffersFromDefaultsOnlyWhereListed(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "t", "../../helm", "--show-only", "templates/configmap.yaml").Output()
+	t.Parallel()
+	out, err := helmOutput(t, "template", "t", "../../helm", "--show-only", "templates/configmap.yaml")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

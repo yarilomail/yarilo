@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -38,7 +37,7 @@ type podWorkload struct {
 
 func renderWorkloads(t *testing.T, args ...string) []podWorkload {
 	t.Helper()
-	out, err := exec.CommandContext(t.Context(), "helm", append([]string{"template", "t", "../../helm"}, args...)...).Output()
+	out, err := helmOutput(t, append([]string{"template", "t", "../../helm"}, args...)...)
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
@@ -56,6 +55,7 @@ func renderWorkloads(t *testing.T, args ...string) []podWorkload {
 // other; /tmp is bounded in every pod by tmpSizeLimit, 320Mi when the values
 // leave it alone, and no key is mounted when mailCrypt is not set.
 func TestMailCryptKeysAndTmpLimitInTheChart(t *testing.T) {
+	t.Parallel()
 	opensMail := map[string]bool{"yarilo-imap": true, "yarilo-pop3": true, "yarilo-lmtp": true, "yarilo-jmap": true,
 		"yarilo-managesieve": true, "yarilo-fts": true, "yarilo-backend-api": true}
 	// The co-located StatefulSet (the stand) and the per-protocol Deployments.

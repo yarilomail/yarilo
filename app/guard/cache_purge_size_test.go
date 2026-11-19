@@ -2,7 +2,6 @@ package guard_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 // A zero minimum written without quotes renders as "0" and loads as zero: a
 // default filter would read it as unset and render the 32 KiB it disables.
 func TestACacheMinimumOfZeroReachesTheConfig(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		values string
@@ -29,7 +29,7 @@ func TestACacheMinimumOfZeroReachesTheConfig(t *testing.T) {
 				}
 				args = append(args, "-f", vf)
 			}
-			out, err := exec.CommandContext(t.Context(), "helm", args...).Output()
+			out, err := helmOutput(t, args...)
 			if err != nil {
 				t.Fatalf("helm template: %v", err)
 			}
