@@ -287,7 +287,7 @@ func (s *session) storeOnCopies(msgs map[uint32]*mailbox.MessageMeta, updates ma
 			}
 		}
 		h.mailbox().WriteFlags(b.folder, b.name, writes)
-		s.emitMailboxChange(b.folder, locks.EventChanged, 0)
+		s.emitMailboxChangeIn(h.mailbox(), b.folder, locks.EventChanged, 0, 0, [16]byte{})
 	}
 	return out, copies, nil
 }
@@ -392,7 +392,8 @@ func (s *session) imapSieveOnCopies(pending []pendingStore, copies map[uint32]vi
 // on; a virtual one also hears every folder it draws from (as the reference does).
 func (s *session) subscribeSelected(ctx context.Context) (<-chan locks.Event, error) {
 	l, user := s.srv.opts.Locker, s.userInfo.Username
-	keys := []string{locks.MailboxKey(user, s.folder.Name)}
+	// A shared store's folder is heard on the store's key (#2600).
+	keys := []string{locks.MailboxKey(mailbox.LockUserOf(s.folderMailbox(), user), s.folder.Name)}
 	if s.isVirtualSelected() {
 		if folders, err := s.backingFolders(); err == nil {
 			for _, b := range folders {

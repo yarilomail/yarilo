@@ -61,7 +61,7 @@ func (o *Ops) MoveIn(req MoveRequest) ([]Moved, error) {
 			_ = req.Src.Restore(req.SrcName, srcFile, req.DstName, name, nm)
 			return out, fmt.Errorf("mailops/move record: %w", err)
 		}
-		o.Committed(req.DstFolder, locks.EventDelivered, nm.UID, UsageDelta(nm), nm.GUID)
+		o.CommittedIn(req.Dst, req.DstFolder, locks.EventDelivered, nm.UID, UsageDelta(nm), nm.GUID)
 		out = append(out, Moved{Src: m, Dst: nm, DstFile: name, relocated: true})
 	}
 	return out, nil
@@ -103,7 +103,7 @@ func (o *Ops) ExpungeMoved(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map
 					"folder", req.SrcName, "uid", mv.Src.UID, "err", err)
 			}
 		}
-		o.Committed(req.SrcFolder, locks.EventExpunged, mv.Src.UID, UsageDelta(mv.Src), mv.Src.GUID)
+		o.CommittedIn(req.Src, req.SrcFolder, locks.EventExpunged, mv.Src.UID, UsageDelta(mv.Src), mv.Src.GUID)
 	}
 	return kept
 }

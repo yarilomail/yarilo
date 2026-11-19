@@ -228,6 +228,19 @@ type LockNamer interface {
 	LockUser() string
 }
 
+// LockUserOf is the name box's store keys its locks and events with, or user
+// when the store keeps no name of its own: a shared store's events reach
+// every user's sessions on it (#2600).
+func LockUserOf(box Box, user string) string {
+	if box == nil {
+		return user
+	}
+	if ln, ok := Driver(box.Store()).(LockNamer); ok && ln.LockUser() != "" {
+		return ln.LockUser()
+	}
+	return user
+}
+
 // RawBody is a stored body exactly as it lies on disk: still encrypted when it
 // was saved so, with its line ends untouched.
 type RawBody interface {

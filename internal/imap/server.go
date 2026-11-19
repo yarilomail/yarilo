@@ -711,10 +711,16 @@ func renamedCount(writes []mailbox.FlagWrite, results []mailbox.FlagWriteResult)
 // emitMailboxChangeSized is emitMailboxChange for a caller that knows how large
 // the message was, so the usage moves by it instead of a recount (#1548).
 func (s *session) emitMailboxChangeSized(f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32, guid [16]byte) {
+	s.emitMailboxChangeIn(s.folderMailbox(), f, eventType, uid, vsize, guid)
+}
+
+// emitMailboxChangeIn is the same for a folder of box, which need not be the
+// selected one's: box's store names the event (#2600).
+func (s *session) emitMailboxChangeIn(box mailbox.Box, f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32, guid [16]byte) {
 	if s.ops == nil {
 		return
 	}
-	s.ops.Committed(f, eventType, uid, vsize, guid)
+	s.ops.CommittedIn(box, f, eventType, uid, vsize, guid)
 }
 
 // emitMailboxList publishes a change to the folder list; it can run before

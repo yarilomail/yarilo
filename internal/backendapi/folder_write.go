@@ -190,7 +190,7 @@ func (s *Server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 			"user", req.User, "folder", req.Folder, "err", err)
 	}
 
-	s.emitFolderEvent(uc, req.Folder, locks.EventExpunged, 0)
+	s.emitFolderEvent(bundle, req.Folder, locks.EventExpunged, 0)
 	apiJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -255,8 +255,8 @@ func (s *Server) handleFolderRename(w http.ResponseWriter, r *http.Request) {
 			"user", req.User, "from", req.OldFolder, "to", req.NewFolder, "err", err)
 	}
 
-	s.emitFolderEvent(uc, req.OldFolder, locks.EventExpunged, 0)
-	s.emitFolderEvent(uc, req.NewFolder, locks.EventDelivered, 0)
+	s.emitFolderEvent(bundle, req.OldFolder, locks.EventExpunged, 0)
+	s.emitFolderEvent(bundle, req.NewFolder, locks.EventDelivered, 0)
 	apiJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -334,7 +334,7 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
 		}
 		expunged = append(expunged, m.UID)
-		s.emitFolderEvent(uc, req.Folder, locks.EventExpunged, m.UID)
+		s.emitFolderEvent(bundle, req.Folder, locks.EventExpunged, m.UID)
 	}
 
 	apiJSON(w, map[string]any{
@@ -410,14 +410,14 @@ func (s *Server) renameFolderACL(bundle *nsBundle, oldFolder, newFolder string) 
 // emitFolderEvent pushes an advisory wake-up to IDLE sessions on other pods.
 // Fire-and-forget: errors are logged at Debug only, since the authoritative
 // state already lives on disk and the next poll picks it up.
-func (s *Server) emitFolderEvent(uc *userContext, folder string, eventType locks.EventType, uid uint32) {
-	if s.opts.Locker == nil || uc.info == nil {
+func (s *Server) emitFolderEvent(bundle *nsBundle, folder string, eventType locks.EventType, uid uint32) {
+	if s.opts.Locker == nil || bundle == nil || bundle.info == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), folderEventTimeout)
 	defer cancel()
 	payload := uintPayload(uid)
-	key := locks.MailboxKey(uc.info.Username, folder)
+	key := locks.MailboxKey(bundle.info.LockUser(), folder)
 	if err := s.opts.Locker.Emit(ctx, key, eventType, payload); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			slog.Debug("backendapi/folder: event emit timed out",

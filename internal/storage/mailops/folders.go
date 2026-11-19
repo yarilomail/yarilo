@@ -26,7 +26,7 @@ func (o *Ops) CreateFolder(box mailbox.Box, rel, name string) error {
 	if err := mailboxcreate.Folder(box, rel, o.cfg.Quota.Policy.MailboxCount); err != nil {
 		return err
 	}
-	o.EmitList(locks.EventMailboxCreate, name)
+	o.EmitListIn(box, locks.EventMailboxCreate, name)
 	return nil
 }
 
@@ -51,7 +51,7 @@ func (o *Ops) DeleteFolder(box mailbox.Box, acl FolderACL, rel, name string) err
 			slog.Warn(o.cfg.Protocol+": acl remove after delete failed", "folder", name, "err", err)
 		}
 	}
-	o.EmitList(locks.EventMailboxDelete, name)
+	o.EmitListIn(box, locks.EventMailboxDelete, name)
 	return nil
 }
 
@@ -66,7 +66,7 @@ func (o *Ops) RenameFolder(box mailbox.Box, acl FolderACL, oldRel, newRel, oldNa
 			slog.Warn(o.cfg.Protocol+": acl rename failed", "from", oldName, "to", newName, "err", err)
 		}
 	}
-	o.EmitList(locks.EventMailboxRename, oldName+RenameSeparator+newName)
+	o.EmitListIn(box, locks.EventMailboxRename, oldName+RenameSeparator+newName)
 	return nil
 }
 
@@ -81,12 +81,28 @@ func (o *Ops) Subscribed(name string, on bool) {
 
 // EmitList publishes a change to the user's folder list; best effort.
 func (o *Ops) EmitList(ev locks.EventType, payload string) {
+	o.EmitListIn(nil, ev, payload)
+}
+
+// EmitListIn publishes a change to a folder of box, under its full name: on
+// a shared store's own key, where every user's sessions on it listen, and
+// not on the user's as well, or their own sessions would hear it twice (#2600).
+func (o *Ops) EmitListIn(box mailbox.Box, ev locks.EventType, payload string) {
 	if o.cfg.Locker == nil || o.user == nil || o.user.Username == "" {
+		return
+	}
+	o.EmitListTo(mailbox.LockUserOf(box, o.user.Username), ev, payload)
+}
+
+// EmitListTo publishes a folder-list change on name's key: a user's, or a
+// shared store's.
+func (o *Ops) EmitListTo(name string, ev locks.EventType, payload string) {
+	if o.cfg.Locker == nil || name == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := o.cfg.Locker.Emit(ctx, locks.MailboxListKey(o.user.Username), ev, payload); err != nil {
+	if err := o.cfg.Locker.Emit(ctx, locks.MailboxListKey(name), ev, payload); err != nil {
 		slog.Debug(o.cfg.Protocol+": emit list event failed", "type", string(ev), "payload", payload, "err", err)
 	}
 }
