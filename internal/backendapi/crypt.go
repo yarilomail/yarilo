@@ -23,12 +23,14 @@ import (
 // under: expunged, not purged, and still under whatever key sealed them.
 const unreferencedFolder = "(expunged, not purged)"
 
-const (
+// cryptJobLease and cryptJobRenew are variables for the rows that wait one out.
+var (
 	cryptJobLease = 60 * time.Second
 	cryptJobRenew = 20 * time.Second
-	// cryptJobKeep is how long a finished job stays readable.
-	cryptJobKeep = time.Hour
 )
+
+// cryptJobKeep is how long a finished job stays readable.
+const cryptJobKeep = time.Hour
 
 func (s *Server) registerCryptRoutes() {
 	s.mux.Handle("GET /api/backend/crypt/keys", s.middleware(s.handleCryptKeys))
@@ -241,11 +243,17 @@ func (s *Server) startCryptJob(kind cryptKind, req cryptRequest) (*cryptJob, err
 
 func (s *Server) runCryptJob(ctx context.Context, job *cryptJob, req cryptRequest) {
 	defer job.cancel()
-	run := func(ctx context.Context) error { return s.walkCrypt(ctx, job, req) }
+	started := false
+	run := func(ctx context.Context) error { started = true; return s.walkCrypt(ctx, job, req) }
 	var err error
 	if s.opts.Locker != nil {
-		err = locks.WithLock(locks.WithSite(ctx, "crypt-job"), s.opts.Locker, locks.CryptJobKey(req.User), locks.Owner(req.User, "backend-api-crypt"),
-			cryptJobLease, cryptJobRenew, run)
+		// Waits one term for the lease: a pod that died holding it lets it
+		// expire, a job running elsewhere keeps renewing it.
+		err = locks.WithLockWaiting(locks.WithSite(ctx, "crypt-job"), s.opts.Locker, locks.CryptJobKey(req.User), locks.Owner(req.User, "backend-api-crypt"),
+			cryptJobLease, cryptJobRenew, cryptJobLease+cryptJobRenew, run)
+		if !started && (errors.Is(err, locks.ErrBusy) || errors.Is(err, context.DeadlineExceeded)) {
+			err = fmt.Errorf("a crypt job for %s is already running on another backend", req.User)
+		}
 	} else {
 		err = run(ctx)
 	}
