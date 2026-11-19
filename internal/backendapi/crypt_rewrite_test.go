@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/locks/lockstest"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
@@ -330,4 +333,61 @@ func mdboxBodies(t *testing.T, l *mailcrypt.Layer, info *mailbox.UserInfo) map[s
 		out[fmt.Sprint(m.UID)] = string(b)
 	}
 	return out
+}
+
+// --rate bounds the rewrites: six messages at 20 a second take at least the
+// five gaps between them.
+func TestReencryptHoldsItsRate(t *testing.T) {
+	f := sdboxRewriteFixture(t)
+	for range 6 {
+		f.save(t, nil, "Subject: s\r\n\r\nx\r\n")
+	}
+	start := time.Now()
+	job := f.runAPI(t, "reencrypt", map[string]any{"rate": 20})
+	if job.Rewritten != 6 {
+		t.Fatalf("job %+v", job)
+	}
+	if took := time.Since(start); took < 5*time.Second/20 {
+		t.Fatalf("six rewrites at 20 a second took %v", took)
+	}
+	if st, body := doJSON(t, f.ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
+		map[string]any{"user": f.user, "rate": -1}); st != http.StatusBadRequest {
+		t.Fatalf("a negative rate: %d %s", st, body)
+	}
+}
+
+// A shared namespace's store is rewritten only when it is maildir: an sdbox
+// or mdbox one is locked per accessing user (#2598).
+func TestReencryptSharedNamespaceOnlyMaildir(t *testing.T) {
+	for _, c := range []struct {
+		driver string
+		ok     bool
+	}{{"maildir", true}, {"sdbox", false}} {
+		t.Run(c.driver, func(t *testing.T) {
+			dir := t.TempDir()
+			ts, _ := storageTestServer(t, func(o *Options) {
+				o.Crypt = mailcrypt.New(mailcrypt.Options{})
+				o.Locker = lockstest.Server(t)()
+				o.Namespaces = append(o.Namespaces, config.NamespaceConfig{
+					Type: "shared", Prefix: "Public/", Separator: "/", List: "yes", Location: c.driver + ":" + dir,
+				})
+				o.MailboxByDriver = func(d string) mailbox.MailboxBackend {
+					if d == "sdbox" {
+						return dboxv2.New()
+					}
+					return nil
+				}
+			})
+			const user = "alice@example.com"
+			materialiseHome(t, ts, user)
+			if st, body := doJSON(t, ts, http.MethodPost, "/api/backend/crypt/reencrypt", "",
+				map[string]any{"user": user, "namespace": "public", "to": "plain"}); st != http.StatusAccepted {
+				t.Fatalf("start: %d %s", st, body)
+			}
+			job := waitCryptJob(t, ts.URL, user)
+			if c.ok && job.State != "done" || !c.ok && (job.State != "failed" || !strings.Contains(job.Error, "#2598")) {
+				t.Fatalf("%s: %+v", c.driver, job)
+			}
+		})
+	}
 }

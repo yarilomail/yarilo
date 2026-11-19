@@ -46,6 +46,7 @@ func printCryptUsage() {
 
 Commands:
   status <user> [folder...] [--namespace NS] [--detach]
+  status --all [--jobs N] [--public NAME]
         Count the user's messages in each folder by state: plain, current
         (sealed to exactly the keys of public_key), other_key, reference,
         no_key. Every namespace of the user with a store of its own, or
@@ -53,13 +54,19 @@ Commands:
         exits non-zero. Runs as a job on the user's backend-api; Ctrl-C
         cancels it unless --detach.
 
-  reencrypt <user> [folder...] [--dry-run] [--to age|plain] [--namespace NS] [--detach]
+  reencrypt <user> [folder...] [--dry-run] [--to age|plain] [--namespace NS] [--rate N] [--detach]
+  reencrypt --all [--dry-run] [--to age|plain] [--jobs N] [--rate N] [--public NAME]
         Rewrite every message that is not under the current key (--to age,
         the default) or that is sealed (--to plain), one at a time: the new
         body is verified by hash before it replaces the old one. A message
         no key opens is left and counted. An mdbox store is rewritten
         whole, one shared file at a time, so folders cannot be named.
-        --dry-run reports and writes nothing.
+        --dry-run reports and writes nothing. --rate (default 100) bounds
+        the messages rewritten a second, shared by the --jobs running at
+        once. --all runs every user user/iterate lists, each on the user's
+        own backend-api, then the public namespace once (a shared sdbox or
+        mdbox store is refused, #2598); the summary is the zero the last
+        step of a key rotation reads.
 
   job <user>
         The user's running or last finished job.
@@ -84,8 +91,25 @@ func cryptStart(kind string, args []string) error {
 	detach := fs.Bool("detach", false, "return once the job has started")
 	dryRun := fs.Bool("dry-run", false, "report what would be done, write nothing")
 	to := fs.String("to", "age", "age or plain")
+	all := fs.Bool("all", false, "every user user/iterate lists, then the public namespace")
+	jobs := fs.Int("jobs", 2, "with --all: users at once")
+	rate := fs.Int("rate", 100, "messages a second rewritten, shared by the jobs running at once; 0 is no bound")
+	public := fs.String("public", "public", "with --all: the public namespace's slug, run once; empty skips it")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if *rate < 0 || *jobs < 1 {
+		return errors.New("--rate is 0 or more, --jobs 1 or more")
+	}
+	if *all {
+		if fs.NArg() > 0 || *detach || *ns != "" {
+			return fmt.Errorf("usage: yarctl backend crypt %s --all [--jobs N] [--rate N] [--public NAME]: no user, folder, --namespace or --detach", kind)
+		}
+		base := map[string]any{}
+		if kind == "reencrypt" {
+			base["dry_run"], base["to"] = *dryRun, *to
+		}
+		return cryptAll(kind, base, *jobs, *rate, *public)
 	}
 	if fs.NArg() < 1 {
 		return fmt.Errorf("usage: yarctl backend crypt %s <user> [folder...]", kind)
@@ -95,6 +119,7 @@ func cryptStart(kind string, args []string) error {
 	if kind == "reencrypt" {
 		req["dry_run"] = *dryRun
 		req["to"] = *to
+		req["rate"] = *rate
 	}
 	if _, err := backendAPIPost("/api/backend/crypt/"+kind, req); err != nil {
 		return err
