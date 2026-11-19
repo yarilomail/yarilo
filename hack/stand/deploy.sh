@@ -28,8 +28,12 @@ stand_deploy() {
       return 1 ;;
   esac
   stand_prepull "$out" "$chart" "$@" --set image.tag="$tag" || return 1
+  rm -f "$out/backend-downtime.txt"
   stand_watch_backend "$out/backend-downtime.txt" &
-  local watcher=$! rc=0
+  local watcher=$! rc=0 i
+  # Its first write comes after its trap: an upgrade that ends before then
+  # would stop a watcher that leaves nothing behind.
+  for i in $(seq 1 100); do [ -s "$out/backend-downtime.txt" ] && break; sleep 0.1; done
   helm --kubeconfig="${KCFG:-$KUBECONFIG}" upgrade yarilo "$chart" -n "$NS" "$@" --set image.tag="$tag" --wait --timeout 10m > "$out/deploy.txt" 2>&1 || rc=1
   kube rollout status sts/yarilo-backend --timeout=280s >> "$out/deploy.txt" 2>&1 || rc=1
   kill "$watcher" 2>/dev/null

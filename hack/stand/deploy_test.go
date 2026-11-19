@@ -1,6 +1,7 @@
 package stand
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,7 +47,10 @@ func runDeploy(t *testing.T, bin, chart string) error {
 	script := `set -u; NS=sb; KCFG=k; kube() { kubectl -n "$NS" "$@"; }; . ./deploy.sh; stand_deploy "$1" t1 "$2" -f v.yaml`
 	cmd := exec.CommandContext(t.Context(), "bash", "-c", script, "deploy", t.TempDir(), chart)
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
-	return cmd.Run()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w\n%s", err, out)
+	}
+	return nil
 }
 
 // The rollout step upgrades the chart it is handed and no other: the arm, the
