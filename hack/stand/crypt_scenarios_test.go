@@ -67,3 +67,39 @@ func TestTheKeysGoOnlyWhenNoMailIsEncrypted(t *testing.T) {
 		t.Error("the cleanup is not on EXIT: a failed scenario would leave the keys and the write mode")
 	}
 }
+
+// The old key is dropped only after the run that needs it finished: a drop
+// after a failed --all left thousands of messages no key opened (2026-11-19).
+func TestTheOldKeyGoesOnlyAfterAFinishedRun(t *testing.T) {
+	src := scenarioSource(t)
+	gate := strings.Index(src, `if [ "$code" != 0 ] || [ "$(field "$mid" other_key)" != 0 ] || [ "$(field "$mid" reference)" != 0 ]; then`)
+	drop := strings.Index(src, `mailcrypt-keys.sh" rotate-drop`)
+	if gate < 0 || drop < 0 || gate > drop {
+		t.Fatalf("rotate-drop at %d, its gate at %d: the drop must follow the check", drop, gate)
+	}
+	if !strings.Contains(src[gate:drop], "exit 1") {
+		t.Error("a failed check does not stop the run before the drop")
+	}
+}
+
+// A fill names its first refusal, and the run's deploys lift the delivery
+// limit a fill past a thousand a minute meets, the restore keeping it: a 451
+// rate limit once passed for a lost connection (2026-11-19).
+func TestAFillSaysWhyAndTheRunLiftsTheLimit(t *testing.T) {
+	raw, err := os.ReadFile("fill-mailboxes.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `echo "fill: $user first refusal: $refused" >&2`) {
+		t.Error("fill-mailboxes.sh does not name a refusal")
+	}
+	src := scenarioSource(t)
+	for _, want := range []string{
+		`RUN_SET=(--set protocol.lmtp.rate_limit.enabled=false)`,
+		`case "$name" in restore | keys-kept) set=() ;; esac`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("crypt-scenarios.sh lacks %s", want)
+		}
+	}
+}

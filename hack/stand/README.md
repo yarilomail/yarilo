@@ -23,7 +23,10 @@ scenarios.
   once; a pull the new pods waited on held `yarilo-backend-1` down for 3.5
   minutes (2026-11-19).
 - `backend-downtime.txt` holds the seconds each backend pod was not Ready
-  during the upgrade; the number goes into the run's row.
+  during the upgrade, and `backend-pending.txt` how long each new pod waited
+  to be scheduled and to be Ready; both go into the run's row. A StatefulSet
+  stops a pod before it starts its successor, so a few seconds a pod are the
+  design; time pending is a wait for CPU.
 
 ## The arm
 
@@ -123,7 +126,7 @@ The six rows of MAILCRYPT §13.12, each a PASS or FAIL line in
 | Row | Passes when |
 |:---|:---|
 | `mixed-<type>` | a folder of plaintext and age mail on each type is rewritten: plain 0, other_key 0, failed 0 |
-| `speed` | messages a second for each type and source state (plain to age, the old key to the new, age to plain), nine figures, and status on a user of `CRYPT_BIG` (100000) messages |
+| `speed` | messages a second for each type and source state (plain to age, the old key to the new, age to plain), nine figures, and status on a user of `CRYPT_BIG` (10000) messages, which says nothing of larger mailboxes (owner, 2026-11-19) |
 | `load-<type>` | on each type, a user of imaptest's range is re-encrypted while imaptest runs: running when the job starts and when it ends, or the row fails; a rerun after the load leaves plain 0 and imaptest logged no error |
 | `kill` | the backend pod holding a running job is deleted; the rerun finishes, plain 0, failed 0 |
 | `rotate` | a new key beside the old (`mailcrypt-keys.sh rotate-add`), `--all`: other_key 0 and reference 0; the old key removed (`rotate-drop`): no_key 0 |
@@ -141,6 +144,10 @@ no encrypted message; otherwise the stand stays on its keys with write off
 (`values-sandbox-mailcrypt-keys.yaml`), the Secret is kept and a `cleanup` FAIL
 names the users holding encrypted mail. The run's own rows go to docs-internal
 `stand-runs.md` with the downtime of each deploy.
+
+Each run adds `CRYPT_LOAD_N` (1000) messages to the first user of every
+imaptest range and fills its own users: imaptest figures after it are not
+comparable with rows before it.
 
 ## The acceptance run
 

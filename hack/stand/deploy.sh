@@ -9,7 +9,10 @@
 #    node never has room for an old and a new backend pod together, and a pull
 #    the new pods waited on held a backend down for minutes (2026-11-19).
 # 3. How many seconds each backend pod was not Ready during the upgrade goes to
-#    <out-dir>/backend-downtime.txt, one "<pod> <seconds>" line each.
+#    <out-dir>/backend-downtime.txt, one "<pod> <seconds>" line each, and how
+#    long the new pod waited to be scheduled and to be Ready to
+#    <out-dir>/backend-pending.txt: a StatefulSet stops a pod before it starts
+#    its successor, so part of the gap is the restart, part a wait for CPU.
 #
 # Expects NS and a kube() function (kubectl in the namespace); helm takes KCFG,
 # else KUBECONFIG.
@@ -25,12 +28,18 @@ stand_deploy() {
       return 1 ;;
   esac
   stand_prepull "$out" "$chart" "$@" --set image.tag="$tag" || return 1
+  rm -f "$out/backend-downtime.txt"
   stand_watch_backend "$out/backend-downtime.txt" &
-  local watcher=$! rc=0
+  local watcher=$! rc=0 i
+  # Its first write comes after its trap: an upgrade that ends before then
+  # would stop a watcher that leaves nothing behind.
+  for i in $(seq 1 100); do [ -s "$out/backend-downtime.txt" ] && break; sleep 0.1; done
   helm --kubeconfig="${KCFG:-$KUBECONFIG}" upgrade yarilo "$chart" -n "$NS" "$@" --set image.tag="$tag" --wait --timeout 10m > "$out/deploy.txt" 2>&1 || rc=1
   kube rollout status sts/yarilo-backend --timeout=280s >> "$out/deploy.txt" 2>&1 || rc=1
   kill "$watcher" 2>/dev/null
   wait "$watcher" 2>/dev/null
+  stand_backend_pending > "$out/backend-pending.txt"
+  echo "-- backend pods, seconds pending and to Ready: $(tr '\n' ' ' < "$out/backend-pending.txt")"
   if [ -s "$out/backend-downtime.txt" ]; then
     echo "-- backend not Ready during the rollout: $(tr '\n' ' ' < "$out/backend-downtime.txt")"
   else
@@ -100,13 +109,17 @@ EOF
 stand_watch_backend() {
   local file="$1" replicas n ready prev now
   local -a pods=() down=()
-  replicas=$(kube get sts yarilo-backend -o jsonpath='{.spec.replicas}' 2>/dev/null)
-  for n in $(seq 0 $(( ${replicas:-1} - 1 ))); do pods[n]="yarilo-backend-$n"; down[n]=0; done
   write() {
     : > "$file"
     for n in "${!pods[@]}"; do echo "${pods[n]} ${down[n]}" >> "$file"; done
   }
+  # Ready to stop before anything else, and zeros written before the first
+  # look: the step starts the upgrade only once this file is there.
   trap 'write; exit 0' TERM
+  pods=(yarilo-backend-0) down=(0)
+  write
+  replicas=$(kube get sts yarilo-backend -o jsonpath='{.spec.replicas}' 2>/dev/null)
+  for n in $(seq 0 $(( ${replicas:-1} - 1 ))); do pods[n]="yarilo-backend-$n"; down[n]=0; done
   write
   prev=$(date +%s)
   while :; do
@@ -120,4 +133,19 @@ stand_watch_backend() {
     sleep 1 &
     wait $!
   done
+}
+
+# stand_backend_pending prints "<pod> pending=<s> ready=<s>" for each backend
+# pod: from its creation to being scheduled, and to being Ready.
+stand_backend_pending() {
+  kube get pods -l app.kubernetes.io/component=backend -o json | python3 -c '
+import datetime, json, sys
+t = lambda s: datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
+for p in json.load(sys.stdin)["items"]:
+    c = {k["type"]: k.get("lastTransitionTime") for k in p["status"].get("conditions", [])}
+    made = t(p["metadata"]["creationTimestamp"])
+    out = [p["metadata"]["name"]]
+    for name, cond in (("pending", "PodScheduled"), ("ready", "Ready")):
+        out.append("%s=%s" % (name, int((t(c[cond]) - made).total_seconds()) if c.get(cond) else "-"))
+    print(" ".join(out))'
 }

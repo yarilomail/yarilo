@@ -107,6 +107,10 @@ for n in $(seq "$FROM" "$TO"); do
   out=$(deliver_user "$user" "$((COUNT - have))") || true
   # Informational: what the transport said, for a failure to be readable.
   acked=$((acked + $(printf '%s\n' "$out" | grep -o '250 2\.0\.0' | wc -l | tr -d ' ')))
+  # The first refusal is the reason a mailbox falls short: said, not left for
+  # the count below to hint at (a 451 rate limit once read as a lost connection).
+  refused=$(printf '%s\n' "$out" | grep -m1 -E '^[45][0-9][0-9][ -]' || true)
+  [ -z "$refused" ] || echo "fill: $user first refusal: $refused" >&2
 done
 
 short=0

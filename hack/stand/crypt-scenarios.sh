@@ -17,7 +17,7 @@
 #   plain     --all --to plain leaves no encrypted message on the stand
 #   speed     messages a second per type and source state (plain, the old key,
 #             age back to plain), and the time of status on a user holding
-#             CRYPT_BIG messages
+#             CRYPT_BIG (10000) messages; nothing is said of larger mailboxes
 #
 # The keys are mounted for the run only. They are removed only when status
 # --all shows no encrypted message; otherwise the stand stays on its keys with
@@ -35,7 +35,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 N="${CRYPT_N:-200}"
 KILL_N="${CRYPT_KILL_N:-3000}"
-BIG="${CRYPT_BIG:-100000}"
+BIG="${CRYPT_BIG:-10000}"
 ROWS="$OUT/crypt-scenarios.txt"
 SECRET=yarilo-mail-crypt-window
 VALUES="$REPO/helm_values"
@@ -76,16 +76,24 @@ encrypted() { echo $(( $(field "$1" current) + $(field "$1" other_key) + $(field
 
 fill_to() {
   local user="$1" want="$2" n="${1%%@*}"
-  YARILO_FILL_DOMAIN="${user#*@}" bash "$HERE/fill-mailboxes.sh" "${n#u}" "${n#u}" "$want" >> "$OUT/fill.log" 2>&1
+  YARILO_FILL_DOMAIN="${user#*@}" bash "$HERE/fill-mailboxes.sh" "${n#u}" "${n#u}" "$want" >> "$OUT/fill.log" 2>&1 && return 0
+  echo "crypt-scenarios: $user not filled to $want: $(grep -m1 "first refusal" "$OUT/fill.log" || tail -1 "$OUT/fill.log")" >&2
+  return 1
 }
 messages() { kube exec yarilo-backend-0 -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
   awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'; }
 
+# The run's deploys lift the per-recipient delivery limit, which a fill of one
+# user past a thousand messages a minute meets by design; the restore and the
+# keys-kept fallback put the stand back on its own values, limit included.
+RUN_SET=(--set protocol.lmtp.rate_limit.enabled=false)
+
 deploy() {
-  local name="$1"
+  local name="$1" set=("${RUN_SET[@]}")
   shift
+  case "$name" in restore | keys-kept) set=() ;; esac
   mkdir -p "$OUT/deploy-$name"
-  stand_deploy "$OUT/deploy-$name" "$TAG" "$REPO/helm" -f "$VALUES/values-sandbox.yaml" "$@" ||
+  stand_deploy "$OUT/deploy-$name" "$TAG" "$REPO/helm" -f "$VALUES/values-sandbox.yaml" "$@" ${set[@]+"${set[@]}"} ||
     { echo "crypt-scenarios: the $name deploy did not settle" >&2; return 1; }
 }
 
@@ -181,7 +189,10 @@ for t in $TYPES; do
 done
 
 echo "== status on $BIG messages"
-fill_to "$BIG_USER" "$BIG"
+big_fill=0
+fill_start=$(date +%s)
+fill_to "$BIG_USER" "$BIG" || big_fill=1
+big_fill_secs=$(( $(date +%s) - fill_start ))
 start=$(date +%s)
 big=$(status_of "$BIG_USER")
 big_secs=$(( $(date +%s) - start ))
@@ -202,7 +213,10 @@ for t in $TYPES; do
   # The overlap is the row: imaptest running when the job starts and still
   # running when it ends.
   load_running && started_under=1 || started_under=0
-  crypt reencrypt "$lu" --rate 30 >> "$OUT/load.log" 2>&1
+  # About 40 s of work, inside imaptest's 90: a fixed rate overran it on a
+  # mailbox earlier runs had grown.
+  rate=$(( $(field "$before" plain) / 40 + 1 ))
+  crypt reencrypt "$lu" --rate "$rate" >> "$OUT/load.log" 2>&1
   during=$?
   job_done && ended_under=0 || ended_under=1
   kube wait --for=condition=complete --timeout=300s job/imaptest > /dev/null 2>&1
@@ -264,6 +278,12 @@ done
 crypt reencrypt --all --jobs 2 --rate 0 >> "$OUT/rotate.log" 2>&1
 code=$?
 mid=$(status_of --all)
+# The old key goes only once nothing needs it: dropped after a run that did
+# not finish, it takes with it every message still sealed to it.
+if [ "$code" != 0 ] || [ "$(field "$mid" other_key)" != 0 ] || [ "$(field "$mid" reference)" != 0 ]; then
+  row FAIL rotate "reencrypt exit $code; before[$before] after-reencrypt[$mid]; both keys kept"
+  exit 1
+fi
 bash "$HERE/mailcrypt-keys.sh" rotate-drop && restart_backend rotate-drop || { row FAIL rotate "the old key was not removed from the pods"; exit 1; }
 after=$(status_of --all)
 if [ "$code" = 0 ] && [ "$(field "$before" other_key)" -gt 0 ] && [ "$(field "$mid" other_key)" = 0 ] &&
@@ -293,7 +313,7 @@ echo "== speed"
 rates=$(awk '{ printf "%s %d msgs %ds (%s/s); ", $1, $2, $3, ($3 > 0 ? int($2 / $3) : "inf") }' "$OUT/speed.txt")
 total=$(( $(field "$big" plain) + $(encrypted "$big") ))
 if [ "$(wc -l < "$OUT/speed.txt")" -ge 9 ] && [ "$total" -ge "$BIG" ]; then
-  row PASS speed "$rates status of $BIG_USER ($total messages) ${big_secs}s"
+  row PASS speed "$rates status on $total messages ($BIG_USER) ${big_secs}s, its fill ${big_fill_secs}s; measured at $BIG, not beyond"
 else
-  row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages"
+  row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages, fill exit $big_fill: $(grep -m1 "first refusal" "$OUT/fill.log" || echo none recorded)"
 fi

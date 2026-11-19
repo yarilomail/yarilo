@@ -1,6 +1,7 @@
 package stand
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ echo "kubectl $*" >> "` + calls + `"
 case "$*" in
   *"apply -f -"*) cat >> "` + calls + `" ;;
   *"spec.nodeName"*) echo node-1 ;;
+  *"component=backend -o json") echo '{"items":[{"metadata":{"name":"yarilo-backend-0","creationTimestamp":"2026-11-19T19:00:00Z"},"status":{"conditions":[{"type":"PodScheduled","lastTransitionTime":"2026-11-19T19:00:14Z"},{"type":"Ready","lastTransitionTime":"2026-11-19T19:00:25Z"}]}}]}' ;;
   *"status.phase"*) echo Succeeded ;;
   *"spec.replicas"*) echo 1 ;;
   *'type=="Ready"'*) echo True ;;
@@ -45,7 +47,10 @@ func runDeploy(t *testing.T, bin, chart string) error {
 	script := `set -u; NS=sb; KCFG=k; kube() { kubectl -n "$NS" "$@"; }; . ./deploy.sh; stand_deploy "$1" t1 "$2" -f v.yaml`
 	cmd := exec.CommandContext(t.Context(), "bash", "-c", script, "deploy", t.TempDir(), chart)
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
-	return cmd.Run()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w\n%s", err, out)
+	}
+	return nil
 }
 
 // The rollout step upgrades the chart it is handed and no other: the arm, the
@@ -75,6 +80,10 @@ func TestTheRolloutStepUpgradesTheChartItIsHanded(t *testing.T) {
 	if strings.Index(string(raw), "apply -f -") > strings.Index(string(raw), " upgrade ") {
 		t.Error("the upgrade ran before the image was pulled")
 	}
+	if !strings.Contains(string(raw), "-l app.kubernetes.io/component=backend -o json") {
+		t.Error("the backend pods' pending and ready times were not read after the rollout")
+	}
+
 }
 
 // A release a cut-off helm left pending stops the step before anything runs.
