@@ -58,22 +58,25 @@ func cryptAll(kind string, base map[string]any, jobs, rate int, publicNS string)
 		perJob = max(1, rate/jobs)
 	}
 
-	var mu sync.Mutex
-	running := map[string]bool{}
-	stop := make(chan os.Signal, 1)
+	run := &allRun{running: map[string]bool{}}
+	stop := make(chan os.Signal, 2)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
-	cancelled := false
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		if _, ok := <-stop; !ok {
-			return
+		for {
+			select {
+			case <-stop:
+				if !run.interrupt() {
+					names := run.names()
+					fmt.Fprintf(os.Stderr, "interrupted twice: leaving now; these jobs may still be running: %s\n", strings.Join(names, ", "))
+					exitAll(130)
+				}
+			case <-done:
+				return
+			}
 		}
-		mu.Lock()
-		cancelled = true
-		for u := range running {
-			_, _ = backendAPIDelete("/api/backend/crypt/job?user=" + url.QueryEscape(u))
-		}
-		mu.Unlock()
 	}()
 
 	work := make(chan string)
@@ -84,18 +87,12 @@ func cryptAll(kind string, base map[string]any, jobs, rate int, publicNS string)
 		go func() {
 			defer wg.Done()
 			for u := range work {
-				mu.Lock()
-				if cancelled {
-					mu.Unlock()
+				if !run.begin(u) {
 					results <- allResult{User: u, Err: "not started: interrupted"}
 					continue
 				}
-				running[u] = true
-				mu.Unlock()
-				res := runOneJob(kind, u, base, perJob, "")
-				mu.Lock()
-				delete(running, u)
-				mu.Unlock()
+				res := runOneJob(kind, u, base, perJob, "", run.started)
+				run.end(u)
 				results <- res
 			}
 		}()
@@ -114,8 +111,9 @@ func cryptAll(kind string, base map[string]any, jobs, rate int, publicNS string)
 		sum.add(res)
 		fmt.Fprintf(os.Stderr, "%s: %s\n", res.User, res.line())
 	}
-	if publicNS != "" && len(list.Users) > 0 && !cancelled {
-		res := runOneJob(kind, list.Users[0], base, rate, publicNS)
+	if publicNS != "" && len(list.Users) > 0 && run.begin(list.Users[0]) {
+		res := runOneJob(kind, list.Users[0], base, rate, publicNS, run.started)
+		run.end(list.Users[0])
 		if strings.Contains(res.Err, "not configured") {
 			fmt.Fprintf(os.Stderr, "namespace %s: not configured, skipped\n", publicNS)
 		} else {
@@ -131,7 +129,7 @@ func cryptAll(kind string, base map[string]any, jobs, rate int, publicNS string)
 		return err
 	}
 	switch {
-	case cancelled:
+	case run.wasInterrupted():
 		return errors.New("interrupted: the running jobs were cancelled")
 	case len(sum.FailedUsers) > 0:
 		return fmt.Errorf("crypt %s --all: %d of %d failed: %s", kind, len(sum.FailedUsers), sum.Users, strings.Join(sum.FailedUsers, ", "))
@@ -141,9 +139,83 @@ func cryptAll(kind string, base map[string]any, jobs, rate int, publicNS string)
 	return nil
 }
 
+// allRun is what an interrupt needs: the users whose job may be running, and
+// whether the run was interrupted.
+type allRun struct {
+	mu          sync.Mutex
+	running     map[string]bool
+	interrupted bool
+}
+
+// exitAll ends yarctl on a second interrupt. Test seam.
+var exitAll = os.Exit
+
+func cancelJob(user string) {
+	_, _ = backendAPIDelete("/api/backend/crypt/job?user=" + url.QueryEscape(user))
+}
+
+// begin claims user for a job, false once the run was interrupted.
+func (r *allRun) begin(user string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.interrupted {
+		return false
+	}
+	r.running[user] = true
+	return true
+}
+
+// started runs once the user's job exists: a cancel sent before it did met
+// nothing, so an interrupt that came meanwhile is sent again now.
+func (r *allRun) started(user string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.interrupted {
+		cancelJob(user)
+	}
+}
+
+func (r *allRun) end(user string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.running, user)
+}
+
+// interrupt cancels every running job and reports true, the first time; a
+// second interrupt reports false.
+func (r *allRun) interrupt() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.interrupted {
+		return false
+	}
+	r.interrupted = true
+	for u := range r.running {
+		cancelJob(u)
+	}
+	return true
+}
+
+func (r *allRun) wasInterrupted() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.interrupted
+}
+
+func (r *allRun) names() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.running))
+	for u := range r.running {
+		out = append(out, u)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // runOneJob starts kind for user (in namespace ns, or the user's own when
-// empty) and waits for it to end.
-func runOneJob(kind, user string, base map[string]any, rate int, ns string) allResult {
+// empty), tells started once the job exists, and waits for it to end.
+func runOneJob(kind, user string, base map[string]any, rate int, ns string, started func(string)) allResult {
 	req := map[string]any{}
 	for k, v := range base {
 		req[k] = v
@@ -157,6 +229,9 @@ func runOneJob(kind, user string, base map[string]any, rate int, ns string) allR
 	}
 	if _, err := backendAPIPost("/api/backend/crypt/"+kind, req); err != nil {
 		return allResult{User: user, Err: err.Error()}
+	}
+	if started != nil {
+		started(user)
 	}
 	path := "/api/backend/crypt/job?user=" + url.QueryEscape(user) + "&wait=30s"
 	for {

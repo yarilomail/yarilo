@@ -8,8 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"filippo.io/age"
@@ -177,5 +180,91 @@ func TestCryptAllSharesTheRate(t *testing.T) {
 	}
 	if len(rates) != 2 || rates[0] != 50 || rates[1] != 50 {
 		t.Fatalf("rates %v, want 50 each", rates)
+	}
+}
+
+// fakeCryptAPI answers user/iterate with one user and calls onStart before it
+// answers a job's start; deletes counts the cancels, and the job never ends
+// until one came after the start.
+func fakeCryptAPI(t *testing.T, onStart func()) (*httptest.Server, *atomic.Int32, *atomic.Int32) {
+	t.Helper()
+	var deletes, afterStart atomic.Int32
+	var startedJob atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/backend/user/iterate":
+			_, _ = io.WriteString(w, `{"users":["a@x"]}`)
+		case r.URL.Path == "/api/backend/crypt/reencrypt":
+			onStart()
+			startedJob.Store(true)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, `{}`)
+		case r.URL.Path == "/api/backend/crypt/job" && r.Method == http.MethodDelete:
+			deletes.Add(1)
+			if !startedJob.Load() {
+				http.NotFound(w, r)
+				return
+			}
+			afterStart.Add(1)
+			_, _ = io.WriteString(w, `{}`)
+		case r.URL.Path == "/api/backend/crypt/job":
+			if afterStart.Load() > 0 {
+				_, _ = io.WriteString(w, `{"kind":"reencrypt","state":"cancelled","totals":{}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"kind":"reencrypt","state":"running","totals":{}}`)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	oldRoute, oldBackend := routeByUser, backendAPIURL
+	t.Cleanup(func() { routeByUser, backendAPIURL = oldRoute, oldBackend })
+	routeByUser, backendAPIURL = false, ts.URL
+	return ts, &deletes, &afterStart
+}
+
+// An interrupt while a job's start is in flight met no job; it is sent again
+// once the start has answered, and the job is cancelled rather than left.
+func TestCryptAllCancelsAJobStartedAfterTheInterrupt(t *testing.T) {
+	var deletes *atomic.Int32
+	_, d, after := fakeCryptAPI(t, func() {
+		_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
+		for deletes == nil || deletes.Load() == 0 {
+			runtime.Gosched()
+		}
+	})
+	deletes = d
+	_, err := captureStd(t, func() error { return cryptAll("reencrypt", map[string]any{}, 1, 0, "") })
+	if err == nil || !strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("err %v", err)
+	}
+	if after.Load() == 0 {
+		t.Fatal("the job that started after the interrupt was not cancelled")
+	}
+}
+
+// A second interrupt leaves at once, naming the jobs that may still run.
+func TestCryptAllLeavesOnASecondInterrupt(t *testing.T) {
+	codes := make(chan int, 1)
+	oldExit := exitAll
+	exitAll = func(code int) { codes <- code }
+	t.Cleanup(func() { exitAll = oldExit })
+	var deletes *atomic.Int32
+	_, d, _ := fakeCryptAPI(t, func() {
+		// Signals of one kind do not queue: the second goes once the first
+		// was handled, which its cancel shows.
+		_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
+		for deletes == nil || deletes.Load() == 0 {
+			runtime.Gosched()
+		}
+		_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
+		codes <- <-codes
+	})
+	deletes = d
+	out, _ := captureStd(t, func() error { return cryptAll("reencrypt", map[string]any{}, 1, 0, "") })
+	if code := <-codes; code != 130 {
+		t.Fatalf("exit %d", code)
+	}
+	if !strings.Contains(out, "interrupted twice") || !strings.Contains(out, "a@x") {
+		t.Fatalf("output %q", out)
 	}
 }
