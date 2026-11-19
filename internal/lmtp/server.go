@@ -106,6 +106,9 @@ type Options struct {
 	// name, selecting per-user storage when the user's mail_location driver
 	// differs from the global default.
 	MailboxByDriver func(driver string) mailbox.MailboxBackend
+	// NamespaceMailboxes are the per-prefix backends a session opens a
+	// namespace on; delivery opens it on the same (#2605).
+	NamespaceMailboxes map[string]mailbox.MailboxBackend
 
 	// Namespaces routes a namespace-prefixed target folder (e.g. "Public/News")
 	// to that namespace's storage. Empty = everything lands in the recipient's
@@ -535,9 +538,9 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	if ns == nil {
 		return rcptBox, rcptMbox, folder, noop
 	}
-	// The location is read unexpanded, as delivery always has (#2605).
+	// Expanded against the recipient, as a session does (#2605).
 	nsd := deliveryNamespace(ns)
-	_, ok, err := mailbox.ParseLocation(ns.Location, nil)
+	_, ok, err := mailbox.ParseLocation(ns.Location, userInfo)
 	if err != nil || !ok {
 		slog.Warn("lmtp: namespace location parse failed, using personal store",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
@@ -547,7 +550,7 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 	if rel == "" {
 		rel = "INBOX" // delivery to a bare namespace prefix → its INBOX
 	}
-	ui, _, err := nsopen.Fixed(nsd, userInfo, nil, nsopen.Kind(nsd))
+	ui, _, err := nsopen.Fixed(nsd, userInfo, userInfo, nsopen.Kind(nsd))
 	if err != nil {
 		slog.Warn("lmtp: namespace not usable, delivering to INBOX",
 			"prefix", ns.Prefix, "location", ns.Location, "err", err)
@@ -558,8 +561,9 @@ func (s *session) deliveryTarget(userInfo *mailbox.UserInfo, rcptBox mailbox.Use
 			"rcpt", userInfo.Username, "prefix", ns.Prefix, "folder", rel)
 		return rcptBox, rcptMbox, "INBOX", noop
 	}
-	// No per-prefix override: delivery opens the store its location's driver names (#2605).
-	mb := nsopen.Backends{Mailbox: s.opts.Mailbox, ByDriver: s.opts.MailboxByDriver}.For("", ui)
+	mb := nsopen.Backends{
+		Mailbox: s.opts.Mailbox, ByDriver: s.opts.MailboxByDriver, Overrides: s.opts.NamespaceMailboxes,
+	}.For(ns.Prefix, ui)
 	o, err := nsopen.Open(mb, s.opts.Index, ui, nsopen.Init, false,
 		mailboxbase.SaveOnly(), mailboxbase.WithAuto(s.boxAuto(userInfo, s.namespaceIndex(ns), ui)))
 	if err != nil {

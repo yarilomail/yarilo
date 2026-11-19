@@ -73,7 +73,7 @@ func (s *session) subscriberFor(personal *mailbox.UserInfo, folder string) func(
 		return s.personalAuto(personal).Subscribe
 	}
 	nsd := deliveryNamespace(ns)
-	ui, ok, err := nsopen.Fixed(nsd, personal, nil, nsopen.Kind(nsd))
+	ui, ok, err := nsopen.Fixed(nsd, personal, personal, nsopen.Kind(nsd))
 	if err != nil || !ok {
 		return nil
 	}

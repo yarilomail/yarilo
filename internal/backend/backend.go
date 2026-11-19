@@ -468,6 +468,7 @@ func New(cfg *config.Config) (*Server, error) {
 			PreambleTLS:          preambleTLS[mtls.ListenerLMTPBackend],
 			SieveEngine:          sieveEngine,
 			Namespaces:           cfg.Namespaces,
+			NamespaceMailboxes:   nsMailboxes,
 			ACLEnabled:           cfg.ACL.Enabled,
 			ACLGlobal:            lmtpACLGlobal,
 			ACLGlobalsOnly:       cfg.ACL.GlobalsOnly,
