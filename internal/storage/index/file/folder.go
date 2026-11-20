@@ -1,6 +1,7 @@
 package file
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -2072,20 +2073,7 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 // Vanished(since) is then empty below the current highest.
 func (u *userIndex) OptimizeIndex(folderID uint64) error {
 	return u.withFolderSite(folderID, lockSiteOptimize, func(fs *folderState) error {
-		if err := fs.stampExpungeFloorLocked(); err != nil {
-			return err
-		}
-		if err := fs.flush(); err != nil {
-			return err
-		}
-		fs.closeFDs()
-		if err := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); err != nil {
-			return err
-		}
-		// Log is now an empty header; next reload fast-paths the base and
-		// applies zero log records.
-		fs.logSize = 0
-		return nil
+		return fs.foldLocked()
 	})
 }
 
@@ -2837,6 +2825,25 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 		}
 		copy(ext.HdrData[upd.Offset:], upd.Data)
 
+	case kind == mailindex.TxTypeExtReset:
+		rst, ok := mailindex.DecodeTxExtResetPayload(payload)
+		ext := findExt(fs.file.Extensions, st.lastIntro)
+		if !ok || ext == nil {
+			return fmt.Errorf("fileindex/applylog: extension reset without its intro at offset %d: %w", recStart, mailindex.ErrCorrupted)
+		}
+		ext.ResetID = rst.NewResetID
+		st.introReset = rst.NewResetID
+		if !rst.Preserve && ext.RecordSize != 0 {
+			// Every record's data of the extension goes, as the reference's
+			// sync_ext_clear: a cache offset into the file that is gone.
+			zero := make([]byte, ext.RecordSize)
+			for seq := range fs.recordCount() {
+				if have, _ := fs.recExt(seq, ext.Name); !bytes.Equal(have, zero) {
+					fs.recSetExt(seq, ext.Name, zero)
+				}
+			}
+		}
+
 	case kind == mailindex.TxTypeExtRecUpdate:
 		ext := findExt(fs.file.Extensions, st.lastIntro)
 		if ext == nil || ext.RecordSize == 0 {
@@ -3179,25 +3186,30 @@ func (u *userIndex) PurgeCache(folderID uint64) (carried int, reclaimed int64, e
 		}
 		old, oerr := mailindex.OpenCache(path, fs.file.Header.IndexID, ext.ResetID)
 		if oerr != nil {
-			// Already invalid: drop it and enter a new generation, or the stamps
-			// still in the index apply to whatever lands at those offsets.
+			// Already invalid: enter a new generation first, then drop the file.
+			// Stopped between the two, the index names a generation no file
+			// has, and the next cache starts empty; the other order would let
+			// a new file of the old generation take the old offsets.
+			if _, berr := abandonCacheGeneration(fs); berr != nil {
+				return berr
+			}
+			if purgeAfterRenameSeam != nil {
+				if err := purgeAfterRenameSeam(); err != nil {
+					return err
+				}
+			}
 			if rerr := os.Remove(path); rerr != nil && !os.IsNotExist(rerr) {
 				return fmt.Errorf("fileindex: purge cache remove: %w", rerr)
 			}
 			reclaimed = before.Size()
-			if _, berr := abandonCacheGeneration(fs); berr != nil {
-				return berr
-			}
 			return nil
 		}
 
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		live := make(map[uint32]uint32, len(fs.file.Records))
-		for _, rec := range fs.file.Records {
-			if off := decodeCacheRec(rec.Ext[extNameCache]); off != 0 {
-				live[rec.UID] = off
+		live := make(map[uint32]uint32, fs.recordCount())
+		for seq := range fs.recordCount() {
+			data, _ := fs.recExt(seq, extNameCache)
+			if off := decodeCacheRec(data); off != 0 {
+				live[fs.recUID(seq)] = off
 			}
 		}
 		newSeq := newCacheGeneration(ext.ResetID)
@@ -3218,21 +3230,28 @@ func (u *userIndex) PurgeCache(folderID uint64) (carried int, reclaimed int64, e
 			_ = os.Remove(tmp)
 			return fmt.Errorf("fileindex: purge cache rename: %w", rerr)
 		}
-		for _, rec := range fs.file.Records {
-			off, ok := moved[rec.UID]
-			if !ok {
-				delete(rec.Ext, extNameCache)
-				continue
+		if purgeAfterRenameSeam != nil {
+			if err := purgeAfterRenameSeam(); err != nil {
+				return err
 			}
-			if rec.Ext == nil {
-				rec.Ext = make(map[string][]byte, 1)
-			}
-			rec.Ext[extNameCache] = encodeCacheRec(off)
 		}
-		ext.ResetID = newSeq
+		// The file is in place; the index takes its generation through the
+		// journal, as the reference's purge transaction (INDEX-MEMORY.md §4).
+		var carry []mailindex.TxExtRecUpdate
+		for uid, off := range moved {
+			carry = append(carry, mailindex.TxExtRecUpdate{UID: uid, Data: encodeCacheRec(off)})
+		}
+		recs, err := fs.cacheResetRecords(newSeq, carry)
+		if err != nil {
+			return err
+		}
+		if err := fs.journalRecords(recs); err != nil {
+			return err
+		}
 		carried = len(moved)
 		reclaimed = before.Size() - after.Size()
-		return fs.flush()
+		// The reset touched every record: folded under the same hold.
+		return fs.foldLocked()
 	})
 	return carried, reclaimed, err
 }
@@ -3256,14 +3275,17 @@ func abandonCacheGeneration(fs *folderState) (uint32, error) {
 	if ext == nil {
 		return 0, nil
 	}
-	ext.ResetID = newCacheGeneration(ext.ResetID)
-	if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+	newSeq := newCacheGeneration(ext.ResetID)
+	recs, err := fs.cacheResetRecords(newSeq, nil)
+	if err != nil {
 		return 0, err
 	}
-	for _, rec := range fs.file.Records {
-		delete(rec.Ext, extNameCache)
+	if err := fs.journalRecords(recs); err != nil {
+		return 0, err
 	}
-	return ext.ResetID, fs.flush()
+	// The reset touched every record: folded now, or every open until the
+	// next fold reads every chunk to replay it.
+	return newSeq, fs.foldLocked()
 }
 
 // BumpCacheGeneration abandons the current cache generation and returns the
@@ -3459,3 +3481,58 @@ func readTail(ra io.ReaderAt, from, size int64) ([]byte, error) {
 	}
 	return buf[:n], nil
 }
+
+// foldLocked folds the journal into a new base and empties it. Caller holds
+// the folder.
+func (fs *folderState) foldLocked() error {
+	if err := fs.stampExpungeFloorLocked(); err != nil {
+		return err
+	}
+	if err := fs.flush(); err != nil {
+		return err
+	}
+	fs.closeFDs()
+	if err := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); err != nil {
+		return err
+	}
+	// Log is now an empty header; next reload fast-paths the base and
+	// applies zero log records.
+	fs.logSize = 0
+	return nil
+}
+
+// cacheResetRecords journals a new cache generation: the intro naming the
+// cache in its current one, the reset, and the offsets carried into the new
+// file under an intro of the new generation.
+func (fs *folderState) cacheResetRecords(newSeq uint32, moved []mailindex.TxExtRecUpdate) ([][]byte, error) {
+	intro, err := fs.extIntroRecord(extNameCache)
+	if err != nil {
+		return nil, err
+	}
+	recs := [][]byte{intro, encLogRec(mailindex.TxTypeExtReset, 0, mailindex.EncodeTxExtResetPayload(mailindex.TxExtReset{NewResetID: newSeq}))}
+	if len(moved) == 0 {
+		return recs, nil
+	}
+	ext := findExt(fs.file.Extensions, extNameCache)
+	sort.Slice(moved, func(i, j int) bool { return moved[i].UID < moved[j].UID })
+	return append(recs,
+		encLogRec(mailindex.TxTypeExtIntro, 0, mailindex.EncodeTxExtIntroPayload(mailindex.TxExtIntro{
+			ExtID: uint32(extIndex(fs.file.Extensions, extNameCache)), ResetID: newSeq, HdrSize: ext.HdrSize,
+			RecordSize: ext.RecordSize, RecordAlign: ext.RecordAlign,
+		})),
+		encLogRec(mailindex.TxTypeExtRecUpdate, 0, mailindex.EncodeTxExtRecUpdatePayload(int(ext.RecordSize), moved)),
+	), nil
+}
+
+func extIndex(exts []mailindex.Extension, name string) int {
+	for i := range exts {
+		if exts[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// purgeAfterRenameSeam is a test seam: a purge that stops between the cache
+// file and the index taking its generation, either order. Nil elsewhere.
+var purgeAfterRenameSeam func() error

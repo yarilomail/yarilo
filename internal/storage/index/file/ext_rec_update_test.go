@@ -167,3 +167,79 @@ func TestACacheOffsetFromBeforeAPurgeIsNotApplied(t *testing.T) {
 		t.Errorf("uid 9's cache offset is %d after the purge, want none", msgs[0].CacheOffset)
 	}
 }
+
+// A reset needs the intro that names its extension, as an update does; a cache
+// offset carrying the generation from before a reset is not applied after it;
+// a purge leaves no journal behind it (#2628 review, reviewer 2026-11-20).
+func TestACacheResetFollowsItsIntroAndEndsTheOldGeneration(t *testing.T) {
+	home := movedFolder(t, 2*mailindex.ChunkRecords)
+	o, of := acceptOpen(t, home)
+	if err := o.(*userHandle).ui.SetCacheOffsets(of.ID, map[uint32]mailbox.CacheStamp{1: {Offset: 64, CRC: 1}, 9: {Offset: 96, CRC: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.OptimizeIndex(of.ID); err != nil {
+		t.Fatal(err)
+	}
+	o.Close() //nolint:errcheck
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	fs, err := h.(*userHandle).ui.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if err := fs.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.loadWriterRecords(); err != nil {
+		t.Fatal(err)
+	}
+	old := findExt(fs.file.Extensions, extNameCache).ResetID
+	reset := encLogRec(mailindex.TxTypeExtReset, 0, mailindex.EncodeTxExtResetPayload(mailindex.TxExtReset{NewResetID: old + 1}))
+	if err := fs.applyRecords([][]byte{reset}); err == nil {
+		t.Error("a reset with no intro before it applied")
+	}
+	if err := fs.applyRecords([][]byte{extIntro(t, fs, extNameCache, old, 4), reset,
+		extIntro(t, fs, extNameCache, old, 4), extUpdate(4, mailindex.TxExtRecUpdate{UID: 9, Data: encodeCacheRec(4096)})}); err != nil {
+		t.Fatal(err)
+	}
+	if got := findExt(fs.file.Extensions, extNameCache).ResetID; got != old+1 {
+		t.Errorf("the cache's generation is %d after the reset, want %d", got, old+1)
+	}
+	for _, uid := range []uint32{1, 9} {
+		seq, _ := fs.recSeqOfUID(uid)
+		if data, _ := fs.recExt(seq, extNameCache); decodeCacheRec(data) != 0 {
+			t.Errorf("uid %d keeps cache offset %d across the reset", uid, decodeCacheRec(data))
+		}
+	}
+}
+
+// A purge folds its journal under the same hold: the reset touched every
+// record, and an open before the next fold would read every chunk to replay it.
+func TestAPurgeLeavesNoJournalBehind(t *testing.T) {
+	home := movedFolder(t, 300)
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	u := h.(*userHandle).ui
+	if err := u.SetCacheOffsets(f.ID, map[uint32]mailbox.CacheStamp{1: {Offset: 64, CRC: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := u.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fs.indexDir, mailindex.CacheFileName), []byte("not a cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := u.PurgeCache(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(indexPathFor(home) + ".log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size() > int64(mailindex.LogHeaderSize) {
+		t.Errorf("the journal holds %d bytes after the purge, want its header alone", st.Size())
+	}
+}

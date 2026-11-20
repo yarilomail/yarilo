@@ -1,6 +1,7 @@
 package file
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -238,4 +239,107 @@ func TestPurgeCacheAbandonsTheGenerationOfAnUnreadableFile(t *testing.T) {
 // the purge under test is the operator's alone.
 func operatorPurgeOnly(home string) *userIndex {
 	return New(WithCachePurgeDeletePercentage(-1)).OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
+}
+
+// A purge stopped between its two halves leaves the index and the cache file
+// in different generations, which reads as no cache: no offset of the old
+// generation is read in the new file, and the next purge recovers (#2628
+// review). Both ways: the new file in place before the index moves, and the
+// index moved before an invalid file is dropped.
+func TestAPurgeStoppedHalfWayLeavesNoOffsetValid(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(map[bool]string{false: "a valid cache", true: "an invalid cache"}[invalid], func(t *testing.T) {
+			home := t.TempDir()
+			ui := operatorPurgeOnly(home)
+			f, err := ui.OpenFolder("INBOX", 7, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for uid := uint32(1); uid <= 4; uid++ {
+				if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			indexID, resetID, _, err := ui.CachePairIdentity(f.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path, err := ui.CachePath(f.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cf, err := mailindex.CreateCache(path, indexID, resetID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fid, err := cf.AddFields([]mailindex.CacheField{{Name: "probe", Type: mailindex.CacheFieldVariableSize, Decision: mailindex.CacheDecisionYes}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			offsets := map[uint32]uint32{}
+			for uid := uint32(1); uid <= 4; uid++ {
+				if offsets[uid], err = cf.AppendRecord(0, []mailindex.CacheFieldValue{{FieldID: fid, Data: []byte("x")}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cf.Close()
+			if err := ui.SetCacheOffsets(f.ID, stampsOf(offsets)); err != nil {
+				t.Fatal(err)
+			}
+			if invalid {
+				if err := os.WriteFile(path, []byte("not a cache"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stopped := errors.New("stopped")
+			purgeAfterRenameSeam = func() error { return stopped }
+			_, _, perr := ui.PurgeCache(f.ID)
+			purgeAfterRenameSeam = nil
+			if !errors.Is(perr, stopped) {
+				t.Fatalf("the purge did not stop half way: %v", perr)
+			}
+			_, nowReset, _, err := ui.CachePairIdentity(f.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, oerr := mailindex.OpenCache(path, indexID, nowReset); oerr == nil {
+				t.Error("the cache file opens under the generation the index names: old offsets would be read in it")
+			}
+			// What the cache layer does with a file that is not there: a new
+			// one under the generation the index names. No offset the index
+			// still holds may then point into it.
+			if _, serr := os.Stat(path); os.IsNotExist(serr) {
+				nf, cerr := mailindex.CreateCache(path, indexID, nowReset)
+				if cerr != nil {
+					t.Fatal(cerr)
+				}
+				nf.Close()
+				msgs, gerr := ui.GetMessages(f.ID, nil)
+				if gerr != nil {
+					t.Fatal(gerr)
+				}
+				for _, m := range msgs {
+					if m.CacheOffset != 0 {
+						t.Errorf("uid %d keeps offset %d into a new cache of the same generation", m.UID, m.CacheOffset)
+					}
+				}
+			}
+			if _, _, err := ui.PurgeCache(f.ID); err != nil {
+				t.Fatal(err)
+			}
+			msgs, err := ui.GetMessages(f.ID, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, finalReset, _, _ := ui.CachePairIdentity(f.ID)
+			for _, m := range msgs {
+				if m.CacheOffset == 0 {
+					continue
+				}
+				if _, oerr := mailindex.OpenCache(path, indexID, finalReset); oerr != nil {
+					t.Errorf("uid %d keeps offset %d with no cache of its generation", m.UID, m.CacheOffset)
+				}
+			}
+		})
+	}
 }

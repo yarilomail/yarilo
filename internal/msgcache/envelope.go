@@ -221,14 +221,17 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 			// would leave the index's stamps pointing into a fresh file,
 			// where the first append to reach one of those offsets answers
 			// its FETCH with another message's record. Enter a new
-			// generation, which kills every stamp in one index write.
-			_ = os.Remove(path)
+			// generation, which kills every stamp in one index write, and
+			// only then drop the file: stopped between the two, a missing
+			// file must not be recreated under the generation the stamps
+			// still name.
 			newSeq, berr := ic.BumpCacheGeneration(folderID)
 			if berr != nil {
 				slog.Debug("msgcache: cache generation bump failed; serving uncached", "trace_id", opts.TraceID, "err", berr)
 				fc.release()
 				return nil
 			}
+			_ = os.Remove(path)
 			resetID = newSeq
 		}
 		cf, cerr := mailindex.CreateCache(path, indexID, resetID)

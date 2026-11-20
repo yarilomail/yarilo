@@ -453,3 +453,28 @@ func EncodeTxExtRecUpdatePayload(width int, upds []TxExtRecUpdate) []byte {
 	}
 	return out
 }
+
+// TxExtReset starts a new generation of the extension the preceding EXT_INTRO
+// named; unless Preserve, every record's data of it is cleared.
+type TxExtReset struct {
+	NewResetID uint32
+	Preserve   bool
+}
+
+// EncodeTxExtResetPayload lays out new_reset_id, preserve_data and padding.
+func EncodeTxExtResetPayload(r TxExtReset) []byte {
+	out := make([]byte, 8)
+	binary.LittleEndian.PutUint32(out, r.NewResetID)
+	if r.Preserve {
+		out[4] = 1
+	}
+	return out
+}
+
+// DecodeTxExtResetPayload is the inverse; ok is false for a short payload.
+func DecodeTxExtResetPayload(payload []byte) (TxExtReset, bool) {
+	if len(payload) < 5 {
+		return TxExtReset{}, false
+	}
+	return TxExtReset{NewResetID: binary.LittleEndian.Uint32(payload), Preserve: payload[4] != 0}, true
+}
