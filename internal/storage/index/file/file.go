@@ -391,6 +391,9 @@ func (h *userHandle) AllocateUID(folderID uint64) (uint32, error) {
 func (h *userHandle) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) error {
 	return h.stamped(folderID).AllocateAndAppend(folderID, m)
 }
+func (h *userHandle) AllocateAndAppendStamped(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, *mailbox.MaildirStamp, error)) error {
+	return h.stamped(folderID).AllocateAndAppendStamped(folderID, m, name)
+}
 func (h *userHandle) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, error)) error {
 	return h.stamped(folderID).AllocateAndAppendNamed(folderID, m, name)
 }

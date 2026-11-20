@@ -6,6 +6,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -49,7 +50,7 @@ func (u *userIndex) MaildirStamp(folderID uint64) (mailbox.MaildirStamp, bool) {
 		out mailbox.MaildirStamp
 		ok  bool
 	)
-	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
+	err := u.withFolderHeaderUnlocked(folderID, func(fs *folderState) error {
 		if ext := findExt(fs.file.Extensions, extNameMaildir); ext != nil {
 			out, ok = decodeMaildirHdr(ext.HdrData)
 		}
@@ -65,23 +66,34 @@ func (u *userIndex) MaildirStamp(folderID uint64) (mailbox.MaildirStamp, bool) {
 // this index as its own.
 func (u *userIndex) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) error {
 	return u.withFolderSite(folderID, lockSiteMaildirStamp, func(fs *folderState) error {
-		data := encodeMaildirHdr(s)
-		if ext := findExt(fs.file.Extensions, extNameMaildir); ext != nil {
-			// Only on a difference, as the reference writes it.
-			if was, ok := decodeMaildirHdr(ext.HdrData); ok && was == s {
-				metricStampUnchanged.Inc()
-				return nil
-			}
-			ext.HdrData, ext.HdrSize = data, uint32(len(data))
-			return fs.flush()
-		}
-		// Registered (36, 0, 0) as the reference does: a header-only
-		// extension has no records to align.
-		if err := fs.file.AddHeaderExtension(extNameMaildir, data, 0, fs.file.Header.UIDValidity); err != nil {
-			return fmt.Errorf("fileindex/maildir-stamp: %w", err)
-		}
-		return fs.flush()
+		return fs.setMaildirStampLocked(s)
 	})
+}
+
+// setMaildirStampLocked records the stamp under the caller's hold: only on a
+// difference, journalled as the extension's header update, as the reference
+// writes it, so a delivery stamps the list it appended to without a base
+// rewrite (#2643).
+func (fs *folderState) setMaildirStampLocked(s mailbox.MaildirStamp) error {
+	data := encodeMaildirHdr(s)
+	if ext := findExt(fs.file.Extensions, extNameMaildir); ext != nil {
+		if was, ok := decodeMaildirHdr(ext.HdrData); ok && was == s {
+			metricStampUnchanged.Inc()
+			return nil
+		}
+		intro, err := fs.extIntroRecord(extNameMaildir)
+		if err != nil {
+			return err
+		}
+		return fs.journalRecords([][]byte{intro, encLogRec(mailindex.TxTypeExtHdrUpdate, 0,
+			mailindex.EncodeTxExtHdrUpdatePayload(mailindex.TxExtHdrUpdate{Offset: 0, Data: data}))})
+	}
+	// Registered (36, 0, 0) as the reference does: a header-only extension has
+	// no records to align.
+	if err := fs.file.AddHeaderExtension(extNameMaildir, data, 0, fs.file.Header.UIDValidity); err != nil {
+		return fmt.Errorf("fileindex/maildir-stamp: %w", err)
+	}
+	return fs.flush()
 }
 
 // StampUnchangedCount exposes the counter to a driver's row: the number that
