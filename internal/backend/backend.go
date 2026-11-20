@@ -178,7 +178,7 @@ func New(cfg *config.Config) (*Server, error) {
 	var threadRecorder *threads.Recorder
 	if cfg.Threading.Enabled {
 		threadCache = threads.NewCache(cfg.Threading.CacheIdle())
-		threadRecorder = threads.NewRecorder(threadCache)
+		threadRecorder = threads.NewRecorder(threadCache, threads.WithTailSize(cfg.Threading.ThreadingTailSize))
 	}
 
 	authAddr := cfg.AuthService.ClientAddr()

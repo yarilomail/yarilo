@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/sortedfile"
@@ -235,6 +236,13 @@ func (s *Store) ThreadOfGUID(guid string) (string, bool, error) {
 // swap runs under hold, which takes the lock and copies what arrived since
 // (THREADS-STORE.md §4, §5). The caller holds the merge's own lock.
 func MergeStore(path string, hold func(func() error) error) error {
+	// One merge a path in this process: the caller's lock covers the others.
+	v, _ := merging.LoadOrStore(path, &sync.Mutex{})
+	mu, _ := v.(*sync.Mutex)
+	if !mu.TryLock() {
+		return nil
+	}
+	defer mu.Unlock()
 	basePath := path + BaseSuffix
 	if _, err := sortedfile.RemoveTemps(basePath); err != nil {
 		return err
@@ -268,7 +276,14 @@ func MergeStore(path string, hold func(func() error) error) error {
 	if err != nil {
 		return err
 	}
-	resolve := func(v []byte) []byte { return []byte(s.resolve(string(v))) }
+	// Only a value an alias names is rewritten: the rest pass as read, with
+	// nothing allocated a base entry.
+	resolve := func(v []byte) []byte {
+		if _, aliased := s.tail.aliasOf[string(v)]; !aliased {
+			return v
+		}
+		return []byte(s.resolve(string(v)))
+	}
 	for _, sec := range []struct {
 		id uint32
 		m  map[string]string
@@ -318,6 +333,8 @@ func logGeneration(path string) uint64 {
 	}
 	return 0
 }
+
+var merging sync.Map // path -> *sync.Mutex
 
 // mergeSwapSeam is a test seam: a merge stopped after the base's rename and
 // before the log's swap. Nil elsewhere.

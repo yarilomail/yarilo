@@ -413,6 +413,10 @@ components:
       ## message; bounded by idleness so an account nobody delivers to gives
       ## its memory back. 0 never caches, which pays the fold on every delivery.
       cache_idle: 300
+      ## The thread log's size past which it is merged into its sorted base, off
+      ## the account's lock: a delivery reads the log whole and a few pages of the
+      ## base. "0" never merges, and every delivery reads a log that only grows.
+      tail_size: "128k"
 
     ## coLocated: true renders the merged StatefulSet and suppresses the legacy
     ## per-protocol backend Deployments. This is the model behind a director.

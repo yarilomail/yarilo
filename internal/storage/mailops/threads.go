@@ -19,6 +19,9 @@ const (
 	threadLockTimeout = 10 * time.Second
 	threadLockTTL     = 15 * time.Second
 	threadLockRenew   = 5 * time.Second
+	// mergeLockWait is how long a save waits to merge: another merge running
+	// is the one that folds this log, so it does not wait for it.
+	mergeLockWait = 100 * time.Millisecond
 )
 
 // recordThread puts a saved message into its conversation (#2217); a failure
@@ -59,6 +62,39 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	// between the two saw the old conversation.
 	if wrote {
 		locks.EmitBest(o.cfg.Locker, locks.ThreadsKey(user), locks.EventThreads, "")
+	}
+	o.mergeThreads(user, path)
+}
+
+// mergeThreads folds the log into the base once it passes the tail size,
+// after the save let the account's lock go: the rewrite runs under the
+// merge's own lock, and only the log's swap takes the account's
+// (THREADS-STORE.md §4, #2641).
+func (o *Ops) mergeThreads(user, path string) {
+	if !o.cfg.Threads.MergeDue(path) {
+		return
+	}
+	owner := locks.Owner(user, o.user.LockID())
+	hold := func(fn func() error) error {
+		if o.cfg.Locker == nil {
+			return fn()
+		}
+		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), o.cfg.Protocol+"-threads-swap"), threadLockTimeout)
+		defer cancel()
+		return locks.WithLock(ctx, o.cfg.Locker, locks.ThreadsKey(user), owner, threadLockTTL, threadLockRenew,
+			func(context.Context) error { return fn() })
+	}
+	merge := func(context.Context) error { return threads.MergeStore(path, hold) }
+	var err error
+	if o.cfg.Locker == nil {
+		err = merge(context.Background())
+	} else {
+		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), o.cfg.Protocol+"-threads-merge"), mergeLockWait)
+		defer cancel()
+		err = locks.WithLock(ctx, o.cfg.Locker, locks.ThreadsMergeKey(user), owner, threadLockTTL, threadLockRenew, merge)
+	}
+	if err != nil {
+		slog.Warn(o.cfg.Protocol+": thread log not merged into its base", "user", user, "err", err)
 	}
 }
 
@@ -139,6 +175,7 @@ func (o *Ops) ThreadLate(folder string, msgs []*mailbox.MessageMeta) (map[string
 	}
 	if wrote {
 		locks.EmitBest(o.cfg.Locker, locks.ThreadsKey(user), locks.EventThreads, "")
+		o.mergeThreads(user, path)
 	}
 	return out, err
 }

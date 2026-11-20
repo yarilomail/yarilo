@@ -119,8 +119,52 @@ func Empty() *State {
 	}
 }
 
-// Load folds the log at path. A missing file is not an error: see Empty.
+// Load folds the account whole: the base, when there is one, and the log
+// over it. For the readers that still want every map (JMAP, the cache, the
+// rebuild); a delivery searches the pair instead (store.go).
 func Load(path string) (*State, error) {
+	if _, err := os.Stat(path + BaseSuffix); err != nil {
+		return loadLog(path)
+	}
+	store, err := OpenStore(path)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close() //nolint:errcheck
+	st := Empty()
+	for _, sec := range []struct {
+		id uint32
+		m  map[string]string
+	}{{secMessage, st.byMessage}, {secSubject, st.bySubject}, {secGUID, st.byGUID}} {
+		if err := store.base.Each(sec.id, func(k, v []byte) error {
+			sec.m[string(k)] = string(v)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		st.records += int(store.base.Count(sec.id))
+	}
+	t := store.tail
+	for k, v := range t.byMessage {
+		st.byMessage[k] = v
+	}
+	for k, v := range t.bySubject {
+		st.bySubject[k] = v
+	}
+	for k, v := range t.byGUID {
+		st.byGUID[k] = v
+	}
+	for k, v := range t.aliasOf {
+		st.aliasOf[k] = v
+	}
+	st.records += store.tailRecords
+	st.generation = store.base.Generation
+	return st, nil
+}
+
+// loadLog folds the log at path, the account's whole history when no base
+// sits under it. A missing file is not an error: see Empty.
+func loadLog(path string) (*State, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -326,6 +370,12 @@ func Append(path string, s *State, p Placement) error {
 	// Apply after the write succeeded, so an in-memory state never claims a
 	// placement the file does not carry -- and all at once, so a reader sees
 	// the placement with its alias or neither.
+	s.applyPlacement(p)
+	return nil
+}
+
+// applyPlacement takes a placement the file already carries into the maps.
+func (s *State) applyPlacement(p Placement) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.records += recordsIn(p)
@@ -339,7 +389,6 @@ func Append(path string, s *State, p Placement) error {
 	for _, old := range p.MergedFrom {
 		s.aliasOf[old] = p.ThreadID
 	}
-	return nil
 }
 
 // writeRec appends one record. Values are flattened rather than escaped: a
@@ -431,6 +480,11 @@ func Compact(path string, s *State) error {
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp) //nolint:errcheck
 		return fmt.Errorf("threads: rename %s: %w", tmp, err)
+	}
+	// The log now holds the whole history: a base under it would pair with a
+	// log that continues none of it.
+	if err := os.Remove(path + BaseSuffix); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("threads: drop the base under %s: %w", path, err)
 	}
 	// The file now carries resolved values, so the live state must too --
 	// BOTH halves. Dropping the aliases while leaving the maps pointing at

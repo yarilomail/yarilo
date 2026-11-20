@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 
@@ -300,4 +301,49 @@ func TestAReaderCaughtBetweenAMergesFilesOpensThePairAgain(t *testing.T) {
 	}
 	betweenOpens = nil
 	h.check("after the merge between the opens")
+}
+
+// recordCost is what one delivery's RecordNew allocates on an account of n
+// messages, recorded and merged as deliveries leave it, with a cold cache.
+func recordCost(t *testing.T, n int) uint64 {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), FileName)
+	fill := NewRecorder(nil)
+	for i := 0; i < n; i++ {
+		reply := ""
+		if i%3 != 0 {
+			reply = fmt.Sprintf("m%d@x", i-i%3)
+		}
+		if _, err := fill.Record("u@x", path, fmt.Sprintf("guid-%d", i), rawMessage(fmt.Sprintf("m%d@x", i), reply, "", fmt.Sprintf("s %d", i/3))); err != nil {
+			t.Fatal(err)
+		}
+		if fill.MergeDue(path) {
+			if err := MergeStore(path, direct); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := MergeStore(path, direct); err != nil {
+		t.Fatal(err)
+	}
+	rec := NewRecorder(nil)
+	raw := rawMessage(fmt.Sprintf("m%d@x", n), fmt.Sprintf("m%d@x", n-1), "", "Re: s 1")
+	var m0, m1 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m0)
+	if _, err := rec.Record("u@x", path, fmt.Sprintf("guid-%d", n), raw); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&m1)
+	return m1.TotalAlloc - m0.TotalAlloc
+}
+
+// A delivery's threading searches the pair: what it allocates does not grow
+// with the account (2000 against 10000 messages, 32 B a message), where a
+// fold of the whole log did (#2641).
+func TestADeliveryThreadsWithoutReadingTheAccount(t *testing.T) {
+	small, large := recordCost(t, 2000), recordCost(t, 10000)
+	if grow := (float64(large) - float64(small)) / 8000; grow > 32 {
+		t.Errorf("RecordNew allocates %d B at 2000, %d B at 10000: %.1f B a message", small, large, grow)
+	}
 }
