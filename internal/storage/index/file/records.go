@@ -3,6 +3,7 @@ package file
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
@@ -203,4 +204,51 @@ func (fs *folderState) decodeForRewrite() error {
 		return err
 	}
 	return nil
+}
+
+// extIntroRecord names a known extension by its place and generation, for the
+// records that follow it in the journal.
+func (fs *folderState) extIntroRecord(name string) ([]byte, error) {
+	for i := range fs.file.Extensions {
+		ext := fs.file.Extensions[i]
+		if ext.Name == name {
+			return encLogRec(mailindex.TxTypeExtIntro, 0, mailindex.EncodeTxExtIntroPayload(mailindex.TxExtIntro{
+				ExtID: uint32(i), ResetID: ext.ResetID, HdrSize: ext.HdrSize,
+				RecordSize: ext.RecordSize, RecordAlign: ext.RecordAlign,
+			})), nil
+		}
+	}
+	return nil, fmt.Errorf("fileindex/records: no extension %q", name)
+}
+
+// extRecRecords journals per-record updates of one extension: the intro that
+// names it by its place and generation, then the updates, sorted by uid.
+func (fs *folderState) extRecRecords(name string, upds []mailindex.TxExtRecUpdate) ([][]byte, error) {
+	if len(upds) == 0 {
+		return nil, nil
+	}
+	ext := findExt(fs.file.Extensions, name)
+	if ext == nil || ext.RecordSize == 0 {
+		return nil, fmt.Errorf("fileindex/records: no record extension %q", name)
+	}
+	intro, err := fs.extIntroRecord(name)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(upds, func(i, j int) bool { return upds[i].UID < upds[j].UID })
+	return [][]byte{intro,
+		encLogRec(mailindex.TxTypeExtRecUpdate, 0, mailindex.EncodeTxExtRecUpdatePayload(int(ext.RecordSize), upds)),
+	}, nil
+}
+
+// journalRecords applies records through the replay and appends them: a
+// writer's change that reaches memory and the journal the same way.
+func (fs *folderState) journalRecords(recs [][]byte) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	if err := fs.applyRecords(recs); err != nil {
+		return err
+	}
+	return fs.appendMutLog(recs...)
 }
