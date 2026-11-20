@@ -23,13 +23,26 @@ func SortKVs(kvs []KV) []KV {
 // which SortKVs ordered; an update replaces the base's entry of its key. The
 // base is read in order and not held: what a merge keeps is the updates.
 func MergeSection(w *Writer, base *Reader, id uint32, updates []KV) error {
+	return MergeSectionMapped(w, base, id, updates, nil)
+}
+
+// MergeSectionMapped is MergeSection passing every value written through
+// mapVal, which may rewrite it, as a merge folds aliases on the way; nil
+// keeps them.
+func MergeSectionMapped(w *Writer, base *Reader, id uint32, updates []KV, mapVal func([]byte) []byte) error {
+	add := func(k, v []byte) error {
+		if mapVal != nil {
+			v = mapVal(v)
+		}
+		return w.Add(k, v)
+	}
 	if err := w.Begin(id); err != nil {
 		return err
 	}
 	i := 0
 	emitUpTo := func(key []byte) error {
 		for ; i < len(updates) && Less(updates[i].Key, key); i++ {
-			if err := w.Add(updates[i].Key, updates[i].Val); err != nil {
+			if err := add(updates[i].Key, updates[i].Val); err != nil {
 				return err
 			}
 		}
@@ -42,15 +55,15 @@ func MergeSection(w *Writer, base *Reader, id uint32, updates []KV) error {
 			}
 			if i < len(updates) && string(updates[i].Key) == string(k) {
 				i++
-				return w.Add(k, updates[i-1].Val)
+				return add(k, updates[i-1].Val)
 			}
-			return w.Add(k, v)
+			return add(k, v)
 		}); err != nil {
 			return err
 		}
 	}
 	for ; i < len(updates); i++ {
-		if err := w.Add(updates[i].Key, updates[i].Val); err != nil {
+		if err := add(updates[i].Key, updates[i].Val); err != nil {
 			return err
 		}
 	}

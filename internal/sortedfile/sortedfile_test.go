@@ -245,3 +245,30 @@ func TestTheOldFileStandsUntilTheRename(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A durable file's name is made durable after the rename: a log swapped
+// next relies on the new base being there under its name.
+func TestADurableFileSyncsItsDirectoryAfterTheRename(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "f")
+	var order []string
+	beforeRename = func(string) { order = append(order, "rename") }
+	syncDirSeam = func(dir string) {
+		if dir == filepath.Dir(path) {
+			order = append(order, "sync dir")
+		}
+	}
+	defer func() { beforeRename, syncDirSeam = nil, nil }()
+	w, err := Create(path, 1, 0, []uint32{1}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MergeSection(w, nil, 1, SortKVs([]KV{{key(1, 1), val(1)}})); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(order) != "[rename sync dir]" {
+		t.Errorf("the commit went %v, want the directory synced after the rename", order)
+	}
+}

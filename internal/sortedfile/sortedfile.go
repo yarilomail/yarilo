@@ -75,11 +75,11 @@ type section struct {
 	stringsLen uint64
 }
 
-// Reader answers lookups from an open file. It keeps the descriptor and the
-// identity it opened, and checks both on every read.
+// Reader answers lookups from an open file, through the descriptor it
+// opened: a file renamed over it is not read, and one cut or gone under it on
+// NFS fails the read, which is ErrMoved.
 type Reader struct {
 	f          *os.File
-	ident      os.FileInfo
 	path       string
 	Generation uint64
 	// Absorbed is how far into the log of the previous generation this file
@@ -90,6 +90,10 @@ type Reader struct {
 
 // readAtSeam is a test seam wrapping every positioned read. Nil elsewhere.
 var readAtSeam func(path string, r io.ReaderAt) io.ReaderAt
+
+// SetReadSeam installs readAtSeam for a test in another package: a base on
+// NFS that fails or cuts its reads. Nil removes it.
+func SetReadSeam(f func(path string, r io.ReaderAt) io.ReaderAt) { readAtSeam = f }
 
 // Open reads the header and the section table.
 func Open(path string) (*Reader, error) {
@@ -102,7 +106,7 @@ func Open(path string) (*Reader, error) {
 		f.Close() //nolint:errcheck
 		return nil, fmt.Errorf("sortedfile: %w: %w", ErrMoved, err)
 	}
-	r := &Reader{f: f, ident: st, path: path, sections: map[uint32]section{}}
+	r := &Reader{f: f, path: path, sections: map[uint32]section{}}
 	head := make([]byte, headFixed)
 	if err := r.readFull(head, 0); err != nil {
 		f.Close() //nolint:errcheck
