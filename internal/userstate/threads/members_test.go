@@ -249,3 +249,68 @@ func TestThreadGetDoesNotReadTheAccount(t *testing.T) {
 		t.Errorf("Thread/get allocates %d B at 2000, %d B at 10000: %.1f B a message", small, large, grow)
 	}
 }
+
+// threadSizes is the account's conversation sizes, sorted.
+func threadSizes(t *testing.T, path string) []int {
+	t.Helper()
+	st, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []int
+	for _, id := range st.Threads() {
+		out = append(out, len(st.GUIDsOfThread(id)))
+	}
+	slices.Sort(out)
+	return out
+}
+
+// A full conversation names its continuation, and replies that find the full
+// one go there until it fills in turn: a list thread where everyone answers
+// the first post stays whole in chunks of the limit, in delivery and in the
+// rebuild's placement, with merges at any point.
+func TestAFullConversationContinues(t *testing.T) {
+	shapes := []struct {
+		name  string
+		reply func(i int) string
+	}{
+		{"everyone answers the first", func(int) string { return "m0@x" }},
+		{"each answers the one before", func(i int) string { return fmt.Sprintf("m%d@x", i-1) }},
+	}
+	for _, shape := range shapes {
+		for _, mergeEvery := range []int{0, 1, 4} {
+			for _, path := range []string{"delivery", "rebuild"} {
+				t.Run(fmt.Sprintf("%s/merge every %d/%s", shape.name, mergeEvery, path), func(t *testing.T) {
+					file := filepath.Join(t.TempDir(), FileName)
+					rec := NewRecorder(NewCache(time.Minute, WithMaxThread(3)))
+					// The rebuild folds once and places from memory, as buildSidecar does.
+					st := Empty()
+					for i := 0; i < 12; i++ {
+						reply := ""
+						if i > 0 {
+							reply = shape.reply(i)
+						}
+						raw := rawMessage(fmt.Sprintf("m%d@x", i), reply, "", "Plan")
+						if path == "delivery" {
+							if _, err := rec.Record("u@x", file, hexGUID(i), raw); err != nil {
+								t.Fatal(err)
+							}
+						} else if err := Append(file, st, PlacementFor(st, hexGUID(i), raw, 3)); err != nil {
+							t.Fatal(err)
+						}
+						if mergeEvery > 0 && i%mergeEvery == mergeEvery-1 {
+							mergeAt(t, file, true)
+							var err error
+							if st, err = Load(file); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					if got := threadSizes(t, file); !slices.Equal(got, []int{3, 3, 3, 3}) {
+						t.Errorf("conversations of %v, want four of 3", got)
+					}
+				})
+			}
+		}
+	}
+}

@@ -26,11 +26,13 @@ const (
 	secSubject
 	secGUID
 	// secMembers maps a thread to its members: their GUIDs, guidLen bytes
-	// each, in the order they joined.
+	// each; a merge appends what the log added, in GUID order.
 	secMembers
+	// secNext maps a full thread to the one that continues it.
+	secNext
 )
 
-var baseSections = []uint32{secMessage, secSubject, secGUID, secMembers}
+var baseSections = []uint32{secMessage, secSubject, secGUID, secMembers, secNext}
 
 // guidLen is a GUID's length in a member list: 16 bytes in hex.
 const guidLen = 32
@@ -201,6 +203,8 @@ func (st *State) applyLocked(typ, key, val string) {
 		}
 		st.byGUID[key] = val
 		st.size[val]++
+	case recNext:
+		st.next[key] = val
 	case recAlias:
 		st.aliasOf[key] = val
 		if n := st.size[key]; n > 0 {
@@ -264,6 +268,12 @@ func (s *Store) ThreadOfSubject(key string) (string, bool, error) {
 
 func (s *Store) ThreadOfGUID(guid string) (string, bool, error) {
 	return s.lookup(func(t *State) map[string]string { return t.byGUID }, secGUID, guid)
+}
+
+// Continuation is the thread that continues a full one, or "".
+func (s *Store) Continuation(thread string) (string, error) {
+	next, _, err := s.lookup(func(t *State) map[string]string { return t.next }, secNext, s.resolve(thread))
+	return next, err
 }
 
 // MergeStore folds the log into a new base: built from a snapshot without
@@ -343,6 +353,14 @@ func MergeStore(path string, hold func(func() error) error) error {
 	if err := sortedfile.MergeSectionMapped(w, s.base, secMembers, members, func(k, v []byte) ([]byte, bool) {
 		return v, !dropped[string(k)]
 	}); err != nil {
+		w.Abort()
+		return err
+	}
+	next := make([]sortedfile.KV, 0, len(s.tail.next))
+	for k, v := range s.tail.next {
+		next = append(next, sortedfile.KV{Key: []byte(k), Val: []byte(v)})
+	}
+	if err := sortedfile.MergeSectionMapped(w, s.base, secNext, sortedfile.SortKVs(next), resolve); err != nil {
 		w.Abort()
 		return err
 	}

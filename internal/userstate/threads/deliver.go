@@ -79,6 +79,14 @@ func (k *storeKnown) ThreadOfSubject(key string) (string, bool) {
 	return k.answer(k.s.ThreadOfSubject(key))
 }
 
+func (k *storeKnown) Continuation(id string) string {
+	next, err := k.s.Continuation(id)
+	if err != nil && k.err == nil {
+		k.err = err
+	}
+	return next
+}
+
 func (k *storeKnown) ThreadSize(id string) int {
 	n, err := k.s.ThreadSize(id)
 	if err != nil && k.err == nil {
@@ -147,6 +155,8 @@ type Lookups interface {
 	threading.Known
 	// ThreadSize is how many messages the conversation holds.
 	ThreadSize(threadID string) int
+	// Continuation is the conversation that continues a full one, or "".
+	Continuation(threadID string) string
 }
 
 // DefaultMaxThread is threading.threading_max_thread unset.
@@ -163,15 +173,26 @@ func PlacementFor(state Lookups, guid string, raw []byte, maxThread int) Placeme
 		Subject:    msg.Subject,
 	}, state)
 
-	threadID, merged := placed.ThreadID, placed.MergedFrom
+	threadID, merged, from := placed.ThreadID, placed.MergedFrom, ""
 	// A conversation holds at most maxThread messages, as the reference's
-	// conversations do: the next one starts its own, and two that together
-	// would pass the limit stay apart, the message going into the first.
-	// Here, not in delivery, so the rebuild places as delivery does.
+	// conversations do: a full one names its continuation, which a reply
+	// follows until one has room; two that together would pass the limit stay
+	// apart. Here, not in delivery, so the rebuild places as delivery does.
 	if threadID != "" && maxThread > 0 {
 		size := state.ThreadSize(threadID)
 		if size >= maxThread {
-			threadID, merged = "", nil
+			merged = nil
+			// Bounded: a chain corrupted into a cycle must not hang a delivery.
+			for hops := 0; size >= maxThread && hops < maxChain; hops++ {
+				next := state.Continuation(threadID)
+				if next == "" {
+					break
+				}
+				threadID, size = next, state.ThreadSize(next)
+			}
+			if size >= maxThread {
+				threadID, from = "", threadID
+			}
 		} else if len(merged) > 0 {
 			for _, m := range merged {
 				size += state.ThreadSize(m)
@@ -187,13 +208,17 @@ func PlacementFor(state Lookups, guid string, raw []byte, maxThread int) Placeme
 		threadID = guid
 	}
 	return Placement{
-		GUID:       guid,
-		MessageID:  msg.MessageID,
-		SubjectKey: placed.SubjectKey,
-		ThreadID:   threadID,
-		MergedFrom: merged,
+		GUID:          guid,
+		MessageID:     msg.MessageID,
+		SubjectKey:    placed.SubjectKey,
+		ThreadID:      threadID,
+		MergedFrom:    merged,
+		ContinuesFrom: from,
 	}
 }
+
+// maxChain caps the continuations one placement follows.
+const maxChain = 1 << 16
 
 type headers struct {
 	MessageID  string
