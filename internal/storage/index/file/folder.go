@@ -2193,19 +2193,29 @@ func (fs *folderState) adoptLegacy(snap legacySnapshot) error {
 	mf.Header.UIDValidity = snap.UIDValidity
 	mf.Header.NextUID = snap.NextUID
 	mf.Header.MessagesCount = uint32(len(snap.Records))
-	for _, rec := range snap.Records {
-		if rec.Flags&mailindex.FlagSeen != 0 {
+	fs.file = mf
+	raws := make([][]byte, 0, len(snap.Records))
+	for _, lr := range snap.Records {
+		if lr.flags&mailindex.FlagSeen != 0 {
 			mf.Header.SeenMessagesCount++
 		}
-		if rec.Flags&mailindex.FlagDeleted != 0 {
+		if lr.flags&mailindex.FlagDeleted != 0 {
 			mf.Header.DeletedMessagesCount++
 		}
-		mf.Records = append(mf.Records, rec)
+		rec, rerr := fs.newRecord(lr.uid, lr.flags)
+		if rerr != nil {
+			return rerr
+		}
+		rec.set(extNameModSeq, encodeModseqRec(lr.modseq))
+		rec.set(extNameKeywords, encodeKeywordsRec(lr.kwBits))
+		raws = append(raws, rec.raw)
 	}
 	if modseqExt := findExt(mf.Extensions, extNameModSeq); modseqExt != nil {
 		modseqExt.HdrData = encodeModseqHdr(modseqHdr{HighestModSeq: snap.HighestModSeq})
 	}
-	fs.file = mf
+	if err := fs.replaceRecords(raws); err != nil {
+		return err
+	}
 	fs.hdr = dboxHdr{MailboxGUID: snap.MailboxGUID}
 	fs.keywords = snap.Keywords
 	if err := fs.persistKeywordRegistry(); err != nil {
