@@ -694,6 +694,9 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	u.guid.image, u.guid.version = nil, guidImageVersion{}
 	if id != 0 {
 		u.mu.Lock()
+		if fs := u.open[id]; fs != nil {
+			fs.unpinImage()
+		}
 		delete(u.open, id)
 		u.mu.Unlock()
 	}

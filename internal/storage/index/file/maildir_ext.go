@@ -75,19 +75,38 @@ func (u *userIndex) SetMaildirStamp(folderID uint64, s mailbox.MaildirStamp) err
 // writes it, so a delivery stamps the list it appended to without a base
 // rewrite (#2643).
 func (fs *folderState) setMaildirStampLocked(s mailbox.MaildirStamp) error {
-	data := encodeMaildirHdr(s)
-	if ext := findExt(fs.file.Extensions, extNameMaildir); ext != nil {
-		if was, ok := decodeMaildirHdr(ext.HdrData); ok && was == s {
-			metricStampUnchanged.Inc()
-			return nil
+	recs, registered, err := fs.maildirStampRecords(s)
+	if err != nil || registered {
+		if err == nil {
+			err = fs.journalRecords(recs)
 		}
-		intro, err := fs.extIntroRecord(extNameMaildir)
-		if err != nil {
-			return err
-		}
-		return fs.journalRecords([][]byte{intro, encLogRec(mailindex.TxTypeExtHdrUpdate, 0,
-			mailindex.EncodeTxExtHdrUpdatePayload(mailindex.TxExtHdrUpdate{Offset: 0, Data: data}))})
+		return err
 	}
+	return fs.addMaildirStampLocked(s)
+}
+
+// maildirStampRecords is the journal of moving the stamp to s: none when it is
+// s already. registered false says the extension is not there yet.
+func (fs *folderState) maildirStampRecords(s mailbox.MaildirStamp) (recs [][]byte, registered bool, err error) {
+	ext := findExt(fs.file.Extensions, extNameMaildir)
+	if ext == nil {
+		return nil, false, nil
+	}
+	if was, ok := decodeMaildirHdr(ext.HdrData); ok && was == s {
+		metricStampUnchanged.Inc()
+		return nil, true, nil
+	}
+	intro, err := fs.extIntroRecord(extNameMaildir)
+	if err != nil {
+		return nil, true, err
+	}
+	return [][]byte{intro, encLogRec(mailindex.TxTypeExtHdrUpdate, 0,
+		mailindex.EncodeTxExtHdrUpdatePayload(mailindex.TxExtHdrUpdate{Offset: 0, Data: encodeMaildirHdr(s)}))}, true, nil
+}
+
+// addMaildirStampLocked registers the extension with s, writing the base.
+func (fs *folderState) addMaildirStampLocked(s mailbox.MaildirStamp) error {
+	data := encodeMaildirHdr(s)
 	// Registered (36, 0, 0) as the reference does: a header-only extension has
 	// no records to align.
 	if err := fs.file.AddHeaderExtension(extNameMaildir, data, 0, fs.file.Header.UIDValidity); err != nil {

@@ -1022,7 +1022,7 @@ func (fs *folderState) flush() error {
 	// The base lists its extensions in layout order; an intro journalled after
 	// this names one by its place there, so memory takes the same order: one
 	// added since the last base sat elsewhere, and an update went to another
-	// extension's header (#2643).
+	// extension's header (#2645).
 	if layout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions); lerr == nil {
 		for i := range layout.Extensions {
 			if e := findExt(fs.file.Extensions, layout.Extensions[i].Name); e != nil {
@@ -1528,11 +1528,30 @@ func (u *userIndex) AllocateAndAppendStamped(folderID uint64, m *mailbox.Message
 		if err != nil {
 			return err
 		}
-		if err := fs.flushAppend(rec); err != nil {
+		records, err := fs.appendLogRecords(rec)
+		if err != nil {
 			return err
 		}
+		// The stamp goes in the append's journal write, as the reference
+		// commits both in one transaction; a first one registers it after.
+		registered := true
 		if stamp != nil {
-			if err := fs.setMaildirStampLocked(*stamp); err != nil {
+			srecs, ok, serr := fs.maildirStampRecords(*stamp)
+			if serr != nil {
+				return serr
+			}
+			if registered = ok; ok && len(srecs) > 0 {
+				if err := fs.applyRecords(srecs); err != nil {
+					return err
+				}
+				records = append(records, srecs...)
+			}
+		}
+		if err := fs.appendMutLog(records...); err != nil {
+			return err
+		}
+		if !registered {
+			if err := fs.addMaildirStampLocked(*stamp); err != nil {
 				return err
 			}
 		}

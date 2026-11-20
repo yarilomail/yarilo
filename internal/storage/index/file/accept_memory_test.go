@@ -14,7 +14,7 @@ import (
 
 // INDEX-MEMORY.md §7, as the slope between two folders. A marked row that
 // starts passing fails, so the step that fixes it drops its mark.
-var acceptExpectedFail = map[int]bool{3: true, 7: true}
+var acceptExpectedFail = map[int]bool{7: true}
 
 const (
 	acceptSmall = 2000
@@ -137,6 +137,7 @@ func sessionHeld(t *testing.T, n int) (held, left uint64) {
 // 1: a session holds at most 1.5 records a message. 3: closing it gives that
 // back.
 func TestAcceptASessionHoldsItsFolderAsBytes(t *testing.T) {
+	withIdleBudget(t, 0)
 	heldS, leftS := sessionHeld(t, acceptSmall)
 	heldL, leftL := sessionHeld(t, acceptLarge)
 	held := slope(heldS, heldL)
@@ -215,4 +216,11 @@ func TestAcceptAChangeCostsTheSameLate(t *testing.T) {
 	lateT, lateB := avg(9000)
 	ok := float64(lateB) <= 1.1*float64(firstB)
 	acceptance(t, 5, ok, fmt.Sprintf("first ten %s and %d B each, after 990 more %s and %d B each", firstT, firstB, lateT, lateB))
+}
+
+// withIdleBudget sets the idle images' budget for one test.
+func withIdleBudget(t *testing.T, n int64) {
+	t.Helper()
+	was := imageIdleBudget.Swap(n)
+	t.Cleanup(func() { imageIdleBudget.Store(was) })
 }

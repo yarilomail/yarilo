@@ -1,6 +1,8 @@
 package file
 
 import (
+	"encoding/binary"
+	"os"
 	"testing"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
@@ -60,5 +62,66 @@ func TestAStampWrittenInTheReferenceShapeReadsBack(t *testing.T) {
 	}
 	if _, ok := decodeMaildirHdr(raw[:maildirHdrSize-1]); ok {
 		t.Error("a short header read as a stamp, so a truncated index answers with numbers")
+	}
+}
+
+// journalGroups counts the transactions in a folder's journal.
+func journalGroups(t *testing.T, logPath string) int {
+	t.Helper()
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for off := mailindex.LogHeaderSize; off+12 <= len(b); n++ {
+		if binary.LittleEndian.Uint32(b[off+4:]) != uint32(mailindex.TxTypeBoundary) {
+			t.Fatalf("no transaction boundary at %d", off)
+		}
+		off += int(binary.LittleEndian.Uint32(b[off+8:]))
+	}
+	return n
+}
+
+// A delivery's stamp goes in the append's journal write, one transaction, as
+// the reference commits both; it reads back after a reopen.
+func TestAStampedAppendIsOneJournalWrite(t *testing.T) {
+	home := t.TempDir()
+	h := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home})
+	ui := h.(*userHandle).ui
+	f, err := ui.OpenFolder("INBOX", 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.SetMaildirStamp(f.ID, mailbox.MaildirStamp{UIDListSize: 7}); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := ui.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := fs.indexPath + ".log"
+	before := 0
+	if _, err := os.Stat(logPath); err == nil {
+		before = journalGroups(t, logPath)
+	}
+	want := mailbox.MaildirStamp{UIDListSize: 8, UIDListMtime: 9}
+	m := &mailbox.MessageMeta{GUID: [16]byte{1}, Size: 10, VSize: 10}
+	if err := ui.AllocateAndAppendStamped(f.ID, m, func(uint32) (string, *mailbox.MaildirStamp, error) {
+		return "name", &want, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := journalGroups(t, logPath) - before; got != 1 {
+		t.Errorf("the stamped append wrote %d transactions, want 1", got)
+	}
+	h.Close() //nolint:errcheck
+	h2 := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home})
+	defer h2.Close() //nolint:errcheck
+	f2, err := h2.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := h2.(*userHandle).ui.MaildirStamp(f2.ID); !ok || got != want {
+		t.Errorf("after a reopen the stamp is %+v %v, want %+v", got, ok, want)
 	}
 }

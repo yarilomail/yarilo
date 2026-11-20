@@ -161,3 +161,14 @@ func (r *Records) Bytes() []byte {
 func chunkCount(n int) int { return (n + ChunkRecords - 1) / ChunkRecords }
 
 type atomicChunk = atomic.Pointer[Chunk]
+
+// LoadedBytes is the record bytes the chunks in memory hold.
+func (r *Records) LoadedBytes() int64 {
+	var n int64
+	for i := range r.chunks {
+		if c := r.chunks[i].Load(); c != nil {
+			n += int64(len(c.raw))
+		}
+	}
+	return n
+}

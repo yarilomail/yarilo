@@ -21,6 +21,7 @@ func TestAnUnknownDurabilityOrLockSettingRefusesTheStart(t *testing.T) {
 		{"cache purge below -1", "mail_cache_purge_delete_percentage: -2", "mail_cache_purge_delete_percentage"},
 		{"continued share negative", "mail_cache_purge_continued_percentage: -1", "mail_cache_purge_continued_percentage"},
 		{"cache purge size negative", "mail_cache_purge_min_size: \"-1k\"", "mail_cache_purge_min_size"},
+		{"idle image budget negative", "mail_index_idle_cache_size: \"-1M\"", "mail_index_idle_cache_size"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,7 +54,8 @@ func TestEveryDurabilityModeIsAccepted(t *testing.T) {
 func TestEveryCachePurgeShareIsAccepted(t *testing.T) {
 	for _, body := range []string{"mail_cache_purge_delete_percentage: 0", "mail_cache_purge_delete_percentage: 100", "mail_driver: maildir",
 		"mail_cache_purge_min_size: \"0\"", "mail_cache_purge_min_size: \"32k\"",
-		"mail_cache_purge_continued_percentage: 0", "mail_cache_purge_continued_percentage: 200"} {
+		"mail_cache_purge_continued_percentage: 0", "mail_cache_purge_continued_percentage: 200",
+		"mail_index_idle_cache_size: \"0\"", "mail_index_idle_cache_size: \"64M\""} {
 		if _, err := loadStorage(t, body); err != nil {
 			t.Errorf("%q refused: %v", body, err)
 		}

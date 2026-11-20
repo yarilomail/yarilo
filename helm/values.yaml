@@ -227,6 +227,10 @@ storage:
   mail_cache_purge_continued_percentage: 200
   ## A cache file smaller than this is never purged on its own; "0" purges any size.
   mail_cache_purge_min_size: "32k"
+  ## What folder index images no session uses may hold together, kept 10 s for
+  ## the next open of the folder; over it the oldest goes at once. "0" frees each
+  ## on its last close.
+  mail_index_idle_cache_size: "64M"
   ## What reaches the disk before a delivery is answered: never, optimized
   ## (the body) or always (plus index, list and directory). See the docs.
   mail_fsync: optimized

@@ -47,3 +47,42 @@ func TestACacheMinimumOfZeroReachesTheConfig(t *testing.T) {
 		})
 	}
 }
+
+// The idle images' budget the same way: "0" frees each image on its last close.
+func TestAnIdleImageBudgetOfZeroReachesTheConfig(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		values string
+		want   int64
+	}{
+		{"zero without quotes", "storage:\n  mail_index_idle_cache_size: 0\n", 0},
+		{"the chart default", "", 64 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"template", "../../helm"}
+			if tc.values != "" {
+				vf := filepath.Join(t.TempDir(), "values.yaml")
+				if err := os.WriteFile(vf, []byte(tc.values), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "-f", vf)
+			}
+			out, err := helmOutput(t, args...)
+			if err != nil {
+				t.Fatalf("helm template: %v", err)
+			}
+			path := filepath.Join(t.TempDir(), "yarilo.yaml")
+			if err := os.WriteFile(path, []byte(renderedConfig(t, string(out))), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Storage.MailIndexIdleCacheSize; got != tc.want || cfg.Storage.MailIndexIdleCacheSizeRaw == "" {
+				t.Errorf("the pod loads a budget of %d (raw %q), want %d", got, cfg.Storage.MailIndexIdleCacheSizeRaw, tc.want)
+			}
+		})
+	}
+}
