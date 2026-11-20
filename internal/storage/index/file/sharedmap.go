@@ -77,9 +77,7 @@ func MapCopies() int { return mapCopies.load() }
 // DropBaseImages forgets every cached parse of a base, as a process that has
 // just started holds none: for a measurement of a cold open.
 func DropBaseImages() {
-	baseImages.mu.Lock()
-	defer baseImages.mu.Unlock()
-	clear(baseImages.m)
+	baseImages.clearAll()
 }
 
 // ResetMapCounters zeroes both, for a row that counts one folder's work.

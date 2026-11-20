@@ -1,6 +1,8 @@
 package file
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -112,5 +114,37 @@ func TestAHeldViewKeepsItsImage(t *testing.T) {
 	release()
 	if baseImages.held(path) {
 		t.Error("the image stayed after its last view was released")
+	}
+}
+
+// closeCost is what one image's last close takes beside n images in use,
+// per close, the median of five rounds.
+func closeCost(n int) time.Duration {
+	c := &imageCache{m: map[string]*baseImage{}, clock: time.Now, after: func(time.Duration, func()) {}}
+	for i := 0; i < n; i++ {
+		img := &baseImage{refs: 1, path: fmt.Sprint(i)}
+		c.m[img.path] = img
+	}
+	img := &baseImage{path: "closed"}
+	c.m[img.path] = img
+	var rounds []time.Duration
+	for r := 0; r < 5; r++ {
+		start := time.Now()
+		for i := 0; i < 1000; i++ {
+			c.ref(img)
+			c.unref(img)
+		}
+		rounds = append(rounds, time.Since(start)/1000)
+	}
+	slices.Sort(rounds)
+	return rounds[2]
+}
+
+// A last close does not walk the images in use: beside 100 and beside 100000
+// it costs the same, where a walk of the cache costs a thousand times more.
+func TestALastCloseDoesNotWalkTheCache(t *testing.T) {
+	small, large := closeCost(100), closeCost(100000)
+	if large > 5*small+time.Microsecond {
+		t.Errorf("a last close takes %v beside 100 images in use, %v beside 100000", small, large)
 	}
 }

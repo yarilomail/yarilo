@@ -1,6 +1,7 @@
 package file
 
 import (
+	"container/list"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,11 @@ var imageIdleBudget atomic.Int64
 type imageCache struct {
 	mu sync.Mutex
 	m  map[string]*baseImage
+	// idle lists the cached images nobody references, oldest first, and
+	// idleBytes is what they hold: a last close costs the same whatever the
+	// number of images in use.
+	idle      list.List
+	idleBytes int64
 	// clock and after are test seams under mu: the clock idle time is read
 	// from, and the timer that sweeps after imageIdleTimeout.
 	clock func() time.Time
@@ -48,6 +54,9 @@ func (c *imageCache) store(path string, img *baseImage) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	img.path = path
+	if old := c.m[path]; old != nil && old != img {
+		c.unidleLocked(old)
+	}
 	c.m[path] = img
 }
 
@@ -55,7 +64,38 @@ func (c *imageCache) store(path string, img *baseImage) {
 func (c *imageCache) Delete(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.m, path)
+	c.dropLocked(path)
+}
+
+func (c *imageCache) dropLocked(path string) {
+	if img := c.m[path]; img != nil {
+		c.unidleLocked(img)
+		delete(c.m, path)
+	}
+}
+
+// clearAll forgets every image.
+func (c *imageCache) clearAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for path := range c.m {
+		c.dropLocked(path)
+	}
+}
+
+// unidleLocked takes img off the idle list, if it is there.
+func (c *imageCache) unidleLocked(img *baseImage) {
+	if img.idleElem == nil {
+		return
+	}
+	c.idle.Remove(img.idleElem)
+	c.idleBytes -= img.idleSize
+	img.idleElem, img.idleSize = nil, 0
+}
+
+func (c *imageCache) refLocked(img *baseImage) {
+	img.refs++
+	c.unidleLocked(img)
 }
 
 // held reports whether an image for path is cached, for tests.
@@ -69,7 +109,7 @@ func (fs *folderState) pinImage(img *baseImage) {
 	if fs.pinned == img {
 		return
 	}
-	img.refs++
+	c.refLocked(img)
 	old := fs.pinned
 	fs.pinned = img
 	c.unrefLocked(old)
@@ -96,7 +136,7 @@ func (fs *folderState) unpinImage() {
 func (c *imageCache) ref(img *baseImage) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	img.refs++
+	c.refLocked(img)
 }
 
 func (c *imageCache) unref(img *baseImage) {
@@ -114,9 +154,13 @@ func (c *imageCache) unrefLocked(img *baseImage) {
 		return
 	}
 	img.idleAt = c.clock()
-	if c.m[img.path] == img {
-		c.after(imageIdleTimeout, c.sweep)
+	if c.m[img.path] != img {
+		return // replaced or forgotten: nothing keeps it
 	}
+	img.idleSize = img.bytes()
+	img.idleElem = c.idle.PushBack(img)
+	c.idleBytes += img.idleSize
+	c.after(imageIdleTimeout, c.sweep)
 	c.trimLocked()
 }
 
@@ -125,32 +169,21 @@ func (c *imageCache) sweep() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.clock()
-	for path, img := range c.m {
-		if img.refs == 0 && now.Sub(img.idleAt) >= imageIdleTimeout {
-			delete(c.m, path)
+	for e := c.idle.Front(); e != nil; e = c.idle.Front() {
+		img, _ := e.Value.(*baseImage)
+		if now.Sub(img.idleAt) < imageIdleTimeout {
+			return
 		}
+		c.dropLocked(img.path)
 	}
 }
 
 // trimLocked drops idle images, oldest first, until they fit the budget.
 func (c *imageCache) trimLocked() {
 	budget := imageIdleBudget.Load()
-	for {
-		var total int64
-		var oldest *baseImage
-		for _, img := range c.m {
-			if img.refs > 0 {
-				continue
-			}
-			total += img.bytes()
-			if oldest == nil || img.idleAt.Before(oldest.idleAt) {
-				oldest = img
-			}
-		}
-		if oldest == nil || total <= budget {
-			return
-		}
-		delete(c.m, oldest.path)
+	for e := c.idle.Front(); e != nil && c.idleBytes > budget; e = c.idle.Front() {
+		img, _ := e.Value.(*baseImage)
+		c.dropLocked(img.path)
 	}
 }
 
