@@ -76,6 +76,9 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: [gate]
     runs-on: [self-hosted, linux]
+    ## Three bounded pushes of each of the two tags are an hour at worst;
+    ## the rest is the build and the scan. The default is six hours.
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -194,9 +197,24 @@ jobs:
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.version.outputs.dev_tag }}
         run: |
+          # One push is bounded and repeated: a connection to the registry
+          # that stalls would otherwise hold the runner until the job limit.
+          # A repeat sends only the layers the registry does not have yet.
+          # The layer lines stay in the log, so a slow push names its layer.
+          push() {
+            for attempt in 1 2 3; do
+              started=$(date +%s)
+              if timeout 600 docker push "$1"; then
+                echo "pushed $1 in $(( $(date +%s) - started ))s, attempt $attempt"
+                return 0
+              fi
+              echo "::warning::push of $1 did not finish in $(( $(date +%s) - started ))s, attempt $attempt"
+            done
+            return 1
+          }
           printf '%s\n' "$TAGS" | while read -r tag; do
             [ -n "$tag" ] || continue
-            docker push --quiet "$tag" >/dev/null
+            push "$tag"
             echo "$tag $(docker inspect --format '{{join .RepoDigests " "}}' "$tag")"
           done
 
