@@ -209,6 +209,16 @@ func (v *folderState) siblingLocked() *folderState {
 	return s
 }
 
+// holdsRecords says the view has records, read under pendMu: a reader's
+// ensureRecords may be replacing them.
+func (v *folderState) holdsRecords() bool {
+	if v.isView {
+		v.pendMu.Lock()
+		defer v.pendMu.Unlock()
+	}
+	return v.recs != nil
+}
+
 func (v *folderState) siblingBase() *folderState {
 	return &folderState{
 		user:        v.user,
@@ -307,7 +317,7 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	fs.mapMu.Unlock()
 	onWriter := false
 	switch {
-	case from.w != nil || from.view.recs != nil:
+	case from.w != nil || from.view.holdsRecords():
 		// Chunked: the next version writes through the map's writer, which
 		// copies only a chunk a live snapshot still shares (INDEX-MEMORY.md §4).
 		target = from.view.sibling()
