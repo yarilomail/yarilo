@@ -266,7 +266,7 @@ func TestAResetZeroesTheExtensionsHeaderToo(t *testing.T) {
 	if ext == nil || len(ext.HdrData) == 0 || bytes.Equal(ext.HdrData, make([]byte, len(ext.HdrData))) {
 		t.Fatal("the fixture's GUID extension has no header to clear")
 	}
-	recs := [][]byte{extIntro(t, fs, extNameGUID, ext.ResetID, uint16(ext.RecordSize)),
+	recs := [][]byte{extIntro(t, fs, extNameGUID, ext.ResetID, ext.RecordSize),
 		encLogRec(mailindex.TxTypeExtReset, 0, mailindex.EncodeTxExtResetPayload(mailindex.TxExtReset{NewResetID: ext.ResetID + 1}))}
 	if err := fs.applyRecords(recs); err != nil {
 		t.Fatal(err)
