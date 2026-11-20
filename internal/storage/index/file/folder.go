@@ -66,7 +66,7 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 		// Re-opening what this index holds: the lock-free read FolderVSize
 		// makes, with the locked one as its own fallback (#1639).
 		var snap *mailbox.Folder
-		err := u.withFolderROUnlocked(id, func(fs *folderState) error {
+		err := u.withFolderHeaderUnlocked(id, func(fs *folderState) error {
 			var sErr error
 			snap, sErr = fs.snapshot(id)
 			return sErr
@@ -490,36 +490,77 @@ func (fs *folderState) refreshExtState() error {
 }
 
 // recalcVsizeLocked recomputes the aggregate from the per-record vsize
-// extension. Records carrying none are counted but add nothing, so the driver
-// fills them before this is trusted (#1728).
+// extension: every record at or below its highest uid has a size, so it stops
+// before the first that has none, which the driver fills from storage and the
+// next pass counts on (#1728, #2638).
 func (fs *folderState) recalcVsizeLocked() {
-	var (
-		total  uint64
-		maxUID uint32
-	)
-	for i := range fs.recordCount() {
-		v, _ := fs.recExt(i, extNameVsize)
-		total += uint64(decodeVsizeRec(v))
-		maxUID = max(maxUID, fs.recUID(i))
+	if fs.isGUIDStore() {
+		// Its records name messages of other folders and carry no size.
+		fs.vsize = hdrVsize{MessageCount: uint32(fs.recordCount())}
+		if n := fs.file.Header.NextUID; n > 0 {
+			fs.vsize.HighestUID = n - 1
+		}
+		return
 	}
-	fs.vsize = hdrVsize{
-		Vsize:        total,
-		HighestUID:   maxUID,
-		MessageCount: uint32(fs.recordCount()),
+	fs.vsize = hdrVsize{}
+	fs.vsizeAddFrom(0, nil, nil)
+}
+
+// isGUIDStore says this state is the user's GUID store, not a folder.
+func (fs *folderState) isGUIDStore() bool {
+	return filepath.Base(fs.indexPath) == GUIDIndexFileName
+}
+
+// vsizeAddFrom extends the aggregate over the records from seq on and then the
+// appends in pending, in uid order, stopping before the first without a size.
+// Through them all, it reaches the folder's next uid less one: a uid with no
+// record does not hold it.
+func (fs *folderState) vsizeAddFrom(seq int, appends [][]byte, gone map[uint32]bool) {
+	add := func(uid, size uint32) bool {
+		if gone[uid] {
+			return true
+		}
+		if size == 0 {
+			fs.logVsizeStop(uid)
+			return false
+		}
+		fs.vsize.Vsize += uint64(size)
+		fs.vsize.MessageCount++
+		fs.vsize.HighestUID = uid
+		return true
+	}
+	for i := seq; i < fs.recordCount(); i++ {
+		v, _ := fs.recExt(i, extNameVsize)
+		if !add(fs.recUID(i), decodeVsizeRec(v)) {
+			return
+		}
+	}
+	if !fs.vsizeAddAppends(appends, add) {
+		return
+	}
+	if n := fs.file.Header.NextUID; n > 0 && n-1 > fs.vsize.HighestUID {
+		fs.vsize.HighestUID = n - 1
 	}
 }
 
-// ensureVsizeView is ensureVsizeLocked for a view, whose recount may have to
-// load its records first.
+// logVsizeStop names the record that holds the aggregate: until its size is
+// filled, every count reads the records above it.
+func (fs *folderState) logVsizeStop(uid uint32) {
+	slog.Warn("fileindex: a record without a size holds the folder's size aggregate",
+		"user", fs.user, "folder", fs.folder, "uid", uid)
+}
+
+// ensureVsizeView is ensureVsizeLocked for a view being built, which nobody
+// reads yet.
 func (fs *folderState) ensureVsizeView() error {
-	if fs.vsizeCurrent() {
-		return nil
-	}
-	if err := fs.loadRecords(); err != nil {
-		return err
-	}
-	fs.recalcVsizeLocked()
-	return nil
+	return fs.catchUpVsize()
+}
+
+// vsizeCurrentBefore says the aggregate counts every record below uid: it is
+// current for the folder as it was before uid was handed out.
+func (fs *folderState) vsizeCurrentBefore(uid uint32) bool {
+	return fs.vsize.HighestUID+1 == uid && fs.vsize.MessageCount+1 == fs.file.Header.MessagesCount ||
+		fs.vsize.HighestUID+1 == uid && fs.vsize.MessageCount == fs.file.Header.MessagesCount
 }
 
 func (fs *folderState) vsizeCurrent() bool {
@@ -527,22 +568,167 @@ func (fs *folderState) vsizeCurrent() bool {
 		fs.vsize.HighestUID+1 == fs.file.Header.NextUID
 }
 
-// ensureVsizeLocked recomputes the aggregate only when the O(1) validity check
-// says it is stale, so a quota read does not rescan every message. Holds fs.mu.
+// ensureVsizeLocked brings the aggregate up to the folder: the records above
+// its highest uid are added, not the folder recounted. Holds fs.mu.
 func (fs *folderState) ensureVsizeLocked() {
-	if fs.vsizeCurrent() {
-		return
-	}
-	if fs.recs != nil && !fs.recs.AllLoaded() {
-		// Recounted when the chunks load, as a fold loads them: a delivery
-		// does not read the folder for a quota aggregate it does not answer.
-		return
-	}
-	if err := fs.loadWriterRecords(); err != nil {
+	if err := fs.catchUpVsize(); err != nil {
 		slog.Warn("fileindex: vsize recount needs the records", "folder", fs.folder, "err", err)
-		return
+	}
+}
+
+// catchUpVsize adds what lies above the aggregate's highest uid: the base's
+// records there, by their chunks, and the appends still pending. An aggregate
+// past the folder, or pending that changes records, is recounted whole.
+func (fs *folderState) catchUpVsize() error {
+	if fs.vsizeCurrent() || fs.recs == nil {
+		return nil
+	}
+	if _, sized := fs.recs.Layout().ExtID(extNameVsize); !sized || fs.isGUIDStore() {
+		return nil // a store whose records carry no size, as the GUID store's
+	}
+	h := fs.vsize
+	if h.HighestUID >= fs.file.Header.NextUID {
+		return fs.recountVsize()
+	}
+	var appends [][]byte
+	var gone map[uint32]bool
+	for _, rec := range fs.pending {
+		hdr, err := mailindex.DecodeTxHeader(rec)
+		if err != nil {
+			return err
+		}
+		switch payload := rec[8:hdr.Size]; hdr.Type.Kind() {
+		case mailindex.TxTypeAppend:
+			appends = append(appends, payload)
+		case mailindex.TxTypeExpungeGUID | mailindex.TxType(mailindex.TxExpungeProt):
+			if gone == nil {
+				gone = map[uint32]bool{}
+			}
+			for _, uid := range expungedUIDs(payload) {
+				gone[uid] = true
+			}
+		case mailindex.TxTypeFlagUpdate, mailindex.TxTypeModseqUpdate, mailindex.TxTypeKeywordUpdate, mailindex.TxTypeKeywordReset,
+			mailindex.TxTypeExtIntro, mailindex.TxTypeExtRecUpdate:
+			// No size moves: a stamped size comes with the aggregate's own
+			// header update, which applies at once.
+		default:
+			return fs.recountVsize()
+		}
+	}
+	// What leaves the aggregate: an expunged record it counted, its size read
+	// from the one chunk that holds it.
+	for uid := range gone {
+		if uid > h.HighestUID || isPendingUID(fs.pendingUIDs, uid) {
+			continue
+		}
+		size, found, err := fs.baseVsizeOf(uid)
+		if err != nil {
+			return err
+		}
+		if !found {
+			continue
+		}
+		fs.vsize.Vsize -= min(fs.vsize.Vsize, uint64(size))
+		if fs.vsize.MessageCount > 0 {
+			fs.vsize.MessageCount--
+		}
+	}
+	// Past its expunges, an aggregate counting more than the folder holds is
+	// not one to extend.
+	if fs.vsize.MessageCount > fs.file.Header.MessagesCount {
+		return fs.recountVsize()
+	}
+	seq, ok, err := fs.firstSeqAbove(h.HighestUID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fs.recountVsize()
+	}
+	if err := fs.recs.Load(seq, fs.recordCount()); err != nil {
+		return err
+	}
+	fs.vsizeAddFrom(seq, appends, gone)
+	return nil
+}
+
+// expungedUIDs reads an expunge record's uids, in either of its strides.
+func expungedUIDs(payload []byte) []uint32 {
+	stride := 20
+	if len(payload) > 0 && len(payload)%28 == 0 && len(payload)%20 != 0 {
+		stride = 28
+	}
+	var out []uint32
+	for i := 0; i+stride <= len(payload); i += stride {
+		out = append(out, binary.LittleEndian.Uint32(payload[i:]))
+	}
+	return out
+}
+
+func isPendingUID(m map[uint32]struct{}, uid uint32) bool {
+	_, ok := m[uid]
+	return ok
+}
+
+// baseVsizeOf is a base record's size, loading only the chunks a search for
+// it lands in.
+func (fs *folderState) baseVsizeOf(uid uint32) (uint32, bool, error) {
+	if uid == 0 {
+		return 0, false, nil
+	}
+	seq, ok, err := fs.firstSeqAbove(uid - 1)
+	if err != nil || !ok || seq >= fs.recordCount() {
+		return 0, false, err
+	}
+	if err := fs.recs.Load(seq, seq+1); err != nil {
+		return 0, false, err
+	}
+	if fs.recUID(seq) != uid {
+		return 0, false, nil
+	}
+	v, _ := fs.recExt(seq, extNameVsize)
+	return decodeVsizeRec(v), true, nil
+}
+
+// recountVsize counts the folder whole, its pending applied first.
+func (fs *folderState) recountVsize() error {
+	if fs.isView {
+		if err := fs.applyPendingLocked(); err != nil {
+			return err
+		}
+	} else if err := fs.loadWriterRecords(); err != nil {
+		return err
 	}
 	fs.recalcVsizeLocked()
+	return nil
+}
+
+// vsizeAddAppends extends the aggregate over raw appended records with add;
+// false once add stopped.
+func (fs *folderState) vsizeAddAppends(appends [][]byte, add func(uid, size uint32) bool) bool {
+	if len(appends) == 0 {
+		return true
+	}
+	layout := fs.recs.Layout()
+	id, has := layout.ExtID(extNameVsize)
+	stride := int(layout.RecordSize)
+	for _, payload := range appends {
+		for i := 0; stride > 0 && i+stride <= len(payload); i += stride {
+			uid := binary.LittleEndian.Uint32(payload[i:])
+			if uid <= fs.vsize.HighestUID {
+				continue
+			}
+			var size uint32
+			if has {
+				e := layout.Extensions[id]
+				size = decodeVsizeRec(payload[i+int(e.RecordOffset) : i+int(e.RecordOffset+e.RecordSize)])
+			}
+			if !add(uid, size) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // persistVsizeLocked writes the cached aggregate into the hdr-vsize
@@ -619,11 +805,10 @@ func (fs *folderState) countFrom(uid uint32) (uint32, error) {
 	if uid >= fs.file.Header.NextUID {
 		return 0, nil
 	}
-	n := fs.recordCount()
 	if uid <= 1 {
 		return fs.file.Header.MessagesCount, nil // every message is recent
 	}
-	if fs.recs != nil && !fs.recs.AllLoaded() && fs.baseNextUID != 0 && uid >= fs.baseNextUID {
+	if fs.recsDeferred() && !fs.pendingExpunge && fs.baseNextUID != 0 && uid >= fs.baseNextUID {
 		// Above every base record: the recent ones are appends not loaded yet.
 		var recent uint32
 		for p := range fs.pendingUIDs {
@@ -633,6 +818,10 @@ func (fs *folderState) countFrom(uid uint32) (uint32, error) {
 		}
 		return recent, nil
 	}
+	if err := fs.ensureRecords(); err != nil {
+		return 0, err
+	}
+	n := fs.recordCount()
 	if fs.recs != nil && n > 0 {
 		// The recent ones are the newest: the last chunk answers it alone, and
 		// a mark at or below the first record says all, without the rest.
@@ -1174,7 +1363,7 @@ func (u *userIndex) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error
 // cache. A read, taken as one: through the write path it cost an exclusive lock
 // per folder before every save (#1634).
 func (u *userIndex) FolderVSize(folderID uint64) (bytes uint64, messages uint32, err error) {
-	err = u.withFolderROUnlocked(folderID, func(fs *folderState) error {
+	err = u.withFolderHeaderUnlocked(folderID, func(fs *folderState) error {
 		bytes = fs.vsize.Vsize
 		messages = fs.vsize.MessageCount
 		return nil
@@ -1196,7 +1385,7 @@ func (u *userIndex) RecomputeVSize(folderID uint64) error {
 // decodes as pending, which is exactly the set still carrying zero GUIDs.
 func (u *userIndex) GUIDBackfillNeeded(folderID uint64) (bool, error) {
 	var need bool
-	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
+	err := u.withFolderHeaderUnlocked(folderID, func(fs *folderState) error {
 		ext := findExt(fs.file.Extensions, extNameGUID)
 		need = ext == nil || decodeGUIDHdr(ext.HdrData) != guidStateComplete
 		return nil
@@ -1385,10 +1574,14 @@ func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string
 	for name, v := range extra {
 		rec.set(name, v)
 	}
-	fs.vsize.Vsize += uint64(m.RFC822Size())
-	fs.vsize.MessageCount++
-	if m.UID > fs.vsize.HighestUID {
+	// The aggregate takes the record only when it is the next one and has a
+	// size: anything else waits for the pass that counts above it (#2638).
+	if size := m.RFC822Size(); size != 0 && fs.vsizeCurrentBefore(m.UID) {
+		fs.vsize.Vsize += uint64(size)
+		fs.vsize.MessageCount++
 		fs.vsize.HighestUID = m.UID
+	} else if size == 0 && findExt(fs.file.Extensions, extNameVsize) != nil && !fs.isGUIDStore() {
+		fs.logVsizeStop(m.UID)
 	}
 	recs, err := fs.appendRecords(rec.raw)
 	if err != nil {
@@ -1702,13 +1895,17 @@ func (fs *folderState) expungeLocked(uid uint32, modseq uint64) ([][]byte, error
 	}
 	v, _ := fs.recExt(seq, extNameVsize)
 	expungedVSize := decodeVsizeRec(v)
-	if uint64(expungedVSize) <= fs.vsize.Vsize {
-		fs.vsize.Vsize -= uint64(expungedVSize)
-	} else {
-		fs.vsize.Vsize = 0
-	}
-	if fs.vsize.MessageCount > 0 {
-		fs.vsize.MessageCount--
+	// Only what the aggregate counted leaves it: a record above its highest
+	// uid was never in it.
+	if uid <= fs.vsize.HighestUID {
+		if uint64(expungedVSize) <= fs.vsize.Vsize {
+			fs.vsize.Vsize -= uint64(expungedVSize)
+		} else {
+			fs.vsize.Vsize = 0
+		}
+		if fs.vsize.MessageCount > 0 {
+			fs.vsize.MessageCount--
+		}
 	}
 
 	// 28-byte payload: uid(4)+guid(16)+modseq(8). Compatible with
@@ -1840,7 +2037,7 @@ func (u *userIndex) KeywordsUnlocked(folderID uint64) ([]string, error) {
 
 func (u *userIndex) keywords(folderID uint64) ([]string, error) {
 	var out []string
-	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
+	err := u.withFolderHeaderUnlocked(folderID, func(fs *folderState) error {
 		out = append([]string(nil), fs.keywords.Names...)
 		return nil
 	})
@@ -1868,7 +2065,7 @@ func (u *userIndex) ResetFolder(folderID uint64, records []*mailbox.MessageMeta)
 func (u *userIndex) AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) (uint32, bool, error) {
 	var current uint32
 	need := false
-	if err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
+	if err := u.withFolderHeaderUnlocked(folderID, func(fs *folderState) error {
 		current = fs.file.Header.UIDValidity
 		need = (uidValidity != 0 && current != uidValidity) || nextUID > fs.file.Header.NextUID
 		return nil
@@ -3172,7 +3369,7 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.C
 // CachePairIdentity returns the index identity and the reset_id a valid cache
 // must carry; ok is false when the index predates the extension.
 func (u *userIndex) CachePairIdentity(folderID uint64) (indexID, resetID uint32, ok bool, err error) {
-	err = u.withFolderROUnlocked(folderID, func(fs *folderState) error {
+	err = u.withFolderHeaderUnlocked(folderID, func(fs *folderState) error {
 		indexID = fs.file.Header.IndexID
 		if ext := findExt(fs.file.Extensions, extNameCache); ext != nil {
 			resetID = ext.ResetID
@@ -3187,7 +3384,7 @@ func (u *userIndex) CachePairIdentity(folderID uint64) (indexID, resetID uint32,
 // yarilo.index in the folder's index directory.
 func (u *userIndex) CachePath(folderID uint64) (string, error) {
 	var path string
-	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
+	err := u.withFolderHeaderUnlocked(folderID, func(fs *folderState) error {
 		path = filepath.Join(fs.indexDir, mailindex.CacheFileName)
 		return nil
 	})

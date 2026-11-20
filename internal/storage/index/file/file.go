@@ -590,7 +590,7 @@ type folderState struct {
 	file        *mailindex.File    // the wire-format snapshot
 	recs        *mailindex.Records // the records, as chunks; file holds none
 	onBase      bool               // a view whose records are the base's, with no tail on them
-	recordsLeft bool
+	recordsLeft bool               // file holds the header only; the next locked use reads all
 	// pending is the journal records deferred for chunks not loaded, in
 	// journal order; pendingUIDs the uids they append; countersUnknown the
 	// header counters they moved unseen; baseNextUID no base record reaches.
@@ -598,9 +598,15 @@ type folderState struct {
 	pendingUIDs     map[uint32]struct{}
 	countersUnknown uint8
 	baseNextUID     uint32
-	loading         bool        // file holds the header only; the next locked use reads all
-	headerFixed     bool        // the header was corrected from records in memory
-	keywords        keywordsHdr // parsed keyword name registry
+	pendingExpunge  bool // pending holds an expunge: pendingUIDs may name gone uids
+	// A view keeps pending as published; ensureRecords applies it once, under
+	// pendMu, to records of its own, and every read of recs follows it.
+	isView      bool
+	pendMu      sync.Mutex
+	applied     atomic.Bool
+	loading     bool        // loadWriterRecords is running; a call from inside it returns at once
+	headerFixed bool        // the header was corrected from records in memory
+	keywords    keywordsHdr // parsed keyword name registry
 
 	// flushes counts base rewrites, so a transaction can tell whether one
 	// happened while it was applying its own ops (#1831).
@@ -799,6 +805,16 @@ func (u *userIndex) folderVolatileDir(folder string) string {
 // what to rewrite or delete stays locked: a stale answer there does not become
 // visible a moment later, it decides wrongly and the write lands anyway (#1249).
 func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) error) error {
+	return u.withFolderUnlocked(folderID, false, fn)
+}
+
+// withFolderHeaderUnlocked is withFolderROUnlocked for a read of the header
+// alone: a view leaves the chunks a tail touched on disk (INDEX-MEMORY.md §4).
+func (u *userIndex) withFolderHeaderUnlocked(folderID uint64, fn func(*folderState) error) error {
+	return u.withFolderUnlocked(folderID, true, fn)
+}
+
+func (u *userIndex) withFolderUnlocked(folderID uint64, headerOnly bool, fn func(*folderState) error) error {
 	whole := time.Now()
 	defer func() { metricReadSeconds.Observe(time.Since(whole).Seconds()) }()
 
@@ -834,7 +850,13 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 		fs.leaveRecordsOnDisk()
 	}
 	buildStart := time.Now()
-	ferr := fn(view)
+	ferr := error(nil)
+	if !headerOnly {
+		ferr = view.ensureRecords()
+	}
+	if ferr == nil {
+		ferr = fn(view)
+	}
 	observeReadPart("build", time.Since(buildStart))
 	release()
 	if errors.Is(ferr, mailindex.ErrBaseMoved) {

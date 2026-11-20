@@ -133,7 +133,9 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		recs:      img.recs,
 		keywords:  img.keywords,
 		lineage:   img.lineage,
+		isView:    true,
 	}
+	view.newBaseLoaded(img.file)
 
 	if lg.f == nil || !lg.ok {
 		if rerr := view.refreshExtState(); rerr != nil {
@@ -164,9 +166,7 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 
 	// The tail goes onto a fork of the shared image's records, which copies a
 	// chunk before changing it: the image stays as every other view reads it.
-	if err := view.forkRecords(); err != nil {
-		return nil, 0, nil, err
-	}
+	view.forkRecords()
 	end, aerr := view.applyLogFrom(lg, from)
 	if aerr != nil {
 		return nil, 0, nil, aerr

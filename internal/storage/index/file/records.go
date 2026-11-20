@@ -48,16 +48,37 @@ func (fs *folderState) recExt(i int, name string) ([]byte, bool) {
 
 // forkRecords gives a view private header data and records a replay may
 // write: chunks forked from the shared ones.
-func (fs *folderState) forkRecords() error {
+func (fs *folderState) forkRecords() {
 	fs.file = cloneIndexFile(fs.file)
 	if fs.recs == nil {
+		return
+	}
+	// Unloaded chunks stay so: the replay defers what changes them.
+	fs.recs = fs.recs.Fork()
+}
+
+// ensureRecords gives a view its records with pending applied, loading them;
+// a view's read of recs follows it. A no-op for a writer, which holds fs.mu.
+func (fs *folderState) ensureRecords() error {
+	if !fs.isView || len(fs.pending) == 0 && fs.countersUnknown == 0 {
 		return nil
 	}
-	if err := fs.recs.LoadAll(); err != nil {
-		return fmt.Errorf("fileindex/records: %w", err)
+	fs.pendMu.Lock()
+	defer fs.pendMu.Unlock()
+	if fs.applied.Load() {
+		return nil
 	}
-	fs.recs = fs.recs.Fork()
-	return nil
+	// On a copy: header readers read this view's header meanwhile.
+	return fs.applyPendingLocked()
+}
+
+// recsDeferred says chunks are left on disk with what changes them pending,
+// without reading a view's recs, which ensureRecords may be replacing.
+func (fs *folderState) recsDeferred() bool {
+	if fs.isView {
+		return (len(fs.pending) > 0 || fs.countersUnknown != 0) && !fs.applied.Load()
+	}
+	return fs.recs != nil && !fs.recs.AllLoaded()
 }
 
 // The write half, for the one journal replay (INDEX-MEMORY.md §4): decoded
@@ -331,6 +352,7 @@ func (fs *folderState) deferRecord(kind mailindex.TxType, payload []byte, st *re
 		unknown = counterSeen | counterDeleted
 	case mailindex.TxTypeExpungeGUID | mailindex.TxType(mailindex.TxExpungeProt):
 		unknown = counterMessages | counterSeen | counterDeleted
+		fs.pendingExpunge = true
 	case mailindex.TxTypeAppend:
 		unknown = counterMessages | counterSeen | counterDeleted
 		if stride := int(st.layout.RecordSize); stride > 0 {
@@ -407,15 +429,17 @@ func (fs *folderState) applyPending() error {
 	// What only the header knows stays as the journal left it.
 	fs.file.Header.NextUID = max(fs.file.Header.NextUID, saved.NextUID)
 	fs.file.Header.FirstRecentUID = saved.FirstRecentUID
-	fs.pending, fs.pendingUIDs, fs.countersUnknown = nil, nil, 0
+	fs.pending, fs.pendingUIDs, fs.countersUnknown, fs.pendingExpunge = nil, nil, 0, false
 	fs.reconcileHeaderLocked()
+	// What a catch-up took off for pending expunges is counted again whole.
+	fs.recalcVsizeLocked()
 	return nil
 }
 
 // newBaseLoaded starts a base's pending afresh: the uid no base record reaches
 // is its next uid when it is marked as in order, and none known otherwise.
 func (fs *folderState) newBaseLoaded(mf *mailindex.File) {
-	fs.pending, fs.pendingUIDs, fs.countersUnknown, fs.baseNextUID = nil, nil, 0, 0
+	fs.pending, fs.pendingUIDs, fs.countersUnknown, fs.baseNextUID, fs.pendingExpunge = nil, nil, 0, 0, false
 	if readLineage(mf).Flags&lineageInUIDOrder != 0 {
 		fs.baseNextUID = mf.Header.NextUID
 	}
