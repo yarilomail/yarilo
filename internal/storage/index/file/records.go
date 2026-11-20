@@ -353,6 +353,13 @@ func (fs *folderState) deferRecord(kind mailindex.TxType, payload []byte, st *re
 	case mailindex.TxTypeExpungeGUID | mailindex.TxType(mailindex.TxExpungeProt):
 		unknown = counterMessages | counterSeen | counterDeleted
 		fs.pendingExpunge = true
+		// The 28-byte form carries the expunge's modseq: the header's highest
+		// moves now, as the replay would move it (QRESYNC reads it).
+		if len(payload) > 0 && len(payload)%28 == 0 && len(payload)%20 != 0 {
+			for i := 0; i+28 <= len(payload); i += 28 {
+				st.maxModseq = max(st.maxModseq, binary.LittleEndian.Uint64(payload[i+20:]))
+			}
+		}
 	case mailindex.TxTypeAppend:
 		unknown = counterMessages | counterSeen | counterDeleted
 		if stride := int(st.layout.RecordSize); stride > 0 {

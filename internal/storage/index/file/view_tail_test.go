@@ -90,3 +90,34 @@ func flagged(flags []string, f string) bool {
 	}
 	return false
 }
+
+// An expunge left pending still moves the highest modseq it carries: QRESYNC
+// and a virtual folder's sync read it off the header, not off the records.
+func TestAPendingExpungeMovesTheHighestModseq(t *testing.T) {
+	home := movedFolder(t, 2*mailindex.ChunkRecords)
+	r, _ := acceptOpen(t, home)
+	defer r.Close() //nolint:errcheck
+	w, wf := acceptOpen(t, home)
+	defer w.Close() //nolint:errcheck
+	tx, err := w.Begin(wf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Expunge(5)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	want, err := w.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseImages.Delete(indexPathFor(home))
+	got, err := r.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HighestModSeq != want.HighestModSeq || got.Messages != want.Messages {
+		t.Errorf("a reader past the expunge answers modseq %d and %d messages, the writer %d and %d",
+			got.HighestModSeq, got.Messages, want.HighestModSeq, want.Messages)
+	}
+}
