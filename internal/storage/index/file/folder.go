@@ -376,7 +376,7 @@ func (u *userIndex) loadModern(fs *folderState) error {
 			if fs.file.Header.UIDValidity != 0 {
 				return nil // a racer already repaired it
 			}
-			fs.file.Header.UIDValidity = uint32(time.Now().Unix())
+			fs.file.Header.UIDValidity = uint32(nowUnix())
 			if err := fs.flush(); err != nil {
 				return fmt.Errorf("fileindex/openfolder: fix uidvalidity: %w", err)
 			}
@@ -407,9 +407,9 @@ func (fs *folderState) createFresh(uidValidity uint32, guid [16]byte) error {
 			"index_path", fs.indexPath, "index_dir", fs.indexDir)
 	}
 	if uidValidity == 0 {
-		uidValidity = uint32(time.Now().Unix())
+		uidValidity = uint32(nowUnix())
 	}
-	indexID := uint32(time.Now().Unix())
+	indexID := uint32(nowUnix())
 	exts := defaultExtensions(uidValidity, guid)
 	mf, err := mailindex.NewFile(indexID, exts)
 	if err != nil {
@@ -2453,7 +2453,7 @@ func (fs *folderState) appendMutLog(records ...[]byte) error {
 		if st != nil && st.Size() == 0 {
 			// FileSeq carries the base's lineage, so a reader can tell whether
 			// this log belongs to the base it holds.
-			hdr := mailindex.NewLogHeader(fs.file.Header.IndexID, fs.lineage.Lineage, uint32(time.Now().Unix()))
+			hdr := mailindex.NewLogHeader(fs.file.Header.IndexID, fs.lineage.Lineage, uint32(nowUnix()))
 			if err := hdr.Encode(f); err != nil {
 				_ = f.Close()
 				return fmt.Errorf("fileindex/mutlog: write header: %w", err)
@@ -3078,7 +3078,7 @@ func truncateLogLineage(indexPath string, indexID, lineage uint32) error {
 	if err != nil {
 		return fmt.Errorf("fileindex/log truncate: open: %w", err)
 	}
-	hdr := mailindex.NewLogHeader(indexID, lineage, uint32(time.Now().Unix()))
+	hdr := mailindex.NewLogHeader(indexID, lineage, uint32(nowUnix()))
 	if err := hdr.Encode(f); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
@@ -3240,7 +3240,7 @@ func (u *userIndex) PurgeCache(folderID uint64) (carried int, reclaimed int64, e
 // newCacheGeneration returns a file_seq no live stamp can belong to, from the
 // clock: a counter repeats after adoptLegacy resets reset_id. Never goes back.
 func newCacheGeneration(prev uint32) uint32 {
-	now := uint32(time.Now().Unix())
+	now := uint32(nowUnix())
 	if now <= prev {
 		return prev + 1
 	}

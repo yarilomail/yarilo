@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
@@ -292,3 +293,7 @@ func (fs *folderState) orderRecords() {
 	}
 	sort.SliceStable(fs.file.Records, func(i, j int) bool { return fs.file.Records[i].UID < fs.file.Records[j].UID })
 }
+
+// nowUnix is the clock the index stamps its files with; a test of their bytes
+// fixes it.
+var nowUnix = func() int64 { return time.Now().Unix() }
