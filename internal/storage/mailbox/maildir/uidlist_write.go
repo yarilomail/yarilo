@@ -238,9 +238,15 @@ func (u *userMailbox) appendUIDRowHeld(folder string, rec uidRecord) (bool, erro
 	if patch && len(digits) != width {
 		return false, nil
 	}
-	if _, werr := f.WriteAt([]byte(rec.String()+"\n"), st.Size()); werr != nil {
+	row := []byte(rec.String() + "\n")
+	if _, werr := f.WriteAt(row, st.Size()); werr != nil {
 		return false, fmt.Errorf("maildir/uidlist: append row: %w", werr)
 	}
+	defer func() {
+		if after, aerr := f.Stat(); aerr == nil {
+			u.appendedFrom(folder, stampOfFileInfo(st), stampOfFileInfo(after), len(row))
+		}
+	}()
 	if patch {
 		if _, werr := f.WriteAt([]byte(digits), at); werr != nil {
 			return false, fmt.Errorf("maildir/uidlist: header next uid: %w", werr)
@@ -599,4 +605,14 @@ var syncDir = func(dir string) error {
 		return serr
 	}
 	return cerr
+}
+
+// stampOfFileInfo is the list's stamp from a stat already taken.
+func stampOfFileInfo(fi os.FileInfo) mailbox.MaildirStamp {
+	mt := fi.ModTime()
+	return mailbox.MaildirStamp{
+		UIDListMtime:      uint32(mt.Unix()),
+		UIDListMtimeNsecs: uint32(mt.Nanosecond()),
+		UIDListSize:       uint32(fi.Size()),
+	}
 }

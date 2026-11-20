@@ -31,16 +31,30 @@ func RecordSavedNamed(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID u
 		return "", idx.AllocateAndAppend(folderID, m)
 	}
 	var final string
-	err := inSaveSection(box, folder, func() error {
-		return appender.AllocateAndAppendNamed(folderID, m, func(uid uint32) (string, error) {
-			named, err := assignHeld(box, namer, folder, saved, uid)
-			if err != nil {
-				return "", err
+	name := func(uid uint32) (string, *mailbox.MaildirStamp, error) {
+		named, err := assignHeld(box, namer, folder, saved, uid)
+		if err != nil {
+			return "", nil, err
+		}
+		stampStorageKey(box, folder, named, m)
+		stampReceived(box, folder, named, m)
+		final = named
+		// The list the row left, for the index to record in the same hold:
+		// the next save takes its UID space from the index (#2643).
+		if ls, ok := mailbox.Driver(box).(mailbox.AppendedListStamper); ok {
+			if s, have := ls.AppendedListStamp(folder); have {
+				return named, &s, nil
 			}
-			stampStorageKey(box, folder, named, m)
-			stampReceived(box, folder, named, m)
-			final = named
-			return named, nil
+		}
+		return named, nil, nil
+	}
+	err := inSaveSection(box, folder, func() error {
+		if sa, ok := idx.(mailbox.StampingAppender); ok {
+			return sa.AllocateAndAppendStamped(folderID, m, name)
+		}
+		return appender.AllocateAndAppendNamed(folderID, m, func(uid uint32) (string, error) {
+			named, _, err := name(uid)
+			return named, err
 		})
 	})
 	if err != nil {

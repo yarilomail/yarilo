@@ -144,8 +144,12 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 // folderCache is one folder's mtime-validated view of its uidlist and directory.
 // Its own mutex: the scan reaches it holding no mailbox lock since #1626.
 type folderCache struct {
-	mu     sync.Mutex
-	uidMap map[string]uint32
+	mu sync.Mutex
+	// listAgreed is the list as it was when the index's UID space was last
+	// found to agree with it; listAppended is it after this process's own row
+	// grew it by that row alone, for the index to record (#2643).
+	listAgreed, listAppended mailbox.MaildirStamp
+	uidMap                   map[string]uint32
 	// byUID is the same mapping read the other way, which is how a record asks:
 	// it has the uid and wants the name (#1700).
 	byUID    map[uint32]string
@@ -424,6 +428,20 @@ func (u *userMailbox) alignIndexUIDSpace(idx mailbox.UserIndex, folderID uint64,
 	if !ok {
 		return 0, 0, nil
 	}
+	now, listed := u.uidListStamp(folder)
+	// The list as the index recorded it: the index's own UID space answers,
+	// and the list is not read (#2643).
+	if st, can := idx.(mailbox.MaildirStamped); can && listed && now.UIDListSize != 0 {
+		if was, known := st.MaildirStamp(folderID); known && was == now {
+			metricListStampAligned.Inc()
+			current, _, err := a.AlignUIDSpace(folderID, 0, 0)
+			if err != nil {
+				return 0, 0, fmt.Errorf("maildir: align uid space: %w", err)
+			}
+			u.agreeList(folder, now)
+			return current, 0, nil
+		}
+	}
 	uidValidity, nextUID, have := u.UIDSpace(folder)
 	current, reset, err := a.AlignUIDSpace(folderID, uidValidity, nextUID)
 	if err != nil {
@@ -434,9 +452,52 @@ func (u *userMailbox) alignIndexUIDSpace(idx mailbox.UserIndex, folderID uint64,
 		u.folderCacheFor(folder).invalidateUIDs("uid-space-reset")
 	}
 	if have {
+		if listed {
+			u.agreeList(folder, now)
+		}
 		return current, 0, nil
 	}
 	return current, current, nil
+}
+
+// agreeList remembers the list state the index's UID space agrees with.
+func (u *userMailbox) agreeList(folder string, s mailbox.MaildirStamp) {
+	c := u.folderCacheFor(folder)
+	c.mu.Lock()
+	c.listAgreed, c.listAppended = s, mailbox.MaildirStamp{}
+	c.mu.Unlock()
+}
+
+// appendedFrom records the list after this process's row, when before was
+// the state the index agrees with and the row is all that changed.
+func (u *userMailbox) appendedFrom(folder string, before, after mailbox.MaildirStamp, row int) {
+	c := u.folderCacheFor(folder)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.listAgreed.UIDListSize == 0 || before != c.listAgreed {
+		c.listAppended = mailbox.MaildirStamp{}
+		return
+	}
+	if after.UIDListSize != before.UIDListSize+uint32(row) {
+		// Another writer's bytes as well: the old stamp stays, and the next
+		// save reads the list.
+		slog.Warn("maildir: the uid list's size changed unexpectedly after the row was appended",
+			"user", u.username, "folder", folder, "before", before.UIDListSize, "after", after.UIDListSize, "row", row)
+		c.listAppended = mailbox.MaildirStamp{}
+		return
+	}
+	c.listAgreed, c.listAppended = after, after
+}
+
+// AppendedListStamp hands the index the list's stamp after this process's
+// row, once, when that row is all that changed (#2643).
+func (u *userMailbox) AppendedListStamp(folder string) (mailbox.MaildirStamp, bool) {
+	c := u.folderCacheFor(folder)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := c.listAppended
+	c.listAppended = mailbox.MaildirStamp{}
+	return s, s.UIDListSize != 0
 }
 
 // seedUIDValidity writes the index's UIDVALIDITY into a list that has none.
