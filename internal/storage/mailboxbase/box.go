@@ -174,6 +174,11 @@ func (b *Box) RecordSaved(f *mailbox.Folder, folder, saved string, m *mailbox.Me
 	return RecordSaved(b.index, b.store, f.ID, folder, saved, m)
 }
 
+// RecordSavedNamed is RecordSaved with the name the record cycle settled.
+func (b *Box) RecordSavedNamed(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) (string, error) {
+	return RecordSavedNamed(b.index, b.store, f.ID, folder, saved, m)
+}
+
 // NameSaved settles the name of a body saved under a uid the caller already
 // holds, as a delivery that reserved one does.
 func (b *Box) NameSaved(folder, saved string, m *mailbox.MessageMeta) error {

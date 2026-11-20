@@ -219,6 +219,12 @@ func (u *userMailbox) appendUIDRowHeld(folder string, rec uidRecord) (bool, erro
 	if serr != nil || st.Size() == 0 {
 		return false, nil
 	}
+	// A list ending mid-line is torn: the rewrite reports and mends it, and a
+	// row after it would join the broken one.
+	last := make([]byte, 1)
+	if _, rerr := f.ReadAt(last, st.Size()-1); rerr != nil || last[0] != '\n' {
+		return false, nil
+	}
 	// The header's next uid follows the row (#1701), patched in place while it
 	// keeps its width; a wider number is the whole rewrite's to write.
 	at, width, next, found := headerNextUID(f)

@@ -127,7 +127,7 @@ func TestAnOverrideBetweenWalksReachesTheSecond(t *testing.T) {
 	var pinned [16]byte
 	copy(pinned[:], []byte("0123456789abcdef"))
 	if werr := box.withMailboxLockSite("INBOX", "test", func() error {
-		return box.appendUIDListLocked("INBOX", 1, name, true, pinned)
+		return box.appendUIDListLocked("INBOX", 1, name, false, true, pinned)
 	}); werr != nil {
 		t.Fatal(werr)
 	}
