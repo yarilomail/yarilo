@@ -33,6 +33,10 @@ type Chunk struct {
 	raw  []byte
 	size uint32
 	n    int
+	// owner wrote it, in its generation gen: only that writer, in that
+	// generation or with no snapshot alive, changes it in place.
+	owner *writer
+	gen   uint64
 }
 
 // Len is the records the chunk holds.
@@ -122,12 +126,12 @@ func ChunksFromBytes(raw []byte, layout RecordLayout) (*Records, error) {
 		return nil, fmt.Errorf("mailindex/chunks: %d bytes is not a whole number of %d-byte records: %w", len(raw), size, ErrShortRead)
 	}
 	n := len(raw) / int(size)
-	out := &Records{layout: layout, n: n, chunks: make([]atomicChunk, chunkCount(n)), w: newWriter(chunkCount(n))}
+	out := &Records{layout: layout, n: n, chunks: make([]atomicChunk, chunkCount(n)), w: newWriter()}
 	for ci := range out.chunks {
 		start, end := ci*ChunkRecords, min((ci+1)*ChunkRecords, n)
 		b := make([]byte, (end-start)*int(size), ChunkRecords*int(size))
 		copy(b, raw[start*int(size):end*int(size)])
-		out.chunks[ci].Store(&Chunk{raw: b, size: size, n: end - start})
+		out.chunks[ci].Store(&Chunk{raw: b, size: size, n: end - start, owner: out.w})
 	}
 	return out, nil
 }

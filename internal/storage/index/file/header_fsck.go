@@ -10,14 +10,13 @@ import (
 // as the reference's fsck does (#1831). Caller holds fs.mu.
 func (fs *folderState) reconcileHeaderLocked() {
 	var maxUID, seen, deleted uint32
-	for _, rec := range fs.file.Records {
-		if rec.UID > maxUID {
-			maxUID = rec.UID
-		}
-		if rec.Flags&mailindex.FlagSeen != 0 {
+	for i := range fs.recordCount() {
+		maxUID = max(maxUID, fs.recUID(i))
+		flags := fs.recFlags(i)
+		if flags&mailindex.FlagSeen != 0 {
 			seen++
 		}
-		if rec.Flags&mailindex.FlagDeleted != 0 {
+		if flags&mailindex.FlagDeleted != 0 {
 			deleted++
 		}
 	}
@@ -31,7 +30,7 @@ func (fs *folderState) reconcileHeaderLocked() {
 		have  *uint32
 		want  uint32
 	}{
-		{"messages", &h.MessagesCount, uint32(len(fs.file.Records))},
+		{"messages", &h.MessagesCount, uint32(fs.recordCount())},
 		{"seen", &h.SeenMessagesCount, seen},
 		{"deleted", &h.DeletedMessagesCount, deleted},
 	} {

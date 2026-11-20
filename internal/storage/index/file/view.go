@@ -33,6 +33,13 @@ const baseReadAttempts = 3
 // read and the stat that labels it. Nil everywhere else.
 var afterBaseRead func()
 
+// replaySeam and buildViewSeam are test seams: a replay that stops before a
+// record, a rebuild that fails. Nil everywhere else.
+var (
+	replaySeam    func() error
+	buildViewSeam func() error
+)
+
 // decodedImages is a test seam: images decoded whole, as before the lazy
 // form, so a row can compare the two. False everywhere else.
 var decodedImages bool
@@ -48,7 +55,7 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cached, ok := baseImages.Load(fs.indexPath); ok {
+	if cached, ok := baseImages.Load(fs.indexPath); ok && !decodedImages {
 		img, _ := cached.(*baseImage)
 		if img != nil && img.ident != nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
 			return img, nil
@@ -98,7 +105,9 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if ext := findExt(parsed.Extensions, extNameLineage); ext != nil {
 		img.lineage = decodeLineageHdr(ext.HdrData)
 	}
-	baseImages.Store(fs.indexPath, img)
+	if !decodedImages {
+		baseImages.Store(fs.indexPath, img)
+	}
 	return img, nil
 }
 
@@ -107,6 +116,11 @@ func imageFor(fs *folderState) (*baseImage, error) {
 // offset the view stands at -- a base that already holds the whole log stands
 // at the log's end, not at zero, and the next fold continues from there.
 func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
+	if buildViewSeam != nil {
+		if err := buildViewSeam(); err != nil {
+			return nil, 0, nil, err
+		}
+	}
 	img, lg, err := fs.imageAndItsLog()
 	if err != nil {
 		return nil, 0, nil, err
@@ -135,6 +149,7 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		if verr := view.ensureVsizeView(); verr != nil {
 			return nil, 0, nil, verr
 		}
+		view.onBase = view.recs != nil
 		return view, 0, img, nil
 	}
 	// Where this log meets this base, by the lineage table: an unpaired one
@@ -150,16 +165,15 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		if verr := view.ensureVsizeView(); verr != nil {
 			return nil, 0, nil, verr
 		}
+		view.onBase = view.recs != nil
 		return view, lg.size, img, nil // the base already holds everything
 	}
 
-	// Only now is a copy paid for: the tail has something to apply, and the
-	// shared image must not carry it.
-	file, merr := view.materialized()
-	if merr != nil {
-		return nil, 0, nil, merr
+	// The tail goes onto a fork of the shared image's records, which copies a
+	// chunk before changing it: the image stays as every other view reads it.
+	if err := view.forkRecords(); err != nil {
+		return nil, 0, nil, err
 	}
-	view.file, view.recs = file, nil
 	end, aerr := view.applyLogFrom(lg, from)
 	if aerr != nil {
 		return nil, 0, nil, aerr

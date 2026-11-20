@@ -56,16 +56,114 @@ func (fs *folderState) recExt(i int, name string) ([]byte, bool) {
 	return v, ok
 }
 
-// materialized is a private copy of the file with its records decoded, for a
-// fold to write into.
-func (fs *folderState) materialized() (*mailindex.File, error) {
-	out := cloneIndexFile(fs.file)
-	if fs.recs != nil {
-		recs, err := fs.recs.Decode()
-		if err != nil {
-			return nil, fmt.Errorf("fileindex/records: %w", err)
-		}
-		out.Records = recs
+// forkRecords gives a view private header data and records a replay may
+// write: chunks forked from the shared ones, or decoded records copied.
+func (fs *folderState) forkRecords() error {
+	fs.file = cloneIndexFile(fs.file)
+	if fs.recs == nil {
+		return nil
 	}
-	return out, nil
+	if err := fs.recs.LoadAll(); err != nil {
+		return fmt.Errorf("fileindex/records: %w", err)
+	}
+	fs.recs = fs.recs.Fork()
+	return nil
+}
+
+// The write half, for the one journal replay (INDEX-MEMORY.md §4): decoded
+// records are changed as before, a view's records through the structure, which
+// copies a chunk only while a snapshot shares it.
+
+// recSeqOfUID finds a uid: by search in the chunks, which hold the base's uid
+// order; by scan in decoded records, whose order no writer promises.
+func (fs *folderState) recSeqOfUID(uid uint32) (int, bool) {
+	if fs.recs != nil {
+		return fs.recs.SeqOfUID(uid)
+	}
+	for i, rec := range fs.file.Records {
+		if rec.UID == uid {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// recEachInRange calls fn for every record with a uid in [uid1, uid2].
+func (fs *folderState) recEachInRange(uid1, uid2 uint32, fn func(seq int)) {
+	if fs.recs != nil {
+		seq, _ := fs.recs.SeqOfUID(uid1)
+		for ; seq < fs.recs.Len() && fs.recs.UID(seq) <= uid2; seq++ {
+			fn(seq)
+		}
+		return
+	}
+	for i, rec := range fs.file.Records {
+		if rec.UID >= uid1 && rec.UID <= uid2 {
+			fn(i)
+		}
+	}
+}
+
+func (fs *folderState) recSetFlags(seq int, f mailindex.MailFlag) {
+	if fs.recs != nil {
+		fs.recs.SetFlags(seq, f)
+		return
+	}
+	fs.file.Records[seq].Flags = f
+}
+
+// recSetExt writes an extension the layout carries; in decoded records any.
+func (fs *folderState) recSetExt(seq int, name string, b []byte) {
+	if fs.recs != nil {
+		if id, ok := fs.recs.Layout().ExtID(name); ok {
+			fs.recs.SetExt(seq, id, b)
+		}
+		return
+	}
+	rec := fs.file.Records[seq]
+	if rec.Ext == nil {
+		rec.Ext = make(map[string][]byte)
+	}
+	rec.Ext[name] = b
+}
+
+// recAppend adds rec, whose bytes in the current layout are raw.
+func (fs *folderState) recAppend(rec *mailindex.Record, raw []byte) {
+	if fs.recs != nil {
+		fs.recs.Append(raw)
+		return
+	}
+	fs.file.Records = append(fs.file.Records, rec)
+}
+
+func (fs *folderState) recExpunge(seq int) {
+	if fs.recs != nil {
+		fs.recs.Expunge(seq)
+		return
+	}
+	fs.file.Records = append(fs.file.Records[:seq], fs.file.Records[seq+1:]...)
+}
+
+// decodeRecords leaves the chunks for decoded records: what a record width the
+// structure does not have takes, until the next base.
+func (fs *folderState) decodeRecords() error {
+	recs, err := fs.recs.Decode()
+	if err != nil {
+		return fmt.Errorf("fileindex/records: %w", err)
+	}
+	fs.file.Records, fs.recs = recs, nil
+	return nil
+}
+
+func sameLayout(a, b mailindex.RecordLayout) bool {
+	if a.RecordSize != b.RecordSize || len(a.Extensions) != len(b.Extensions) {
+		return false
+	}
+	for i := range a.Extensions {
+		if a.Extensions[i].Name != b.Extensions[i].Name || a.Extensions[i].RecordOffset != b.Extensions[i].RecordOffset ||
+			a.Extensions[i].RecordSize != b.Extensions[i].RecordSize {
+			return false
+		}
+	}
+	return true
 }
