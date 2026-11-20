@@ -31,7 +31,7 @@ func TestCommitRestoresStateWhenLogRefuses(t *testing.T) {
 	fs := b.open[f.ID]
 	wantNextUID := fs.file.Header.NextUID
 	wantCount := fs.file.Header.MessagesCount
-	wantFlags := fs.file.Records[0].Flags
+	wantFlags := fs.recFlags(0)
 	wantLog, err := os.Stat(fs.indexPath + ".log")
 	if err != nil {
 		t.Fatalf("stat log: %v", err)
@@ -66,10 +66,10 @@ func TestCommitRestoresStateWhenLogRefuses(t *testing.T) {
 	if got := fs.file.Header.MessagesCount; got != wantCount {
 		t.Errorf("MessagesCount = %d, want %d", got, wantCount)
 	}
-	if got := len(fs.file.Records); got != int(wantCount) {
+	if got := fs.recordCount(); got != int(wantCount) {
 		t.Errorf("records = %d, want %d", got, wantCount)
 	}
-	if got := fs.file.Records[0].Flags; got != wantFlags {
+	if got := fs.recFlags(0); got != wantFlags {
 		t.Errorf("flags = %#x, want %#x: a flag nothing logged stayed in memory", got, wantFlags)
 	}
 	if added.UID != 0 {
