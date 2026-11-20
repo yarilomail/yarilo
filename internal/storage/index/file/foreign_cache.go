@@ -113,19 +113,14 @@ func (fs *folderState) stampAdoptedCache(metas []*mailbox.MessageMeta) error {
 		cacheCRCRecSize, 4, fs.file.Header.UIDValidity); err != nil {
 		return err
 	}
-	if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-		return err
-	}
-	for _, rec := range fs.file.Records {
-		stamp, ok := stamps[rec.UID]
+	// A converted folder's first base: its chunks are the writer's own.
+	for seq := range fs.recordCount() {
+		stamp, ok := stamps[fs.recUID(seq)]
 		if !ok {
 			continue
 		}
-		if rec.Ext == nil {
-			rec.Ext = make(map[string][]byte, 2)
-		}
-		rec.Ext[extNameCache] = encodeCacheRec(stamp.Offset)
-		rec.Ext[extNameCacheCRC] = encodeCacheRec(stamp.CRC)
+		fs.recSetExt(seq, extNameCache, encodeCacheRec(stamp.Offset))
+		fs.recSetExt(seq, extNameCacheCRC, encodeCacheRec(stamp.CRC))
 	}
 	return nil
 }

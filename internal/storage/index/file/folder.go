@@ -1106,12 +1106,9 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 		return fmt.Errorf("fileindex/adopt: uid validity 0")
 	}
 	return u.withFolderSite(folderID, lockSiteAdoptUidSpace, func(fs *folderState) error {
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		if len(fs.file.Records) > 0 {
+		if n := fs.recordCount(); n > 0 {
 			return fmt.Errorf("fileindex/adopt: folder %q holds %d messages: %w",
-				fs.folder, len(fs.file.Records), mailbox.ErrUIDSpaceInUse)
+				fs.folder, n, mailbox.ErrUIDSpaceInUse)
 		}
 		slog.Info("fileindex: adopting a recorded uid space", "user", u.username,
 			"folder", fs.folder, "uid_validity", uidValidity, "next_uid", nextUID,
@@ -1865,11 +1862,8 @@ func (u *userIndex) AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 			current = was
 			return fs.flush()
 		}
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		if was != uidValidity && len(fs.file.Records) > 0 {
-			dropped := len(fs.file.Records)
+		if was != uidValidity && fs.recordCount() > 0 {
+			dropped := fs.recordCount()
 			if _, err := u.resetFolderLocked(fs, nil); err != nil {
 				return err
 			}

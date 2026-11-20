@@ -395,16 +395,14 @@ func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 	var copies []mailbox.GUIDRecord
 	for _, fid := range folderIDs {
 		err := u.withFolderSite(fid, lockSiteGUIDRebuild, func(fs *folderState) error {
-			if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-				return err
-			}
-			for _, rec := range fs.file.Records {
-				g := decodeGUIDRec(rec.Ext[extNameGUID])
+			for seq := range fs.recordCount() {
+				gb, _ := fs.recExt(seq, extNameGUID)
+				g := decodeGUIDRec(gb)
 				if g == ([16]byte{}) {
 					continue // a record with no GUID names no id
 				}
-				r := mailbox.GUIDRecord{GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: rec.UID}
-				if data, ok := rec.Ext[extNameInternalDate]; ok {
+				r := mailbox.GUIDRecord{GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: fs.recUID(seq)}
+				if data, ok := fs.recExt(seq, extNameInternalDate); ok {
 					r.InternalDate = decodeIdateRec(data).Unix()
 				}
 				copies = append(copies, r)
