@@ -655,22 +655,25 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	hdr.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	hdr.NextUID = uint32(len(copies)) + 1
 
-	records := make([]*mailindex.Record, 0, len(copies))
+	// The records as bytes of the layout, as a base goes to disk.
+	mapID, _ := layout.ExtID(extNameGUIDMap)
+	at := layout.Extensions[mapID].RecordOffset
+	size := int(layout.RecordSize)
+	raw := make([]byte, len(copies)*size)
 	for i, c := range copies {
-		records = append(records, &mailindex.Record{
-			UID: uint32(i + 1),
-			Ext: map[string][]byte{extNameGUIDMap: encodeGUIDMapRec(guidMapRec{
-				GUID: c.GUID, FolderGUID: c.FolderGUID, UID: c.UID,
-				Flags: c.Flags, InternalDate: c.InternalDate, CID: c.CID,
-			})},
-		})
+		rec := raw[i*size : (i+1)*size]
+		binary.LittleEndian.PutUint32(rec, uint32(i+1))
+		copy(rec[at:], encodeGUIDMapRec(guidMapRec{
+			GUID: c.GUID, FolderGUID: c.FolderGUID, UID: c.UID,
+			Flags: c.Flags, InternalDate: c.InternalDate, CID: c.CID,
+		}))
 	}
 
 	u.guid.mu.Lock()
 	defer u.guid.mu.Unlock()
 	if _, err := mailindex.Recreate(mailindex.RecreateInput{
 		Path: u.GUIDStorePath(), Header: hdr, Extensions: layout.Extensions,
-		Records: records,
+		RecordBytes: raw,
 	}); err != nil {
 		return fmt.Errorf("fileindex/guid-rebuild: write: %w", err)
 	}
