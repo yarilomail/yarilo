@@ -154,6 +154,10 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 			t.Fatalf("seed %d step %d after %s: the chunked view answers %d messages, the decoded one %d, and they differ",
 				seed, step, what, len(cm), len(dm))
 		}
+		if wb := writerRecords(t, w, wf.ID); !bytes.Equal(wb, db) {
+			t.Fatalf("seed %d step %d after %s: the writer's records differ from what the journal gives a reader (%d and %d bytes)",
+				seed, step, what, len(wb), len(db))
+		}
 		if !bytes.Equal(cb, db) {
 			t.Fatalf("seed %d step %d after %s: the records differ as bytes (%d and %d)", seed, step, what, len(cb), len(db))
 		}
@@ -206,4 +210,32 @@ func viewHeader(t *testing.T, h mailbox.UserIndex, id uint64) [5]uint32 {
 		t.Fatal(err)
 	}
 	return [5]uint32{f.Messages, f.Unseen, f.NextUID, f.Recent, f.UIDValidity}
+}
+
+// writerRecords is the writer's own records as bytes, as it holds them after
+// applying its changes through the replay.
+func writerRecords(t *testing.T, h mailbox.UserIndex, id uint64) []byte {
+	t.Helper()
+	fs, err := h.(*userHandle).ui.state(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	// A writer that left its records on disk reads them back as a write does.
+	if err := fs.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if fs.recs != nil {
+		return fs.recs.Bytes()
+	}
+	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := mailindex.ChunksFromRecords(fs.file.Records, layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r.Bytes()
 }
