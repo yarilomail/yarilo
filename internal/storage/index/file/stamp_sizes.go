@@ -37,23 +37,24 @@ func (u *userIndex) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, 
 		}
 		// The folder's aggregate moves with the sizes, journalled as its
 		// header extension's update.
-		hadAggregate := findExt(fs.file.Extensions, extNameHdrVsize) != nil
+		// The folder's aggregate moves with the sizes, journalled as its header
+		// extension's update; a base from before the aggregate gains the
+		// extension the same way, by an intro (INDEX-MEMORY.md §4).
 		fs.recalcVsizeLocked()
-		fs.persistVsizeLocked()
-		if !hadAggregate {
-			// A base from before the aggregate gains its header here, which no
-			// journal record introduces: the rare rewrite.
-			if err := fs.appendMutLog(recs...); err != nil {
-				return err
-			}
-			return fs.flush()
-		}
-		intro, err := fs.extIntroRecord(extNameHdrVsize)
-		if err != nil {
+		var intro []byte
+		if findExt(fs.file.Extensions, extNameHdrVsize) == nil {
+			intro = encLogRec(mailindex.TxTypeExtIntro, 0, mailindex.EncodeTxExtIntroPayload(mailindex.TxExtIntro{
+				ExtID: mailindex.TxExtIntroNewExt, ResetID: fs.file.Header.UIDValidity, HdrSize: hdrVsizeSize,
+				RecordAlign: 8, Name: extNameHdrVsize,
+			}))
+		} else if intro, err = fs.extIntroRecord(extNameHdrVsize); err != nil {
 			return err
 		}
 		agg := [][]byte{intro, encLogRec(mailindex.TxTypeExtHdrUpdate, 0,
 			mailindex.EncodeTxExtHdrUpdatePayload(mailindex.TxExtHdrUpdate{Offset: 0, Data: encodeHdrVsize(fs.vsize)}))}
+		if err := fs.applyRecords(agg); err != nil {
+			return err
+		}
 		return fs.appendMutLog(append(recs, agg...)...)
 	})
 	return stamped, err

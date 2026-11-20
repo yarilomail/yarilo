@@ -132,6 +132,13 @@ func (fs *folderState) recSetExt(seq int, name string, b []byte) {
 // recAppend adds rec, whose bytes in the current layout are raw.
 func (fs *folderState) recAppend(rec *mailindex.Record, raw []byte) {
 	if fs.recs != nil {
+		// Records keep uid order, which the searches stand on: an append
+		// below the last uid goes to its place.
+		if n := fs.recs.Len(); n > 0 && rec.UID < fs.recs.UID(n-1) {
+			seq, _ := fs.recs.SeqOfUID(rec.UID)
+			fs.recs.Insert(seq, raw)
+			return
+		}
 		fs.recs.Append(raw)
 		return
 	}
