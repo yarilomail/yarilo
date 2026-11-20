@@ -2,6 +2,8 @@ package file
 
 import (
 	"math/bits"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
@@ -141,11 +143,80 @@ func TestADeliveryAfterACachePurgeReadsNoChunk(t *testing.T) {
 	if err := u.SetCacheOffsets(of.ID, map[uint32]mailbox.CacheStamp{1: {Offset: 64, CRC: 1}}); err != nil {
 		t.Fatal(err)
 	}
+	ofs, err := u.state(of.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A cache file that does not open: the purge takes the abandon path and
+	// folds; with no file at all it would do nothing.
+	if err := os.WriteFile(filepath.Join(ofs.indexDir, mailindex.CacheFileName), []byte("not a cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := u.PurgeCache(of.ID); err != nil {
 		t.Fatal(err)
 	}
 	o.Close() //nolint:errcheck
 	if got := deliverCold(t, home); got != 0 {
 		t.Errorf("the delivery after a purge loaded chunks %d times, want none", got)
+	}
+}
+
+// Another session's flag change and expunge wait in pending through a
+// delivery that loads nothing; the chunk loaded afterwards shows them: the
+// flag as changed, the expunged record absent, the counters right.
+func TestAChunkLoadedLaterShowsWhatPendingHeld(t *testing.T) {
+	const n = 3 * mailindex.ChunkRecords
+	home := pendingFolder(t, n)
+	w, wf := acceptOpen(t, home)
+	if err := w.UpdateFlags(wf.ID, 2*mailindex.ChunkRecords+3, []string{`\Flagged`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := w.Begin(wf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Expunge(mailindex.ChunkRecords + 9)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	w.Close() //nolint:errcheck
+
+	baseImages.Delete(indexPathFor(home))
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	opens := mailindex.LazyOpens()
+	uid, err := h.AllocateUID(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if got := mailindex.LazyOpens() - opens; got != 0 {
+		t.Fatalf("the delivery loaded chunks %d times", got)
+	}
+	fs, err := h.(*userHandle).ui.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	held := len(fs.pending)
+	if err := fs.loadWriterRecords(); err != nil {
+		t.Fatal(err)
+	}
+	flagged, _ := fs.recSeqOfUID(2*mailindex.ChunkRecords + 3)
+	gotFlags := fs.recFlags(flagged)
+	_, expungedStill := fs.recSeqOfUID(mailindex.ChunkRecords + 9)
+	_, delivered := fs.recSeqOfUID(uid)
+	messages, left := fs.file.Header.MessagesCount, len(fs.pending)
+	fs.mu.Unlock()
+	if held == 0 {
+		t.Fatal("nothing was pending before the load")
+	}
+	if gotFlags&mailindex.FlagFlagged == 0 || expungedStill || !delivered {
+		t.Errorf("after the load: flagged %v, expunged one still there %v, delivered one there %v", gotFlags&mailindex.FlagFlagged != 0, expungedStill, delivered)
+	}
+	if messages != n || left != 0 {
+		t.Errorf("%d messages (want %d) and %d records still pending", messages, n, left)
 	}
 }

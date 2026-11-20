@@ -3,9 +3,12 @@ package file
 import (
 	"encoding/binary"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -207,4 +210,50 @@ func TestAcceptAFoldCostsAboutTwiceTheRecords(t *testing.T) {
 	small, large := foldPeak(t, acceptSmall), foldPeak(t, acceptLarge)
 	grow := slope(small, large)
 	acceptance(t, 9, grow <= 2*acceptRecord+acceptNoise, fmt.Sprintf("a fold allocates %.0f B a message, bound %d", grow, 2*acceptRecord+acceptNoise))
+}
+
+// 4: the delivery curve is flat: six batches of 300 into one folder, each
+// message opening and closing the index as LMTP does with no connection to
+// keep it, the journal folded by small thresholds so folds happen. Chunks load
+// only for a fold, which writes every record (one load a fold at most), and the
+// last batch allocates no more than 1.5 times the first: the folder grows to
+// seven times its size meanwhile (bytes, not time: time is the stand's).
+func TestAcceptTheDeliveryCurveIsFlat(t *testing.T) {
+	home := movedFolder(t, 300)
+	var batches [6]uint64
+	// The GUID store is an index of its own, folded by the same thresholds.
+	storeLineage := func() uint32 {
+		h, err := peekLineage(filepath.Join(home, GUIDIndexFileName))
+		if err != nil {
+			return 0
+		}
+		return h.Lineage
+	}
+	opens, lineage, store := mailindex.LazyOpens(), mustLineage(t, home).Lineage, storeLineage()
+	for b := range batches {
+		var m0, m1 runtime.MemStats
+		runtime.ReadMemStats(&m0)
+		for i := 0; i < 300; i++ {
+			h := New(WithLogCompaction(4<<10, 32<<10, time.Nanosecond)).OpenUser(&mailbox.UserInfo{Username: testUser, Home: home})
+			f, err := h.OpenFolder("INBOX", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			uid, err := h.AllocateUID(f.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := h.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10, GUID: [16]byte{byte(b), byte(i), byte(i >> 8), 1}}); err != nil {
+				t.Fatal(err)
+			}
+			h.Close() //nolint:errcheck
+		}
+		runtime.ReadMemStats(&m1)
+		batches[b] = m1.TotalAlloc - m0.TotalAlloc
+	}
+	loads := mailindex.LazyOpens() - opens
+	folds := int64(mustLineage(t, home).Lineage-lineage) + int64(storeLineage()-store)
+	ratio := float64(batches[5]) / float64(batches[0])
+	acceptance(t, 4, folds > 0 && loads <= folds && ratio <= 1.5, fmt.Sprintf("1800 deliveries, %d folds, loaded chunks %d times; the last batch allocated %.2fx the first (%d and %d B)",
+		folds, loads, ratio, batches[0], batches[5]))
 }

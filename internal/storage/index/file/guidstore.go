@@ -486,6 +486,13 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 		if u.guid.rebuilding.Load() {
 			return errGUIDRebuilding
 		}
+		// Removals search the store's records: those load its chunks. An add
+		// alone, what a delivery makes, reads none.
+		if len(b.gone) > 0 || b.goneFolder != nil {
+			if err := fs.loadWriterRecords(); err != nil {
+				return err
+			}
+		}
 		// Journalled like a folder's command: a base rewrite here cost every
 		// delivery the whole account's copies (#2617).
 		var logRecs [][]byte

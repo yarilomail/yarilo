@@ -225,14 +225,28 @@ type recordBuilder struct {
 }
 
 func (fs *folderState) newRecord(uid uint32, flags mailindex.MailFlag) (recordBuilder, error) {
+	layout, err := fs.recordLayout()
+	if err != nil {
+		return recordBuilder{}, err
+	}
+	return newRecordIn(layout, uid, flags), nil
+}
+
+// recordLayout is the layout the state's extensions describe: computed once
+// for a batch of records, not once a record.
+func (fs *folderState) recordLayout() (mailindex.RecordLayout, error) {
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
 	if err != nil {
-		return recordBuilder{}, fmt.Errorf("fileindex/records: layout: %w", err)
+		return mailindex.RecordLayout{}, fmt.Errorf("fileindex/records: layout: %w", err)
 	}
+	return layout, nil
+}
+
+func newRecordIn(layout mailindex.RecordLayout, uid uint32, flags mailindex.MailFlag) recordBuilder {
 	b := recordBuilder{layout: layout, raw: make([]byte, layout.RecordSize)}
 	binary.LittleEndian.PutUint32(b.raw, uid)
 	b.raw[4] = byte(flags)
-	return b, nil
+	return b
 }
 
 // set writes an extension's bytes; one the layout does not carry is dropped,
@@ -293,4 +307,134 @@ func (fs *folderState) reencodeRecords() error {
 func (fs *folderState) absoluteCounters() [][]byte {
 	h := fs.file.Header
 	return [][]byte{encU32Update(32, h.MessagesCount), encU32Update(40, h.SeenMessagesCount), encU32Update(44, h.DeletedMessagesCount)}
+}
+
+// The counters a change to a record not loaded moved without telling.
+const (
+	counterMessages uint8 = 1 << iota
+	counterSeen
+	counterDeleted
+)
+
+// deferRecord keeps a journal record that changes records the writer has not
+// loaded in pending, in journal order, for the one replay to apply when the
+// chunks load (INDEX-MEMORY.md §4). Header records apply at once. A record
+// that needs the chunks now (a new record width, an extension reset) loads
+// them instead.
+func (fs *folderState) deferRecord(kind mailindex.TxType, payload []byte, st *replayState) (bool, error) {
+	if fs.recs == nil || fs.loading || fs.recs.AllLoaded() {
+		return false, nil
+	}
+	var unknown uint8
+	switch kind {
+	case mailindex.TxTypeFlagUpdate:
+		unknown = counterSeen | counterDeleted
+	case mailindex.TxTypeExpungeGUID | mailindex.TxType(mailindex.TxExpungeProt):
+		unknown = counterMessages | counterSeen | counterDeleted
+	case mailindex.TxTypeAppend:
+		unknown = counterMessages | counterSeen | counterDeleted
+		if stride := int(st.layout.RecordSize); stride > 0 {
+			for i := 0; i+stride <= len(payload); i += stride {
+				if uid := binary.LittleEndian.Uint32(payload[i:]); uid != 0 {
+					if fs.pendingUIDs == nil {
+						fs.pendingUIDs = map[uint32]struct{}{}
+					}
+					fs.pendingUIDs[uid] = struct{}{}
+				}
+			}
+		}
+	case mailindex.TxTypeModseqUpdate:
+		// The header's highest modseq moves now; the records' at load.
+		for i := 0; i+12 <= len(payload); i += 12 {
+			ms := uint64(binary.LittleEndian.Uint32(payload[i+4:])) | uint64(binary.LittleEndian.Uint32(payload[i+8:]))<<32
+			st.maxModseq = max(st.maxModseq, ms)
+		}
+	case mailindex.TxTypeKeywordUpdate, mailindex.TxTypeKeywordReset, mailindex.TxTypeExtRecUpdate:
+	case mailindex.TxTypeExtIntro:
+		intro, ok := mailindex.DecodeTxExtIntroPayload(payload)
+		if !ok || intro.ExtID == mailindex.TxExtIntroNewExt {
+			// A new extension changes the record width: the chunks load.
+			return false, fs.loadWriterRecords()
+		}
+		// It names the extension the updates after it write: kept with them,
+		// and applied now for the context.
+		fs.pending = append(fs.pending, encLogRec(kind, 0, payload))
+		return false, nil
+	case mailindex.TxTypeExtReset:
+		return false, fs.loadWriterRecords()
+	default:
+		return false, nil
+	}
+	if kind == mailindex.TxTypeKeywordUpdate {
+		// The registry grows from the record's name now; the bits at load.
+		rec, ok := mailindex.DecodeTxKeywordUpdatePayload(payload)
+		if ok {
+			if _, reg, err := keywordsBitmaskFor(fs.keywords, []string{rec.Name}); err == nil {
+				fs.keywords = reg
+				if err := fs.persistKeywordRegistry(); err != nil {
+					return true, err
+				}
+			}
+		}
+	}
+	fs.pending = append(fs.pending, encLogRec(kind, 0, payload))
+	fs.countersUnknown |= unknown
+	return true, nil
+}
+
+// applyPending applies the deferred records to the chunks now loaded, by the
+// one replay, and recounts the header from the records: applying a flag change
+// again moves a counter the absolute updates already moved.
+func (fs *folderState) applyPending() error {
+	if len(fs.pending) == 0 && fs.countersUnknown == 0 {
+		return nil
+	}
+	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
+	if err != nil {
+		return fmt.Errorf("fileindex/pending: layout: %w", err)
+	}
+	st := replayState{layout: layout}
+	saved := fs.file.Header
+	for _, rec := range fs.pending {
+		hdr, herr := mailindex.DecodeTxHeader(rec)
+		if herr != nil {
+			return fmt.Errorf("fileindex/pending: %w", herr)
+		}
+		if err := fs.applyRecord(hdr.Type.Kind(), rec[8:hdr.Size], &st, -1); err != nil {
+			return err
+		}
+	}
+	// What only the header knows stays as the journal left it.
+	fs.file.Header.NextUID = max(fs.file.Header.NextUID, saved.NextUID)
+	fs.file.Header.FirstRecentUID = saved.FirstRecentUID
+	fs.pending, fs.pendingUIDs, fs.countersUnknown = nil, nil, 0
+	fs.reconcileHeaderLocked()
+	return nil
+}
+
+// newBaseLoaded starts a base's pending afresh: the uid no base record reaches
+// is its next uid when it is marked as in order, and none known otherwise.
+func (fs *folderState) newBaseLoaded(mf *mailindex.File) {
+	fs.pending, fs.pendingUIDs, fs.countersUnknown, fs.baseNextUID = nil, nil, 0, 0
+	if readLineage(mf).Flags&lineageInUIDOrder != 0 {
+		fs.baseNextUID = mf.Header.NextUID
+	}
+}
+
+// uidTaken answers whether uid is in the folder, loading no chunk for a uid
+// above every base record and not appended since: what a delivery allocated.
+func (fs *folderState) uidTaken(uid uint32) (bool, error) {
+	if fs.recs == nil {
+		return false, nil
+	}
+	if !fs.recs.AllLoaded() {
+		if _, appended := fs.pendingUIDs[uid]; !appended && fs.baseNextUID != 0 && uid >= fs.baseNextUID {
+			return false, nil
+		}
+		if err := fs.loadWriterRecords(); err != nil {
+			return false, err
+		}
+	}
+	_, taken := fs.recs.SeqOfUID(uid)
+	return taken, nil
 }
