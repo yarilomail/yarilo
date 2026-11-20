@@ -171,7 +171,49 @@ func (w *Writer) Commit() error {
 		os.Remove(w.tmp) //nolint:errcheck
 		return fmt.Errorf("sortedfile: %w", err)
 	}
+	// The new name durable before anything that relies on it, as a log
+	// swapped after it does (THREADS-STORE.md §5).
+	if w.fsync {
+		if err := syncDir(filepath.Dir(w.path)); err != nil {
+			return fmt.Errorf("sortedfile: %w", err)
+		}
+	}
 	return nil
+}
+
+// syncDirSeam is a test seam seeing each directory sync. Nil elsewhere.
+var syncDirSeam func(dir string)
+
+func syncDir(dir string) error {
+	if syncDirSeam != nil {
+		syncDirSeam(dir)
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close() //nolint:errcheck
+	return d.Sync()
+}
+
+// RemoveTemps clears what a merge that stopped left beside path: a base's
+// worth of temps otherwise stays in the user's directory. The caller holds
+// the merge's own lock, so no temp there is in use.
+func RemoveTemps(path string) (int, error) {
+	n := 0
+	for _, pat := range []string{path + ".tmp.*", path + ".str.*"} {
+		left, err := filepath.Glob(pat)
+		if err != nil {
+			return n, fmt.Errorf("sortedfile: %w", err)
+		}
+		for _, f := range left {
+			if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+				return n, fmt.Errorf("sortedfile: %w", err)
+			}
+			n++
+		}
+	}
+	return n, nil
 }
 
 // Abort leaves path as it was.
