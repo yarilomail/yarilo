@@ -619,3 +619,61 @@ func TestEveryArmWritesItsMessageBytes(t *testing.T) {
 		}
 	}
 }
+
+// The merge watcher's clock: busybox awk's %d is 32-bit and printed
+// -2147483648 for an uptime in milliseconds, which timed no merge (d2621h).
+func TestTheMergeWatchersClockDoesNotOverflow(t *testing.T) {
+	raw, err := os.ReadFile("thread-merge-watch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var now string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "now()") {
+			now = line
+		}
+	}
+	if now == "" {
+		t.Fatal("no now() in the watcher")
+	}
+	up := filepath.Join(t.TempDir(), "uptime")
+	if err := os.WriteFile(up, []byte("7901857.25 1234.50\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", "UPTIME="+up+"\n"+now+"\nnow").CombinedOutput()
+	if err != nil {
+		t.Fatalf("now: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "790185725" {
+		t.Errorf("now() = %q, want 790185725 hundredths", got)
+	}
+}
+
+// The summary of a run reads the merge time and the trigger off the files the
+// run leaves, and a run with every delivery 250 exits 0: grep -c counting none
+// exits 1, which failed a summary after d2621d.
+func TestTheMergeSummaryReadsARun(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"run.log": "2026-11-20T20:10:53Z u60@x merge-2 yarilo-backend-0: trigger_seen_cs=790190444 base_seen_cs=790190498 base_mtime=x base_size=6360058 log_after=215\n",
+		"phases.txt": "== u60@x merge-2\n" +
+			"phase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=70 rcpt=250 data=250 log_before=130900 log_after=131000\n" +
+			"phase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=72 rcpt=250 data=250 log_before=131000 log_after=131199\n",
+		"fill.txt": "phase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=60 rcpt=250 data=250\n",
+		"mem.txt":  "u60@x yarilo-backend-0 peak=1 anon=2 file=3\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := exec.CommandContext(t.Context(), "bash", "thread-merge-summary.sh", dir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("summary exited %v\n%s", err, out)
+	}
+	for _, want := range []string{"u60@x merge-2 yarilo-backend-0 merge 0.54 s", "u60@x merge-2 trigger data_ms=72", "deliveries not 250: 0"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("the summary lacks %q:\n%s", want, out)
+		}
+	}
+}
