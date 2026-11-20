@@ -72,6 +72,20 @@ func TestRecordsChangeAsTheModelAndSnapshotsStayFrozen(t *testing.T) {
 			nextUID++
 			r.Append(raw)
 			model = append(model, raw)
+		case op < 8 && len(model) > 0 && rng.IntN(3) == 0:
+			// An insert at a random place, as an append below the last uid.
+			// In a gap of the uid order only, which an insert keeps.
+			seq := rng.IntN(len(model))
+			prev := uint32(0)
+			if seq > 0 {
+				prev = binary.LittleEndian.Uint32(model[seq-1])
+			}
+			if binary.LittleEndian.Uint32(model[seq])-prev < 2 {
+				break
+			}
+			raw := cowRecord(l, prev+1, FlagAnswered)
+			r.Insert(seq, raw)
+			model = append(model[:seq], append([][]byte{raw}, model[seq:]...)...)
 		case op < 8 && len(model) > 0:
 			seq := rng.IntN(len(model))
 			r.Expunge(seq)

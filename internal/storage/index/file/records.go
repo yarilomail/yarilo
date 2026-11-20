@@ -3,6 +3,7 @@ package file
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
@@ -131,6 +132,13 @@ func (fs *folderState) recSetExt(seq int, name string, b []byte) {
 // recAppend adds rec, whose bytes in the current layout are raw.
 func (fs *folderState) recAppend(rec *mailindex.Record, raw []byte) {
 	if fs.recs != nil {
+		// Records keep uid order, which the searches stand on: an append
+		// below the last uid goes to its place.
+		if n := fs.recs.Len(); n > 0 && rec.UID < fs.recs.UID(n-1) {
+			seq, _ := fs.recs.SeqOfUID(rec.UID)
+			fs.recs.Insert(seq, raw)
+			return
+		}
 		fs.recs.Append(raw)
 		return
 	}
@@ -203,4 +211,84 @@ func (fs *folderState) decodeForRewrite() error {
 		return err
 	}
 	return nil
+}
+
+// extIntroRecord names a known extension by its place and generation, for the
+// records that follow it in the journal.
+func (fs *folderState) extIntroRecord(name string) ([]byte, error) {
+	for i := range fs.file.Extensions {
+		ext := fs.file.Extensions[i]
+		if ext.Name == name {
+			return encLogRec(mailindex.TxTypeExtIntro, 0, mailindex.EncodeTxExtIntroPayload(mailindex.TxExtIntro{
+				ExtID: uint32(i), ResetID: ext.ResetID, HdrSize: ext.HdrSize,
+				RecordSize: ext.RecordSize, RecordAlign: ext.RecordAlign,
+			})), nil
+		}
+	}
+	return nil, fmt.Errorf("fileindex/records: no extension %q", name)
+}
+
+// extRecRecords journals per-record updates of one extension: the intro that
+// names it by its place and generation, then the updates, sorted by uid.
+func (fs *folderState) extRecRecords(name string, upds []mailindex.TxExtRecUpdate) ([][]byte, error) {
+	if len(upds) == 0 {
+		return nil, nil
+	}
+	ext := findExt(fs.file.Extensions, name)
+	if ext == nil || ext.RecordSize == 0 {
+		return nil, fmt.Errorf("fileindex/records: no record extension %q", name)
+	}
+	intro, err := fs.extIntroRecord(name)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(upds, func(i, j int) bool { return upds[i].UID < upds[j].UID })
+	return [][]byte{intro,
+		encLogRec(mailindex.TxTypeExtRecUpdate, 0, mailindex.EncodeTxExtRecUpdatePayload(int(ext.RecordSize), upds)),
+	}, nil
+}
+
+// journalRecords applies records through the replay and appends them: a
+// writer's change that reaches memory and the journal the same way.
+func (fs *folderState) journalRecords(recs [][]byte) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	if err := fs.applyRecords(recs); err != nil {
+		return err
+	}
+	return fs.appendMutLog(recs...)
+}
+
+// orderImage makes the records of a base not marked as in uid order ordered in
+// memory before anything searches them: such a base is read whole, and the
+// next base write puts it on disk in order, marked (#2632).
+func orderImage(img *baseImage, path string) error {
+	if img.lineage.Flags&lineageInUIDOrder != 0 {
+		return nil
+	}
+	if img.recs == nil {
+		sort.SliceStable(img.file.Records, func(i, j int) bool { return img.file.Records[i].UID < img.file.Records[j].UID })
+		return nil
+	}
+	if err := img.recs.LoadAll(); err != nil {
+		return fmt.Errorf("fileindex/order: %w", err)
+	}
+	if !img.recs.InUIDOrder() {
+		slog.Info("fileindex: a base's records are out of uid order; ordered in memory until the next base write",
+			"index", path, "records", img.recs.Len())
+		img.recs = img.recs.SortedByUID()
+	}
+	return nil
+}
+
+// orderRecords puts the state's records in uid order before a base write.
+func (fs *folderState) orderRecords() {
+	if fs.recs != nil {
+		if !fs.recs.InUIDOrder() {
+			fs.recs = fs.recs.SortedByUID()
+		}
+		return
+	}
+	sort.SliceStable(fs.file.Records, func(i, j int) bool { return fs.file.Records[i].UID < fs.file.Records[j].UID })
 }

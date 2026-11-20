@@ -334,3 +334,53 @@ func TestAWriterWithChunksUnloadedTakesARewrittenBase(t *testing.T) {
 		t.Errorf("uid 8 flags %v after the write", msgs[1].Flags)
 	}
 }
+
+// An append below the last uid, as a caller naming its own uids may make,
+// takes its place in the uid order the chunks' searches stand on.
+func TestAnAppendBelowTheLastUIDTakesItsPlace(t *testing.T) {
+	home := movedFolder(t, mailindex.ChunkRecords)
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	fs, err := h.(*userHandle).ui.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := h.Begin(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Expunge(40)
+	if _, err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, uid := range []uint32{uint32(mailindex.ChunkRecords) + 5, 40} {
+		if err := h.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10, Flags: []string{`\Flagged`}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fs.mu.Lock()
+	held := fs.recs != nil
+	fs.mu.Unlock()
+	if !held {
+		t.Fatal("the writer holds no chunks")
+	}
+	msgs, err := h.GetMessages(f.ID, mailbox.SeqSet{{From: 39, To: 41}})
+	if err != nil || len(msgs) != 3 || msgs[1].UID != 40 || len(msgs[1].Flags) == 0 {
+		t.Fatalf("uids 39 to 41 read back as %+v: %v", msgs, err)
+	}
+	if err := h.UpdateFlags(f.ID, 40, []string{`\Seen`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := metaOfIdx(t, h, f.ID, 40); got == nil || got.Flags[0] != `\Seen` {
+		t.Errorf("uid 40 after a change: %+v", got)
+	}
+}
+
+func metaOfIdx(t *testing.T, h mailbox.UserIndex, id uint64, uid uint32) *mailbox.MessageMeta {
+	t.Helper()
+	msgs, err := h.GetMessages(id, mailbox.SeqSet{{From: uid, To: uid}})
+	if err != nil || len(msgs) != 1 {
+		return nil
+	}
+	return msgs[0]
+}

@@ -99,8 +99,49 @@ func TestAFolderWithoutTheVsizeExtensionGetsItAndIsFilledOnce(t *testing.T) {
 	if got := mdbox.StorageSizeReads(); got != 0 {
 		t.Errorf("%d size questions reached the message body after the pass", got)
 	}
+	// Kept, not only held: a cold open, a new index that remembers nothing,
+	// reads every size from the base and its journal and opens no body. Then
+	// the fold moves the layout on disk, and the sizes stay what they were
+	// (reviewer, 2026-11-20).
+	if err := idx.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sizes := func(what string) map[uint32]uint32 {
+		t.Helper()
+		info := &mailbox.UserInfo{Username: "u1@example.com", Home: homeOf(box), Driver: "mdbox"}
+		cold := file.New().OpenUser(info)
+		defer cold.Close() //nolint:errcheck
+		cf, err := cold.OpenFolder("INBOX", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mdbox.ResetStorageSizeReads()
+		got, err := cold.GetMessages(cf.ID, mailbox.SeqSet{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[uint32]uint32{}
+		for _, m := range got {
+			if out[m.UID] = mailboxbase.RFC822SizeOf(box, "INBOX", m); out[m.UID] == 0 {
+				t.Errorf("%s: uid %d answers size 0", what, m.UID)
+			}
+		}
+		if n := mdbox.StorageSizeReads(); n != 0 {
+			t.Errorf("%s: %d size questions reached the message body", what, n)
+		}
+		if what == "a cold open" {
+			if err := cold.(interface{ OptimizeIndex(uint64) error }).OptimizeIndex(cf.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return out
+	}
+	kept := sizes("a cold open")
 	if after := recordSizeOnDisk(t, path); after <= before {
-		t.Errorf("the record size on disk is %d, was %d: the extension did not move the layout", after, before)
+		t.Errorf("after the fold the record size on disk is %d, was %d: the extension did not move the layout", after, before)
+	}
+	if folded := sizes("after the fold"); fmt.Sprint(folded) != fmt.Sprint(kept) || len(kept) != 3 {
+		t.Errorf("sizes %v after the fold, %v before", folded, kept)
 	}
 }
 

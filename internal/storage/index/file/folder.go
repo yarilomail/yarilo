@@ -740,11 +740,14 @@ func (fs *folderState) flush() error {
 		}
 		lg.close()
 	}
+	// Every base goes to disk in uid order, and says so (#2632).
+	fs.orderRecords()
 	next := lineageHdr{
 		Lineage:       prev.Lineage + 1,
 		FoldedLineage: folded,
 		FoldedOffset:  uint64(fs.logSize),
 		RecordsDigest: fs.digestRecords(),
+		Flags:         lineageInUIDOrder,
 	}
 	// Lineages start above the pre-extension constant, so a stamped base cannot
 	// claim such a log as its own and replay what it already absorbed.
@@ -1192,30 +1195,34 @@ func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 			guidRecSize, 1, fs.file.Header.UIDValidity); err != nil {
 			return err
 		}
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		for _, rec := range fs.file.Records {
-			g, ok := guids[rec.UID]
+		var upds []mailindex.TxExtRecUpdate
+		for seq := range fs.recordCount() {
+			uid := fs.recUID(seq)
+			g, ok := guids[uid]
 			if !ok || g == zero {
 				continue
 			}
-			if decodeGUIDRec(rec.Ext[extNameGUID]) != zero {
+			if have, _ := fs.recExt(seq, extNameGUID); decodeGUIDRec(have) != zero {
 				continue // already stamped: never rewrite an assigned identity
 			}
-			if rec.Ext == nil {
-				rec.Ext = make(map[string][]byte, 1)
+			upds = append(upds, mailindex.TxExtRecUpdate{UID: uid, Data: encodeGUIDRec(g)})
+			stamped = append(stamped, mailbox.GUIDRecord{GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: uid})
+		}
+		recs, err := fs.extRecRecords(extNameGUID, upds)
+		if err != nil {
+			return err
+		}
+		// The header flips to complete after an intro that names the extension.
+		if len(recs) == 0 {
+			intro, ierr := fs.extIntroRecord(extNameGUID)
+			if ierr != nil {
+				return ierr
 			}
-			rec.Ext[extNameGUID] = encodeGUIDRec(g)
-			stamped = append(stamped, mailbox.GUIDRecord{
-				GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: rec.UID,
-			})
+			recs = [][]byte{intro}
 		}
-		if ext := findExt(fs.file.Extensions, extNameGUID); ext != nil {
-			ext.HdrData = encodeGUIDHdr(guidStateComplete)
-			ext.HdrSize = guidHdrSize
-		}
-		if err := fs.flush(); err != nil {
+		recs = append(recs, encLogRec(mailindex.TxTypeExtHdrUpdate, 0,
+			mailindex.EncodeTxExtHdrUpdatePayload(mailindex.TxExtHdrUpdate{Offset: 0, Data: encodeGUIDHdr(guidStateComplete)})))
+		if err := fs.journalRecords(recs); err != nil {
 			return err
 		}
 		u.trackStampedGUIDs(fs, stamped)
@@ -2035,29 +2042,29 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 		set[f] = struct{}{}
 	}
 	return u.withFolderSite(folderID, lockSiteSetAltTier, func(fs *folderState) error {
-		changed := false
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		for _, rec := range fs.file.Records {
-			mapUID, _ := decodeMdboxRec(rec.Ext[extNameMdbox])
+		// The tier is a flag bit, as in the reference: a flag update, not an
+		// extension record.
+		var upds []mailindex.TxFlagUpdate
+		for seq := range fs.recordCount() {
+			m, _ := fs.recExt(seq, extNameMdbox)
+			mapUID, _ := decodeMdboxRec(m)
 			if _, ok := set[strconv.FormatUint(uint64(mapUID), 10)]; !ok {
 				continue
 			}
-			before := rec.Flags
+			if (fs.recFlags(seq)&mailindex.FlagBackend != 0) == altTier {
+				continue
+			}
+			uid := fs.recUID(seq)
+			upd := mailindex.TxFlagUpdate{UID1: uid, UID2: uid, RemoveFlags: mailindex.FlagBackend}
 			if altTier {
-				rec.Flags |= mailindex.FlagBackend
-			} else {
-				rec.Flags &^= mailindex.FlagBackend
+				upd = mailindex.TxFlagUpdate{UID1: uid, UID2: uid, AddFlags: mailindex.FlagBackend}
 			}
-			if rec.Flags != before {
-				changed = true
-			}
+			upds = append(upds, upd)
 		}
-		if !changed {
+		if len(upds) == 0 {
 			return nil
 		}
-		return fs.flush()
+		return fs.journalRecords([][]byte{encLogRec(mailindex.TxTypeFlagUpdate, 0, mailindex.EncodeTxFlagUpdatePayload(upds))})
 	})
 }
 
@@ -2678,6 +2685,10 @@ type replayState struct {
 	lastIntro string
 	// checked says the writer already found the appended uids absent.
 	checked bool
+	// introReset and introSize are what the last EXT_INTRO said of the
+	// extension an EXT_REC_UPDATE writes: its generation and its data width.
+	introReset uint32
+	introSize  int
 }
 
 // applyRecord applies one journal record to the folder state: the one place
@@ -2777,6 +2788,17 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 
 	case kind == mailindex.TxTypeExtIntro:
 		intro, ok := mailindex.DecodeTxExtIntroPayload(payload)
+		if ok && intro.ExtID != mailindex.TxExtIntroNewExt && intro.Name == "" {
+			// Names a known extension, by its place, for the updates that
+			// follow (INDEX-MEMORY.md §4, the reference's sync_ext_intro).
+			if int(intro.ExtID) >= len(fs.file.Extensions) {
+				return fmt.Errorf("fileindex/applylog: extension intro names extension %d of %d at offset %d",
+					intro.ExtID, len(fs.file.Extensions), recStart)
+			}
+			st.lastIntro = fs.file.Extensions[intro.ExtID].Name
+			st.introReset, st.introSize = intro.ResetID, int(intro.RecordSize)
+			return nil
+		}
 		if !ok || intro.Name == "" {
 			// Every append after this one would be read at the old width.
 			return fmt.Errorf("fileindex/applylog: torn extension intro at offset %d (%d payload bytes)",
@@ -2799,6 +2821,7 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 		}
 		st.layout = newLayout
 		st.lastIntro = intro.Name
+		st.introReset, st.introSize = intro.ResetID, int(intro.RecordSize)
 
 	case kind == mailindex.TxTypeExtHdrUpdate:
 		upd, ok := mailindex.DecodeTxExtHdrUpdatePayload(payload)
@@ -2813,6 +2836,31 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 			return nil
 		}
 		copy(ext.HdrData[upd.Offset:], upd.Data)
+
+	case kind == mailindex.TxTypeExtRecUpdate:
+		ext := findExt(fs.file.Extensions, st.lastIntro)
+		if ext == nil || ext.RecordSize == 0 {
+			return fmt.Errorf("fileindex/applylog: record update for no extension at offset %d", recStart)
+		}
+		if st.introReset != ext.ResetID {
+			// Written before the extension was reset: a cache offset into a
+			// file that is gone. Ignored, as the reference does.
+			return nil
+		}
+		stride := (4 + st.introSize + 3) &^ 3
+		for i := 0; i+stride <= len(payload); i += stride {
+			uid := le.Uint32(payload[i:])
+			if uid == 0 {
+				return fmt.Errorf("fileindex/applylog: record update for uid 0 at offset %d: %w", recStart, mailindex.ErrCorrupted)
+			}
+			seq, found := fs.recSeqOfUID(uid)
+			if !found {
+				continue // expunged between the journal and this replay
+			}
+			data := make([]byte, ext.RecordSize)
+			copy(data, payload[i+4:i+4+min(st.introSize, int(ext.RecordSize))])
+			fs.recSetExt(seq, ext.Name, data)
+		}
 
 	case kind == mailindex.TxTypeAppend:
 		stride := int(st.layout.RecordSize)
@@ -3065,21 +3113,25 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.C
 			cacheCRCRecSize, 4, fs.file.Header.UIDValidity); err != nil {
 			return err
 		}
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		for _, rec := range fs.file.Records {
-			stamp, ok := stamps[rec.UID]
-			if !ok || stamp.Offset == 0 {
+		// Journalled, not a base rewrite: every FETCH that caches new fields
+		// came here (#2628).
+		var offs, crcs []mailindex.TxExtRecUpdate
+		for uid, stamp := range stamps {
+			if stamp.Offset == 0 {
 				continue
 			}
-			if rec.Ext == nil {
-				rec.Ext = make(map[string][]byte, 2)
-			}
-			rec.Ext[extNameCache] = encodeCacheRec(stamp.Offset)
-			rec.Ext[extNameCacheCRC] = encodeCacheRec(stamp.CRC)
+			offs = append(offs, mailindex.TxExtRecUpdate{UID: uid, Data: encodeCacheRec(stamp.Offset)})
+			crcs = append(crcs, mailindex.TxExtRecUpdate{UID: uid, Data: encodeCacheRec(stamp.CRC)})
 		}
-		return fs.flush()
+		recs, err := fs.extRecRecords(extNameCache, offs)
+		if err != nil {
+			return err
+		}
+		more, err := fs.extRecRecords(extNameCacheCRC, crcs)
+		if err != nil {
+			return err
+		}
+		return fs.journalRecords(append(recs, more...))
 	})
 }
 

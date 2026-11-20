@@ -435,3 +435,21 @@ func EncodeTxAppendPayload(layout RecordLayout, recs []*Record) ([]byte, error) 
 	}
 	return out, nil
 }
+
+// TxExtRecUpdate sets one record's bytes of the extension the preceding
+// EXT_INTRO named: uid, then the intro's record_size bytes, padded to 4.
+type TxExtRecUpdate struct {
+	UID  uint32
+	Data []byte
+}
+
+// EncodeTxExtRecUpdatePayload lays out updates of width-byte extension data.
+func EncodeTxExtRecUpdatePayload(width int, upds []TxExtRecUpdate) []byte {
+	stride := (4 + width + 3) &^ 3
+	out := make([]byte, stride*len(upds))
+	for i, u := range upds {
+		binary.LittleEndian.PutUint32(out[i*stride:], u.UID)
+		copy(out[i*stride+4:i*stride+4+width], u.Data)
+	}
+	return out
+}

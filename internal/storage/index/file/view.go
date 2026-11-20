@@ -105,6 +105,9 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if ext := findExt(parsed.Extensions, extNameLineage); ext != nil {
 		img.lineage = decodeLineageHdr(ext.HdrData)
 	}
+	if err := orderImage(img, fs.indexPath); err != nil {
+		return nil, err
+	}
 	if !decodedImages {
 		baseImages.Store(fs.indexPath, img)
 	}

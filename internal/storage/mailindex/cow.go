@@ -2,6 +2,7 @@ package mailindex
 
 import (
 	"fmt"
+	"sort"
 	"sync/atomic"
 )
 
@@ -174,4 +175,80 @@ func (r *Records) RecordBytes(seq int) []byte { return append([]byte(nil), r.rec
 func (r *Records) SetRecord(seq int, raw []byte) {
 	ci, i := r.locate(seq)
 	copy(r.owned(ci).at(i), raw)
+}
+
+// Insert puts a record, encoded in the layout, at seq, moving the rest of its
+// chunk up; a full chunk is split in two. For an append below the last uid,
+// which the uid order the records keep would not survive otherwise.
+func (r *Records) Insert(seq int, raw []byte) {
+	if seq >= r.n {
+		r.Append(raw)
+		return
+	}
+	size := int(r.layout.RecordSize)
+	if len(raw) != size {
+		panic(fmt.Sprintf("mailindex: a record is %d bytes, not %d", len(raw), size))
+	}
+	ci, i := r.locate(seq)
+	c := r.owned(ci)
+	w := r.w
+	if r.starts == nil {
+		r.starts = make([]int, len(r.chunks))
+		for k := range r.starts {
+			r.starts[k] = k * ChunkRecords
+		}
+	}
+	if c.n == ChunkRecords {
+		half := c.n / 2
+		tail := &Chunk{raw: make([]byte, (c.n-half)*size, ChunkRecords*size), size: c.size, n: c.n - half, owner: w, gen: w.gen}
+		copy(tail.raw, c.raw[half*size:])
+		c.raw, c.n = c.raw[:half*size], half
+		r.chunks = append(r.chunks, atomicChunk{})
+		for k := len(r.chunks) - 1; k > ci+1; k-- {
+			r.chunks[k].Store(r.chunks[k-1].Load())
+		}
+		r.chunks[ci+1].Store(tail)
+		r.starts = append(r.starts[:ci+1], append([]int{r.starts[ci] + half}, r.starts[ci+1:]...)...)
+		if i > half {
+			ci, i, c = ci+1, i-half, tail
+		}
+	}
+	c.raw = append(c.raw, raw...) // room for one more
+	copy(c.raw[(i+1)*size:], c.raw[i*size:len(c.raw)-size])
+	copy(c.raw[i*size:], raw)
+	c.n++
+	for k := ci + 1; k < len(r.starts); k++ {
+		r.starts[k]++
+	}
+	r.n++
+}
+
+// InUIDOrder reports whether the records' uids rise; every chunk is loaded.
+func (r *Records) InUIDOrder() bool {
+	for seq := 1; seq < r.n; seq++ {
+		if r.UID(seq) <= r.UID(seq-1) {
+			return false
+		}
+	}
+	return true
+}
+
+// SortedByUID is the records in uid order, as a writer of its own; every chunk
+// is loaded.
+func (r *Records) SortedByUID() *Records {
+	size := int(r.layout.RecordSize)
+	order := make([]int, r.n)
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return r.UID(order[a]) < r.UID(order[b]) })
+	raw := make([]byte, 0, r.n*size)
+	for _, seq := range order {
+		raw = append(raw, r.rec(seq)...)
+	}
+	out, err := ChunksFromBytes(raw, r.layout)
+	if err != nil {
+		panic(fmt.Sprintf("mailindex: re-chunk sorted records: %v", err))
+	}
+	return out
 }
