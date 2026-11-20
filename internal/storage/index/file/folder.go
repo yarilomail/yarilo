@@ -1084,10 +1084,11 @@ func (u *userIndex) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error
 		// counter advanced past this UID since AllocateUID ran.
 		slog.Debug("fileindex: committing pre-allocated uid", "trace_id", fs.traceID,
 			"user", u.username, "folder", fs.folder, "uid", m.UID, "next_uid_before", fs.file.Header.NextUID)
-		if err := fs.appendLocked(m); err != nil {
+		rec, err := fs.appendLockedWith(m, nil)
+		if err != nil {
 			return err
 		}
-		if err := fs.flushAppend(fs.file.Records[len(fs.file.Records)-1]); err != nil {
+		if err := fs.flushAppend(rec); err != nil {
 			return err
 		}
 		u.trackAppendedGUID(fs, m)
@@ -1212,10 +1213,11 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 				return nerr
 			}
 		}
-		if err := fs.appendLocked(m); err != nil {
+		rec, err := fs.appendLockedWith(m, nil)
+		if err != nil {
 			return err
 		}
-		if err := fs.flushAppend(fs.file.Records[len(fs.file.Records)-1]); err != nil {
+		if err := fs.flushAppend(rec); err != nil {
 			return err
 		}
 		u.trackAppendedGUID(fs, m)
@@ -1231,43 +1233,48 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 // lock. A non-zero m.ModSeq is pre-allocated and recorded as-is; zero bumps the
 // counter and writes the new value back into m.
 func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
+	_, err := fs.appendLockedWith(m, nil)
+	return err
+}
+
+// appendLockedWith appends m with extra record extensions set, and returns the
+// record as journalled. The record reaches memory through the one replay.
+func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string][]byte) (*mailindex.Record, error) {
 	if m.UID == 0 {
-		return fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
+		return nil, fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
 	}
 	// One uid, one record: a second one hides a message from every client (#2083).
-	for _, rec := range fs.file.Records {
-		if rec.UID == m.UID {
-			return fmt.Errorf("fileindex/append: uid %d: %w", m.UID, mailbox.ErrUIDInUse)
-		}
+	if _, taken := fs.recSeqOfUID(m.UID); taken {
+		return nil, fmt.Errorf("fileindex/append: uid %d: %w", m.UID, mailbox.ErrUIDInUse)
 	}
 	fs.debugSizelessAppend(m)
 	var modseq uint64
 	if m.ModSeq != 0 {
 		modseq = m.ModSeq
 		if err := fs.advanceModSeqAtLeast(modseq); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		var err error
 		modseq, err = fs.bumpModSeqHeader()
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	prevKwCount := len(fs.keywords.Names)
 	kwBits, kwReg, err := keywordsBitmaskFor(fs.keywords, m.Keywords)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fs.keywords = kwReg
 	if err := fs.persistKeywordRegistry(); err != nil {
-		return err
+		return nil, err
 	}
 	// The registry grew: persist the extension headers so a cross-pod reader
 	// can decode the bitmasks. Rare -- first use of each name only.
 	if len(fs.keywords.Names) > prevKwCount {
 		if err := fs.flush(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	flags := mailindex.MailFlag(imapFlagsToIndex(m.Flags))
@@ -1295,24 +1302,23 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 	if err := fs.ensureVsizeExtLocked(); err != nil {
 		slog.Warn("fileindex: vsize extension not declared", "folder", fs.folder, "err", err)
 	}
-	fs.file.Records = append(fs.file.Records, rec)
-	fs.file.Header.MessagesCount++
-	if rec.Flags&mailindex.FlagSeen != 0 {
-		fs.file.Header.SeenMessagesCount++
+	for name, v := range extra {
+		rec.Ext[name] = v
 	}
-	if rec.Flags&mailindex.FlagDeleted != 0 {
-		fs.file.Header.DeletedMessagesCount++
+	recs, err := fs.appendRecords(rec)
+	if err != nil {
+		return nil, err
+	}
+	if err := fs.applyChecked(recs, true); err != nil {
+		return nil, err
 	}
 	fs.vsize.Vsize += uint64(m.RFC822Size())
 	fs.vsize.MessageCount++
 	if m.UID > fs.vsize.HighestUID {
 		fs.vsize.HighestUID = m.UID
 	}
-	if m.UID >= fs.file.Header.NextUID {
-		fs.file.Header.NextUID = m.UID + 1
-	}
 	m.ModSeq = modseq
-	return nil
+	return rec, nil
 }
 
 // UpdateFlags replaces the flag set + keyword set for one UID.
@@ -1362,80 +1368,89 @@ func (u *userIndex) writeFlags(folderID uint64, uid uint32, flags, keywords []st
 // writeFlagsLocked is the in-memory half of a flag write, returning the log
 // records it needs so a transaction can carry a command's worth (#1827).
 func (fs *folderState) writeFlagsLocked(uid uint32, flags, keywords []string, mode flagWriteMode, modseq uint64) ([][]byte, error) {
-	{
-		// The record's own keywords under the lock: Add/Remove fold into them,
-		// so one set since the caller's read is not dropped.
-		var have []string
-		for _, rec := range fs.file.Records {
-			if rec.UID != uid {
-				continue
-			}
-			have = keywordsFromBitmask(fs.keywords, decodeKeywordsRec(rec.Ext[extNameKeywords]))
-			break
-		}
-		if mode == flagsAdd {
-			keywords = unionStrings(have, keywords)
-		} else if mode == flagsRemove {
-			keywords = subtractStrings(have, keywords)
-		}
-		kwBits, kwReg, err := keywordsBitmaskFor(fs.keywords, keywords)
-		if err != nil {
-			return nil, err
-		}
-		fs.keywords = kwReg
-		if err := fs.persistKeywordRegistry(); err != nil {
-			return nil, err
-		}
-		newFlags := mailindex.MailFlag(imapFlagsToIndex(flags))
-		for _, rec := range fs.file.Records {
-			if rec.UID != uid {
-				continue
-			}
-			oldSeen := rec.Flags&mailindex.FlagSeen != 0
-			oldDel := rec.Flags&mailindex.FlagDeleted != 0
-			// Preserve the backend-private AltTier bit; IMAP STORE must not
-			// clear a tier marker it knows nothing about.
-			newFlags |= rec.Flags & mailindex.FlagBackend
-			switch mode {
-			case flagsAdd:
-				newFlags |= rec.Flags
-			case flagsRemove:
-				newFlags = rec.Flags &^ mailindex.MailFlag(imapFlagsToIndex(flags))
-			}
-			rec.Flags = newFlags
-			rec.Ext[extNameModSeq] = encodeModseqRec(modseq)
-			rec.Ext[extNameKeywords] = encodeKeywordsRec(kwBits)
-			newSeen := newFlags&mailindex.FlagSeen != 0
-			newDel := newFlags&mailindex.FlagDeleted != 0
-			switch {
-			case oldSeen && !newSeen:
-				fs.file.Header.SeenMessagesCount--
-			case !oldSeen && newSeen:
-				fs.file.Header.SeenMessagesCount++
-			}
-			switch {
-			case oldDel && !newDel:
-				fs.file.Header.DeletedMessagesCount--
-			case !oldDel && newDel:
-				fs.file.Header.DeletedMessagesCount++
-			}
-			break
-		}
-		recs := []([]byte){
-			encLogRec(mailindex.TxTypeModseqUpdate, 0, mailindex.EncodeTxModseqUpdatePayload([]mailindex.TxModseqUpdate{{
-				UID: uid, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
-			}})),
-			encLogRec(mailindex.TxTypeFlagUpdate, 0, mailindex.EncodeTxFlagUpdatePayload([]mailindex.TxFlagUpdate{{
-				UID1: uid, UID2: uid, AddFlags: newFlags, RemoveFlags: ^newFlags,
-			}})),
-		}
-		recs = append(recs, keywordLogRecords(uid, have, keywords)...)
-		recs = append(recs,
-			encU32Update(40, fs.file.Header.SeenMessagesCount),
-			encU32Update(44, fs.file.Header.DeletedMessagesCount),
-		)
-		return recs, nil
+	// The record's own keywords and flags under the lock: Add/Remove fold
+	// into them, so one set since the caller's read is not dropped.
+	seq, found := fs.recSeqOfUID(uid)
+	var have []string
+	var old mailindex.MailFlag
+	if found {
+		data, _ := fs.recExt(seq, extNameKeywords)
+		have = keywordsFromBitmask(fs.keywords, decodeKeywordsRec(data))
+		old = fs.recFlags(seq)
 	}
+	if mode == flagsAdd {
+		keywords = unionStrings(have, keywords)
+	} else if mode == flagsRemove {
+		keywords = subtractStrings(have, keywords)
+	}
+	_, kwReg, err := keywordsBitmaskFor(fs.keywords, keywords)
+	if err != nil {
+		return nil, err
+	}
+	fs.keywords = kwReg
+	if err := fs.persistKeywordRegistry(); err != nil {
+		return nil, err
+	}
+	newFlags := mailindex.MailFlag(imapFlagsToIndex(flags))
+	seen, deleted := fs.file.Header.SeenMessagesCount, fs.file.Header.DeletedMessagesCount
+	if found {
+		// Preserve the backend-private AltTier bit; IMAP STORE must not
+		// clear a tier marker it knows nothing about.
+		newFlags |= old & mailindex.FlagBackend
+		switch mode {
+		case flagsAdd:
+			newFlags |= old
+		case flagsRemove:
+			newFlags = old &^ mailindex.MailFlag(imapFlagsToIndex(flags))
+		}
+		seen = moveCount(seen, old, newFlags, mailindex.FlagSeen)
+		deleted = moveCount(deleted, old, newFlags, mailindex.FlagDeleted)
+	}
+	recs := [][]byte{
+		encLogRec(mailindex.TxTypeModseqUpdate, 0, mailindex.EncodeTxModseqUpdatePayload([]mailindex.TxModseqUpdate{{
+			UID: uid, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
+		}})),
+		encLogRec(mailindex.TxTypeFlagUpdate, 0, mailindex.EncodeTxFlagUpdatePayload([]mailindex.TxFlagUpdate{{
+			UID1: uid, UID2: uid, AddFlags: newFlags, RemoveFlags: ^newFlags,
+		}})),
+	}
+	recs = append(recs, keywordLogRecords(uid, have, keywords)...)
+	recs = append(recs, encU32Update(40, seen), encU32Update(44, deleted))
+	// The writer learns its own change from the records it journals, through
+	// the one replay (INDEX-MEMORY.md §4).
+	if err := fs.applyRecords(recs); err != nil {
+		return nil, err
+	}
+	return recs, nil
+}
+
+// applyRecords applies journal records the writer is about to append, through
+// the replay every reader of the journal uses.
+func (fs *folderState) applyRecords(recs [][]byte) error { return fs.applyChecked(recs, false) }
+
+// applyChecked is applyRecords for records whose appended uids the writer has
+// already found absent, so the replay does not search for them again.
+func (fs *folderState) applyChecked(recs [][]byte, checked bool) error {
+	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
+	if err != nil {
+		return fmt.Errorf("fileindex/apply: record layout: %w", err)
+	}
+	if fs.recs != nil && !sameLayout(fs.recs.Layout(), layout) {
+		if err := fs.decodeRecords(); err != nil {
+			return err
+		}
+	}
+	st := replayState{layout: layout, checked: checked}
+	for _, rec := range recs {
+		hdr, err := mailindex.DecodeTxHeader(rec)
+		if err != nil {
+			return fmt.Errorf("fileindex/apply: %w", err)
+		}
+		if err := fs.applyRecord(hdr.Type.Kind(), rec[8:hdr.Size], &st, -1); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // MarkFolderCorrupt persists the FSCKD header flag (header offset 20) so
@@ -1490,11 +1505,15 @@ func (fs *folderState) flagsMultiLocked(updates map[uint32]mailbox.FlagsUpdate, 
 		var modseqUpdates []mailindex.TxModseqUpdate
 		var flagUpdates []mailindex.TxFlagUpdate
 		var keywordRecs [][]byte
-		for _, rec := range fs.file.Records {
-			upd, ok := updates[rec.UID]
+		seenCount, deleted := fs.file.Header.SeenMessagesCount, fs.file.Header.DeletedMessagesCount
+		for seq := range fs.recordCount() {
+			uid := fs.recUID(seq)
+			upd, ok := updates[uid]
 			if !ok {
 				continue
 			}
+			old := fs.recFlags(seq)
+			kwData, _ := fs.recExt(seq, extNameKeywords)
 			modseq, err := fs.bumpModSeqHeader()
 			if err != nil {
 				return nil, err
@@ -1502,55 +1521,38 @@ func (fs *folderState) flagsMultiLocked(updates map[uint32]mailbox.FlagsUpdate, 
 			// Add/Remove name only what changes, so the set is resolved here
 			// against the held record -- the caller's would be as old as its read.
 			kwWanted := upd.Keywords
-			have := keywordsFromBitmask(fs.keywords, decodeKeywordsRec(rec.Ext[extNameKeywords]))
+			have := keywordsFromBitmask(fs.keywords, decodeKeywordsRec(kwData))
 			if upd.Mode == mailbox.FlagsAdd {
 				kwWanted = unionStrings(have, upd.Keywords)
 			} else if upd.Mode == mailbox.FlagsRemove {
 				kwWanted = subtractStrings(have, upd.Keywords)
 			}
-			kwBits, kwReg2, err := keywordsBitmaskFor(fs.keywords, kwWanted)
+			_, kwReg2, err := keywordsBitmaskFor(fs.keywords, kwWanted)
 			if err != nil {
 				return nil, err
 			}
 			fs.keywords = kwReg2
 			newFlags := mailindex.MailFlag(imapFlagsToIndex(upd.Flags))
-			oldSeen := rec.Flags&mailindex.FlagSeen != 0
-			oldDel := rec.Flags&mailindex.FlagDeleted != 0
 			switch upd.Mode {
 			case mailbox.FlagsAdd:
-				newFlags |= rec.Flags
+				newFlags |= old
 			case mailbox.FlagsRemove:
-				newFlags = rec.Flags &^ newFlags
+				newFlags = old &^ newFlags
 			}
-			newFlags |= rec.Flags & mailindex.FlagBackend
-			rec.Flags = newFlags
-			rec.Ext[extNameModSeq] = encodeModseqRec(modseq)
-			rec.Ext[extNameKeywords] = encodeKeywordsRec(kwBits)
-			keywordRecs = append(keywordRecs, keywordLogRecords(rec.UID, have, kwWanted)...)
-			newSeen := newFlags&mailindex.FlagSeen != 0
-			newDel := newFlags&mailindex.FlagDeleted != 0
-			switch {
-			case oldSeen && !newSeen:
-				fs.file.Header.SeenMessagesCount--
-			case !oldSeen && newSeen:
-				fs.file.Header.SeenMessagesCount++
-			}
-			switch {
-			case oldDel && !newDel:
-				fs.file.Header.DeletedMessagesCount--
-			case !oldDel && newDel:
-				fs.file.Header.DeletedMessagesCount++
-			}
-			result[rec.UID] = mailbox.FlagsResult{
+			newFlags |= old & mailindex.FlagBackend
+			keywordRecs = append(keywordRecs, keywordLogRecords(uid, have, kwWanted)...)
+			seenCount = moveCount(seenCount, old, newFlags, mailindex.FlagSeen)
+			deleted = moveCount(deleted, old, newFlags, mailindex.FlagDeleted)
+			result[uid] = mailbox.FlagsResult{
 				ModSeq:   modseq,
 				Flags:    indexFlagsToIMAP(uint8(newFlags)),
 				Keywords: kwWanted,
 			}
 			modseqUpdates = append(modseqUpdates, mailindex.TxModseqUpdate{
-				UID: rec.UID, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
+				UID: uid, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
 			})
 			flagUpdates = append(flagUpdates, mailindex.TxFlagUpdate{
-				UID1: rec.UID, UID2: rec.UID, AddFlags: newFlags, RemoveFlags: ^newFlags,
+				UID1: uid, UID2: uid, AddFlags: newFlags, RemoveFlags: ^newFlags,
 			})
 		}
 		if len(modseqUpdates) == 0 {
@@ -1561,10 +1563,10 @@ func (fs *folderState) flagsMultiLocked(updates map[uint32]mailbox.FlagsUpdate, 
 			encLogRec(mailindex.TxTypeFlagUpdate, 0, mailindex.EncodeTxFlagUpdatePayload(flagUpdates)),
 		}
 		recs = append(recs, keywordRecs...)
-		recs = append(recs,
-			encU32Update(40, fs.file.Header.SeenMessagesCount),
-			encU32Update(44, fs.file.Header.DeletedMessagesCount),
-		)
+		recs = append(recs, encU32Update(40, seenCount), encU32Update(44, deleted))
+		if err := fs.applyRecords(recs); err != nil {
+			return nil, err
+		}
 		return recs, nil
 	}
 }
@@ -1600,57 +1602,54 @@ func (u *userIndex) ExpungeMessage(folderID uint64, uid uint32) error {
 // expungeLocked removes one record and returns the log records the change
 // needs, so a transaction can write a command's worth of them at once (#1827).
 func (fs *folderState) expungeLocked(uid uint32, modseq uint64) ([][]byte, error) {
-	{
-		idx := -1
-		for i, rec := range fs.file.Records {
-			if rec.UID == uid {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			return nil, nil // already expunged
-		}
-		rec := fs.file.Records[idx]
-		if rec.Flags&mailindex.FlagSeen != 0 {
-			fs.file.Header.SeenMessagesCount--
-		}
-		if rec.Flags&mailindex.FlagDeleted != 0 {
-			fs.file.Header.DeletedMessagesCount--
-		}
-		if decodeCacheRec(rec.Ext[extNameCache]) != 0 {
-			fs.cacheGone++
-		}
-		expungedVSize := decodeVsizeRec(rec.Ext[extNameVsize])
-		fs.file.Records = append(fs.file.Records[:idx], fs.file.Records[idx+1:]...)
-		fs.file.Header.MessagesCount--
-		if uint64(expungedVSize) <= fs.vsize.Vsize {
-			fs.vsize.Vsize -= uint64(expungedVSize)
-		} else {
-			fs.vsize.Vsize = 0
-		}
-		if fs.vsize.MessageCount > 0 {
-			fs.vsize.MessageCount--
-		}
-
-		// 28-byte payload: uid(4)+guid(16)+modseq(8). Compatible with
-		// scanExpungesSince which reads the same layout.
-		expPayload := make([]byte, 28)
-		le := binary.LittleEndian
-		le.PutUint32(expPayload[0:], uid)
-		// The MESSAGE's GUID, the only place identity survives the record. The
-		// mailbox GUID here once gave every expunge the same value -- invisible
-		// to QRESYNC, unusable by anything addressing by id (#1216).
-		msgGUID := decodeGUIDRec(rec.Ext[extNameGUID])
-		copy(expPayload[4:20], msgGUID[:])
-		le.PutUint64(expPayload[20:], modseq)
-		return [][]byte{
-			encLogRec(mailindex.TxTypeExpungeGUID, mailindex.TxExpungeProt, expPayload),
-			encU32Update(32, fs.file.Header.MessagesCount),
-			encU32Update(40, fs.file.Header.SeenMessagesCount),
-			encU32Update(44, fs.file.Header.DeletedMessagesCount),
-		}, nil
+	seq, ok := fs.recSeqOfUID(uid)
+	if !ok {
+		return nil, nil // already expunged
 	}
+	flags := fs.recFlags(seq)
+	messages, seen, deleted := fs.file.Header.MessagesCount-1, fs.file.Header.SeenMessagesCount, fs.file.Header.DeletedMessagesCount
+	if flags&mailindex.FlagSeen != 0 {
+		seen--
+	}
+	if flags&mailindex.FlagDeleted != 0 {
+		deleted--
+	}
+	if c, _ := fs.recExt(seq, extNameCache); decodeCacheRec(c) != 0 {
+		fs.cacheGone++
+	}
+	v, _ := fs.recExt(seq, extNameVsize)
+	expungedVSize := decodeVsizeRec(v)
+	if uint64(expungedVSize) <= fs.vsize.Vsize {
+		fs.vsize.Vsize -= uint64(expungedVSize)
+	} else {
+		fs.vsize.Vsize = 0
+	}
+	if fs.vsize.MessageCount > 0 {
+		fs.vsize.MessageCount--
+	}
+
+	// 28-byte payload: uid(4)+guid(16)+modseq(8). Compatible with
+	// scanExpungesSince which reads the same layout.
+	expPayload := make([]byte, 28)
+	le := binary.LittleEndian
+	le.PutUint32(expPayload[0:], uid)
+	// The MESSAGE's GUID, the only place identity survives the record. The
+	// mailbox GUID here once gave every expunge the same value -- invisible
+	// to QRESYNC, unusable by anything addressing by id (#1216).
+	g, _ := fs.recExt(seq, extNameGUID)
+	msgGUID := decodeGUIDRec(g)
+	copy(expPayload[4:20], msgGUID[:])
+	le.PutUint64(expPayload[20:], modseq)
+	recs := [][]byte{
+		encLogRec(mailindex.TxTypeExpungeGUID, mailindex.TxExpungeProt, expPayload),
+		encU32Update(32, messages),
+		encU32Update(40, seen),
+		encU32Update(44, deleted),
+	}
+	if err := fs.applyRecords(recs); err != nil {
+		return nil, err
+	}
+	return recs, nil
 }
 
 // GetMessages returns every record whose UID falls in uids; empty uids
@@ -2500,10 +2499,7 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 		}
 	}
 
-	var maxModseq uint64
-	// EXT_HDR_UPDATE patches the extension the preceding intro named, as the
-	// wire format defines it: the record itself carries no name.
-	var lastIntro string
+	st := replayState{layout: layout}
 	le := binary.LittleEndian
 
 	// Absolute offsets; committedEnd follows the last complete BOUNDARY, so a
@@ -2573,235 +2569,16 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				return committedEnd, err
 			}
 		}
-		switch {
-		case kind == mailindex.TxTypeModseqUpdate:
-			for i := 0; i+12 <= len(payload); i += 12 {
-				uid := le.Uint32(payload[i:])
-				modseq := uint64(le.Uint32(payload[i+4:])) | uint64(le.Uint32(payload[i+8:]))<<32
-				if modseq > maxModseq {
-					maxModseq = modseq
-				}
-				if seq, ok := fs.recSeqOfUID(uid); ok {
-					fs.recSetExt(seq, extNameModSeq, encodeModseqRec(modseq))
-				}
-			}
-
-		case kind == mailindex.TxTypeFlagUpdate:
-			for i := 0; i+12 <= len(payload); i += 12 {
-				uid1 := le.Uint32(payload[i:])
-				uid2 := le.Uint32(payload[i+4:])
-				addFlags := mailindex.MailFlag(payload[i+8])
-				removeFlags := mailindex.MailFlag(payload[i+9])
-				fs.recEachInRange(uid1, uid2, func(seq int) {
-					old := fs.recFlags(seq)
-					now := (old | addFlags) &^ removeFlags
-					fs.recSetFlags(seq, now)
-					// The counts move with the flags, as the reference's
-					// replay does (#1831).
-					fs.file.Header.SeenMessagesCount = moveCount(fs.file.Header.SeenMessagesCount, old, now, mailindex.FlagSeen)
-					fs.file.Header.DeletedMessagesCount = moveCount(fs.file.Header.DeletedMessagesCount, old, now, mailindex.FlagDeleted)
-				})
-			}
-
-		case kind == mailindex.TxTypeExpungeGUID|mailindex.TxType(mailindex.TxExpungeProt):
-			// Accept 28-byte legacy format (uid+guid+modseq) and 20-byte canonical.
-			stride := 20
-			if len(payload) > 0 && len(payload)%28 == 0 && len(payload)%20 != 0 {
-				stride = 28
-			}
-			for i := 0; i+stride <= len(payload); i += stride {
-				uid := le.Uint32(payload[i:])
-				// The 28-byte form carries the expunge modseq at offset 20; a
-				// reader must advance HighestModSeq from it, or a sibling reuses
-				// it for the next delivery and breaks monotonicity.
-				if stride == 28 {
-					if ms := le.Uint64(payload[i+20:]); ms > maxModseq {
-						maxModseq = ms
-					}
-				}
-				if seq, ok := fs.recSeqOfUID(uid); ok {
-					flags := fs.recFlags(seq)
-					if flags&mailindex.FlagSeen != 0 {
-						fs.file.Header.SeenMessagesCount--
-					}
-					if flags&mailindex.FlagDeleted != 0 {
-						fs.file.Header.DeletedMessagesCount--
-					}
-					fs.recExpunge(seq)
-					fs.file.Header.MessagesCount--
-				}
-			}
-
-		case kind == mailindex.TxTypeHeaderUpdate:
-			for i := 0; i+4 <= len(payload); {
-				offset := le.Uint16(payload[i:])
-				size := le.Uint16(payload[i+2:])
-				i += 4
-				if i+int(size) > len(payload) {
-					break
-				}
-				data := payload[i : i+int(size)]
-				i += int(size)
-				pad := (4 - ((4 + int(size)) % 4)) % 4
-				i += pad
-				if size == 4 {
-					v := le.Uint32(data)
-					switch offset {
-					case 20:
-						fs.file.Header.Flags = mailindex.HeaderFlag(v)
-					case 28:
-						fs.file.Header.NextUID = v
-					case 32:
-						fs.file.Header.MessagesCount = v
-					case 40:
-						fs.file.Header.SeenMessagesCount = v
-					case 44:
-						fs.file.Header.DeletedMessagesCount = v
-					case 48:
-						fs.file.Header.FirstRecentUID = v
-					}
-				}
-			}
-
-		case kind == mailindex.TxTypeExtIntro:
-			intro, ok := mailindex.DecodeTxExtIntroPayload(payload)
-			if !ok || intro.Name == "" {
-				// Every append after this one would be read at the old width.
-				return committedEnd, fmt.Errorf("fileindex/applylog: torn extension intro at offset %d (%d payload bytes)",
-					recStart, len(payload))
-			}
-			// The header's bytes arrive in the EXT_HDR_UPDATE that follows. A
-			// new record width is decoded records' to take (INDEX-MEMORY.md §4).
-			if intro.RecordSize != 0 && fs.recs != nil {
-				if derr := fs.decodeRecords(); derr != nil {
-					return committedEnd, derr
-				}
-			}
-			if aerr := fs.file.AddRecordExtension(intro.Name, make([]byte, intro.HdrSize),
-				intro.RecordSize, intro.RecordAlign, intro.ResetID); aerr != nil {
-				return committedEnd, fmt.Errorf("fileindex/applylog: declare %q: %w", intro.Name, aerr)
-			}
-			newLayout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions)
-			if lerr != nil {
-				return committedEnd, fmt.Errorf("fileindex/applylog: record layout: %w", lerr)
-			}
-			layout = newLayout
-			lastIntro = intro.Name
-
-		case kind == mailindex.TxTypeExtHdrUpdate:
-			upd, ok := mailindex.DecodeTxExtHdrUpdatePayload(payload)
-			if !ok {
-				return committedEnd, fmt.Errorf("fileindex/applylog: torn extension header update at offset %d", recStart)
-			}
-			if lastIntro == "" {
-				break
-			}
-			ext := findExt(fs.file.Extensions, lastIntro)
-			if ext == nil || int(upd.Offset)+len(upd.Data) > len(ext.HdrData) {
-				break
-			}
-			copy(ext.HdrData[upd.Offset:], upd.Data)
-
-		case kind == mailindex.TxTypeAppend:
-			stride := int(layout.RecordSize)
-			if stride == 0 {
-				break
-			}
-			// Decoded records keep no uid order to search, so a set for O(1) dedup.
-			var existing map[uint32]struct{}
-			if fs.recs == nil {
-				existing = make(map[uint32]struct{}, len(fs.file.Records))
-				for _, r := range fs.file.Records {
-					existing[r.UID] = struct{}{}
-				}
-			}
-			for i := 0; i+stride <= len(payload); i += stride {
-				rec, recErr := mailindex.DecodeRecord(payload[i:i+stride], layout)
-				if recErr != nil {
-					break
-				}
-				dup := false
-				if existing != nil {
-					_, dup = existing[rec.UID]
-					existing[rec.UID] = struct{}{}
-				} else {
-					_, dup = fs.recSeqOfUID(rec.UID)
-				}
-				if dup {
-					continue // already present from base file or earlier log replay
-				}
-				rp := rec
-				fs.recAppend(&rp, payload[i:i+stride])
-				// The append moves next_uid itself, as the reference's replay
-				// does, not only a header update (#1831).
-				if rp.UID >= fs.file.Header.NextUID {
-					fs.file.Header.NextUID = rp.UID + 1
-				}
-				fs.file.Header.MessagesCount++
-				if rp.Flags&mailindex.FlagSeen != 0 {
-					fs.file.Header.SeenMessagesCount++
-				}
-				if rp.Flags&mailindex.FlagDeleted != 0 {
-					fs.file.Header.DeletedMessagesCount++
-				}
-			}
-
-		case kind == mailindex.TxTypeKeywordUpdate:
-			rec, ok := mailindex.DecodeTxKeywordUpdatePayload(payload)
-			if !ok {
-				// The framing passed, so this is a whole record too short to
-				// hold its own name -- skipping it is #1314 one floor down.
-				return committedEnd, fmt.Errorf("fileindex/applylog: malformed keyword record (type %#x) at offset %d", uint32(kind), recStart)
-			}
-			// The name arrived with the record, so the registry grows from the
-			// log itself -- no separate case for an unseen keyword.
-			bits, reg, kwErr := keywordsBitmaskFor(fs.keywords, []string{rec.Name})
-			if kwErr != nil {
-				// The 32-bit ceiling. Swallowing it here would drop the word
-				// in silence, which is the defect this whole change is about.
-				return committedEnd, fmt.Errorf("fileindex/applylog: keyword %q: %w", rec.Name, kwErr)
-			}
-			fs.keywords = reg
-			if regErr := fs.persistKeywordRegistry(); regErr != nil {
-				return committedEnd, fmt.Errorf("fileindex/applylog: keyword registry: %w", regErr)
-			}
-			for _, r := range rec.UIDRanges {
-				fs.recEachInRange(r.UID1, r.UID2, func(seq int) {
-					data, _ := fs.recExt(seq, extNameKeywords)
-					cur := decodeKeywordsRec(data)
-					if rec.ModifyType == mailindex.TxKeywordModifyRemove {
-						cur &^= bits
-					} else {
-						cur |= bits
-					}
-					fs.recSetExt(seq, extNameKeywords, encodeKeywordsRec(cur))
-				})
-			}
-
-		case kind == mailindex.TxTypeKeywordReset:
-			for _, r := range mailindex.DecodeTxKeywordResetPayload(payload) {
-				fs.recEachInRange(r.UID1, r.UID2, func(seq int) {
-					fs.recSetExt(seq, extNameKeywords, encodeKeywordsRec(0))
-				})
-			}
-
-		case kind == mailindex.TxTypeExpunge || kind == mailindex.TxTypeExpungeGUID:
-			// A known type judged corrupt, not an unknown one: the format's own
-			// rule ignores an expunge without its defence bit.
-
-		default:
-			// Proceeding past a record we cannot read reports a fully replayed
-			// tail and a state missing whatever it said -- silence in the shape
-			// of an answer (#1314). Refuse instead: an open that fails names
-			// the version skew, a mailbox quietly missing a keyword does not.
-			return committedEnd, fmt.Errorf("fileindex/applylog: unknown transaction type %#x at offset %d", uint32(kind), recStart)
+		if err := fs.applyRecord(kind, payload, &st, recStart); err != nil {
+			return committedEnd, err
 		}
+
 	}
 
-	if maxModseq > 0 {
+	if st.maxModseq > 0 {
 		if ext := findExt(fs.file.Extensions, extNameModSeq); ext != nil {
-			if hdr, hdrErr := decodeModseqHdr(ext.HdrData); hdrErr == nil && maxModseq > hdr.HighestModSeq {
-				hdr.HighestModSeq = maxModseq
+			if hdr, hdrErr := decodeModseqHdr(ext.HdrData); hdrErr == nil && st.maxModseq > hdr.HighestModSeq {
+				hdr.HighestModSeq = st.maxModseq
 				ext.HdrData = encodeModseqHdr(hdr)
 			}
 		}
@@ -2820,6 +2597,255 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	// committedEnd, not filePos: an incremental read neither truncates a partial
 	// trailing group nor confirms it; the next reload retries from here.
 	return committedEnd, nil
+}
+
+// replayState is what one replay carries from record to record.
+type replayState struct {
+	layout    mailindex.RecordLayout
+	maxModseq uint64
+	// lastIntro names the extension an EXT_HDR_UPDATE patches, as the wire
+	// format defines it: the record itself carries no name.
+	lastIntro string
+	// checked says the writer already found the appended uids absent.
+	checked bool
+}
+
+// applyRecord applies one journal record to the folder state: the one place
+// records change in memory, for the writer and for a view alike, as the
+// reference's one sync handler (INDEX-MEMORY.md §4).
+func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *replayState, recStart int64) error {
+	le := binary.LittleEndian
+	switch {
+	case kind == mailindex.TxTypeModseqUpdate:
+		for i := 0; i+12 <= len(payload); i += 12 {
+			uid := le.Uint32(payload[i:])
+			modseq := uint64(le.Uint32(payload[i+4:])) | uint64(le.Uint32(payload[i+8:]))<<32
+			if modseq > st.maxModseq {
+				st.maxModseq = modseq
+			}
+			if seq, ok := fs.recSeqOfUID(uid); ok {
+				fs.recSetExt(seq, extNameModSeq, encodeModseqRec(modseq))
+			}
+		}
+
+	case kind == mailindex.TxTypeFlagUpdate:
+		for i := 0; i+12 <= len(payload); i += 12 {
+			uid1 := le.Uint32(payload[i:])
+			uid2 := le.Uint32(payload[i+4:])
+			addFlags := mailindex.MailFlag(payload[i+8])
+			removeFlags := mailindex.MailFlag(payload[i+9])
+			fs.recEachInRange(uid1, uid2, func(seq int) {
+				old := fs.recFlags(seq)
+				now := (old | addFlags) &^ removeFlags
+				fs.recSetFlags(seq, now)
+				// The counts move with the flags, as the reference's
+				// replay does (#1831).
+				fs.file.Header.SeenMessagesCount = moveCount(fs.file.Header.SeenMessagesCount, old, now, mailindex.FlagSeen)
+				fs.file.Header.DeletedMessagesCount = moveCount(fs.file.Header.DeletedMessagesCount, old, now, mailindex.FlagDeleted)
+			})
+		}
+
+	case kind == mailindex.TxTypeExpungeGUID|mailindex.TxType(mailindex.TxExpungeProt):
+		// Accept 28-byte legacy format (uid+guid+modseq) and 20-byte canonical.
+		stride := 20
+		if len(payload) > 0 && len(payload)%28 == 0 && len(payload)%20 != 0 {
+			stride = 28
+		}
+		for i := 0; i+stride <= len(payload); i += stride {
+			uid := le.Uint32(payload[i:])
+			// The 28-byte form carries the expunge modseq at offset 20; a
+			// reader must advance HighestModSeq from it, or a sibling reuses
+			// it for the next delivery and breaks monotonicity.
+			if stride == 28 {
+				if ms := le.Uint64(payload[i+20:]); ms > st.maxModseq {
+					st.maxModseq = ms
+				}
+			}
+			if seq, ok := fs.recSeqOfUID(uid); ok {
+				flags := fs.recFlags(seq)
+				if flags&mailindex.FlagSeen != 0 {
+					fs.file.Header.SeenMessagesCount--
+				}
+				if flags&mailindex.FlagDeleted != 0 {
+					fs.file.Header.DeletedMessagesCount--
+				}
+				fs.recExpunge(seq)
+				fs.file.Header.MessagesCount--
+			}
+		}
+
+	case kind == mailindex.TxTypeHeaderUpdate:
+		for i := 0; i+4 <= len(payload); {
+			offset := le.Uint16(payload[i:])
+			size := le.Uint16(payload[i+2:])
+			i += 4
+			if i+int(size) > len(payload) {
+				break
+			}
+			data := payload[i : i+int(size)]
+			i += int(size)
+			pad := (4 - ((4 + int(size)) % 4)) % 4
+			i += pad
+			if size == 4 {
+				v := le.Uint32(data)
+				switch offset {
+				case 20:
+					fs.file.Header.Flags = mailindex.HeaderFlag(v)
+				case 28:
+					fs.file.Header.NextUID = v
+				case 32:
+					fs.file.Header.MessagesCount = v
+				case 40:
+					fs.file.Header.SeenMessagesCount = v
+				case 44:
+					fs.file.Header.DeletedMessagesCount = v
+				case 48:
+					fs.file.Header.FirstRecentUID = v
+				}
+			}
+		}
+
+	case kind == mailindex.TxTypeExtIntro:
+		intro, ok := mailindex.DecodeTxExtIntroPayload(payload)
+		if !ok || intro.Name == "" {
+			// Every append after this one would be read at the old width.
+			return fmt.Errorf("fileindex/applylog: torn extension intro at offset %d (%d payload bytes)",
+				recStart, len(payload))
+		}
+		// The header's bytes arrive in the EXT_HDR_UPDATE that follows. A
+		// new record width is decoded records' to take (INDEX-MEMORY.md §4).
+		if intro.RecordSize != 0 && fs.recs != nil {
+			if derr := fs.decodeRecords(); derr != nil {
+				return derr
+			}
+		}
+		if aerr := fs.file.AddRecordExtension(intro.Name, make([]byte, intro.HdrSize),
+			intro.RecordSize, intro.RecordAlign, intro.ResetID); aerr != nil {
+			return fmt.Errorf("fileindex/applylog: declare %q: %w", intro.Name, aerr)
+		}
+		newLayout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions)
+		if lerr != nil {
+			return fmt.Errorf("fileindex/applylog: record st.layout: %w", lerr)
+		}
+		st.layout = newLayout
+		st.lastIntro = intro.Name
+
+	case kind == mailindex.TxTypeExtHdrUpdate:
+		upd, ok := mailindex.DecodeTxExtHdrUpdatePayload(payload)
+		if !ok {
+			return fmt.Errorf("fileindex/applylog: torn extension header update at offset %d", recStart)
+		}
+		if st.lastIntro == "" {
+			return nil
+		}
+		ext := findExt(fs.file.Extensions, st.lastIntro)
+		if ext == nil || int(upd.Offset)+len(upd.Data) > len(ext.HdrData) {
+			return nil
+		}
+		copy(ext.HdrData[upd.Offset:], upd.Data)
+
+	case kind == mailindex.TxTypeAppend:
+		stride := int(st.layout.RecordSize)
+		if stride == 0 {
+			return nil
+		}
+		// The writer's own appends were found absent before they were built.
+		// Otherwise decoded records keep no uid order to search, so a set,
+		// built once for the payload. The header's next uid is no proof: a
+		// stale header is what a replay may be healing.
+		var existing map[uint32]struct{}
+		for i := 0; i+stride <= len(payload); i += stride {
+			rec, recErr := mailindex.DecodeRecord(payload[i:i+stride], st.layout)
+			if recErr != nil {
+				break
+			}
+			dup := false
+			switch {
+			case st.checked:
+			case fs.recs != nil:
+				_, dup = fs.recSeqOfUID(rec.UID)
+			default:
+				if existing == nil {
+					existing = make(map[uint32]struct{}, len(fs.file.Records))
+					for _, r := range fs.file.Records {
+						existing[r.UID] = struct{}{}
+					}
+				}
+				_, dup = existing[rec.UID]
+			}
+			if existing != nil {
+				existing[rec.UID] = struct{}{}
+			}
+			if dup {
+				continue // already present from base file or earlier log replay
+			}
+			rp := rec
+			fs.recAppend(&rp, payload[i:i+stride])
+			// The append moves next_uid itself, as the reference's replay
+			// does, not only a header update (#1831).
+			if rp.UID >= fs.file.Header.NextUID {
+				fs.file.Header.NextUID = rp.UID + 1
+			}
+			fs.file.Header.MessagesCount++
+			if rp.Flags&mailindex.FlagSeen != 0 {
+				fs.file.Header.SeenMessagesCount++
+			}
+			if rp.Flags&mailindex.FlagDeleted != 0 {
+				fs.file.Header.DeletedMessagesCount++
+			}
+		}
+
+	case kind == mailindex.TxTypeKeywordUpdate:
+		rec, ok := mailindex.DecodeTxKeywordUpdatePayload(payload)
+		if !ok {
+			// The framing passed, so this is a whole record too short to
+			// hold its own name -- skipping it is #1314 one floor down.
+			return fmt.Errorf("fileindex/applylog: malformed keyword record (type %#x) at offset %d", uint32(kind), recStart)
+		}
+		// The name arrived with the record, so the registry grows from the
+		// log itself -- no separate case for an unseen keyword.
+		bits, reg, kwErr := keywordsBitmaskFor(fs.keywords, []string{rec.Name})
+		if kwErr != nil {
+			// The 32-bit ceiling. Swallowing it here would drop the word
+			// in silence, which is the defect this whole change is about.
+			return fmt.Errorf("fileindex/applylog: keyword %q: %w", rec.Name, kwErr)
+		}
+		fs.keywords = reg
+		if regErr := fs.persistKeywordRegistry(); regErr != nil {
+			return fmt.Errorf("fileindex/applylog: keyword registry: %w", regErr)
+		}
+		for _, r := range rec.UIDRanges {
+			fs.recEachInRange(r.UID1, r.UID2, func(seq int) {
+				data, _ := fs.recExt(seq, extNameKeywords)
+				cur := decodeKeywordsRec(data)
+				if rec.ModifyType == mailindex.TxKeywordModifyRemove {
+					cur &^= bits
+				} else {
+					cur |= bits
+				}
+				fs.recSetExt(seq, extNameKeywords, encodeKeywordsRec(cur))
+			})
+		}
+
+	case kind == mailindex.TxTypeKeywordReset:
+		for _, r := range mailindex.DecodeTxKeywordResetPayload(payload) {
+			fs.recEachInRange(r.UID1, r.UID2, func(seq int) {
+				fs.recSetExt(seq, extNameKeywords, encodeKeywordsRec(0))
+			})
+		}
+
+	case kind == mailindex.TxTypeExpunge || kind == mailindex.TxTypeExpungeGUID:
+		// A known type judged corrupt, not an unknown one: the format's own
+		// rule ignores an expunge without its defence bit.
+
+	default:
+		// Proceeding past a record we cannot read reports a fully replayed
+		// tail and a state missing whatever it said -- silence in the shape
+		// of an answer (#1314). Refuse instead: an open that fails names
+		// the version skew, a mailbox quietly missing a keyword does not.
+		return fmt.Errorf("fileindex/applylog: unknown transaction type %#x at offset %d", uint32(kind), recStart)
+	}
+	return nil
 }
 
 // dropStump cuts past the last complete group only under the journal hold: the
@@ -2872,7 +2898,29 @@ func (fs *folderState) flushAppend(rec *mailindex.Record) error {
 
 // appendLogRecords is what one append writes, so a transaction can hold a
 // command's worth and write them together (#1827).
+// appendRecords is the journal of appending rec: the header it carries is the
+// one the append leaves, so the replay that applies it and the header updates
+// agree.
+func (fs *folderState) appendRecords(rec *mailindex.Record) ([][]byte, error) {
+	h := fs.file.Header
+	h.MessagesCount++
+	if rec.Flags&mailindex.FlagSeen != 0 {
+		h.SeenMessagesCount++
+	}
+	if rec.Flags&mailindex.FlagDeleted != 0 {
+		h.DeletedMessagesCount++
+	}
+	if rec.UID >= h.NextUID {
+		h.NextUID = rec.UID + 1
+	}
+	return fs.appendLogRecordsWith(rec, h)
+}
+
 func (fs *folderState) appendLogRecords(rec *mailindex.Record) ([][]byte, error) {
+	return fs.appendLogRecordsWith(rec, fs.file.Header)
+}
+
+func (fs *folderState) appendLogRecordsWith(rec *mailindex.Record, h mailindex.Header) ([][]byte, error) {
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
 	if err != nil {
 		return nil, fmt.Errorf("fileindex/append: layout: %w", err)
@@ -2891,10 +2939,10 @@ func (fs *folderState) appendLogRecords(rec *mailindex.Record) ([][]byte, error)
 		encLogRec(mailindex.TxTypeModseqUpdate, 0, mailindex.EncodeTxModseqUpdatePayload([]mailindex.TxModseqUpdate{{
 			UID: rec.UID, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
 		}})),
-		encU32Update(28, fs.file.Header.NextUID),
-		encU32Update(32, fs.file.Header.MessagesCount),
-		encU32Update(40, fs.file.Header.SeenMessagesCount),
-		encU32Update(44, fs.file.Header.DeletedMessagesCount),
+		encU32Update(28, h.NextUID),
+		encU32Update(32, h.MessagesCount),
+		encU32Update(40, h.SeenMessagesCount),
+		encU32Update(44, h.DeletedMessagesCount),
 	}, nil
 }
 

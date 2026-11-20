@@ -180,17 +180,13 @@ func (u *userIndex) AppendGUIDRecord(r mailbox.GUIDRecord) error {
 		}
 		fs.file.Header.NextUID = uid + 1
 		m := &mailbox.MessageMeta{UID: uid}
-		if err := fs.appendLocked(m); err != nil {
-			return err
-		}
-		rec := fs.file.Records[len(fs.file.Records)-1]
-		if rec.Ext == nil {
-			rec.Ext = map[string][]byte{}
-		}
-		rec.Ext[extNameGUIDMap] = encodeGUIDMapRec(guidMapRec{
+		rec, err := fs.appendLockedWith(m, map[string][]byte{extNameGUIDMap: encodeGUIDMapRec(guidMapRec{
 			GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 			Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
-		})
+		})})
+		if err != nil {
+			return err
+		}
 		if err := fs.flushAppend(rec); err != nil {
 			return err
 		}
@@ -521,10 +517,11 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 			}
 		}
 		for _, r := range b.add {
-			if err := appendGUIDLocked(fs, r); err != nil {
+			rec, err := appendGUIDLocked(fs, r)
+			if err != nil {
 				return err
 			}
-			recs, err := fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+			recs, err := fs.appendLogRecords(rec)
 			if err != nil {
 				return err
 			}
@@ -542,24 +539,16 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 	})
 }
 
-func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) error {
+func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) (*mailindex.Record, error) {
 	uid := fs.file.Header.NextUID
 	if uid == 0 {
 		uid = 1
 	}
 	fs.file.Header.NextUID = uid + 1
-	if err := fs.appendLocked(&mailbox.MessageMeta{UID: uid}); err != nil {
-		return err
-	}
-	rec := fs.file.Records[len(fs.file.Records)-1]
-	if rec.Ext == nil {
-		rec.Ext = map[string][]byte{}
-	}
-	rec.Ext[extNameGUIDMap] = encodeGUIDMapRec(guidMapRec{
+	return fs.appendLockedWith(&mailbox.MessageMeta{UID: uid}, map[string][]byte{extNameGUIDMap: encodeGUIDMapRec(guidMapRec{
 		GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 		Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
-	})
-	return nil
+	})})
 }
 
 // GUIDCopies answers from the image the store last read: the map is built once

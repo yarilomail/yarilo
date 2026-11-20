@@ -108,3 +108,42 @@ func TestAcceptTheGUIDStoreHoldsItsRecordsAsBytes(t *testing.T) {
 	bound := 1.5 * float64(guidMapRecSize)
 	acceptance(t, 7, held <= bound, fmt.Sprintf("%.0f B a mailbox message held by the GUID store, bound %.0f", held, bound))
 }
+
+// writerAppendAlloc is what the writer's append of one message allocates in
+// memory, on a folder of n held decoded, journal I/O aside.
+func writerAppendAlloc(t *testing.T, n int) uint64 {
+	t.Helper()
+	home := movedFolder(t, n)
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	fs, err := h.(*userHandle).ui.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if err := fs.reload(); err != nil {
+		t.Fatal(err)
+	}
+	const appends = 10
+	var m0, m1 runtime.MemStats
+	runtime.ReadMemStats(&m0)
+	for i := uint32(0); i < appends; i++ {
+		if _, err := fs.appendLockedWith(&mailbox.MessageMeta{UID: uint32(n) + 1 + i, Size: 10}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime.ReadMemStats(&m1)
+	return (m1.TotalAlloc - m0.TotalAlloc) / appends
+}
+
+// The writer's append searches for its uid once, without allocating, and the
+// replay it goes through searches no more: what it allocates does not grow
+// with the folder (#2629 review).
+func TestTheWritersAppendAllocatesNothingPerFolderMessage(t *testing.T) {
+	small, large := writerAppendAlloc(t, acceptSmall), writerAppendAlloc(t, acceptLarge)
+	if grow := slope(small, large); grow > changeGrowth {
+		t.Errorf("one append allocates %d B at %d, %d B at %d: %.1f B a folder message, bound %d",
+			small, acceptSmall, large, acceptLarge, grow, changeGrowth)
+	}
+}
