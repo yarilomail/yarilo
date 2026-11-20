@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
@@ -66,14 +67,32 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	o.mergeThreads(user, path)
 }
 
-// mergeThreads folds the log into the base once it passes the tail size,
-// after the save let the account's lock go: the rewrite runs under the
-// merge's own lock, and only the log's swap takes the account's
-// (THREADS-STORE.md §4, #2641).
+// merging is the process's one thread merge in flight; a due merge that
+// finds it taken is left to the account's next save.
+var merging atomic.Bool
+
+// mergeSeam, when set, runs in the merge's goroutine before and after it.
+var mergeSeam func(done bool)
+
+// mergeThreads folds the log into the base once it passes the tail size, in
+// the background: the save returns first (THREADS-STORE.md §4, #2651). The
+// rewrite runs under the merge's own lock, and only the log's swap takes the
+// account's; a process stopped mid-merge leaves a pair the next one finishes.
 func (o *Ops) mergeThreads(user, path string) {
-	if !o.cfg.Threads.MergeDue(path) {
+	if !o.cfg.Threads.MergeDue(path) || !merging.CompareAndSwap(false, true) {
 		return
 	}
+	go func() {
+		defer merging.Store(false)
+		if mergeSeam != nil {
+			mergeSeam(false)
+			defer mergeSeam(true)
+		}
+		o.mergeNow(user, path)
+	}()
+}
+
+func (o *Ops) mergeNow(user, path string) {
 	owner := locks.Owner(user, o.user.LockID())
 	hold := func(fn func() error) error {
 		if o.cfg.Locker == nil {
