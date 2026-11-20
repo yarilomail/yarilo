@@ -1066,9 +1066,10 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 	return newName, outGUID, nil
 }
 
-// appendUIDListLocked records one uid against one name and rewrites the list.
-// Caller holds the save section: the list, then the mailbox (#2184).
-func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename string, guidOverride bool, guid [16]byte) error {
+// appendUIDListLocked records one uid against one name. Caller holds the save
+// section: the list, then the mailbox (#2184). fresh says no list has seen the
+// name, so the row goes at the end without the list read to prove it (#2640).
+func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename string, fresh, guidOverride bool, guid [16]byte) error {
 	// The list maps a uid to a name, and a zero maps nothing (#1703).
 	if uid == 0 {
 		return fmt.Errorf("maildir/uidlist: refusing a record with no uid for %q", filename)
@@ -1092,13 +1093,20 @@ func (u *userMailbox) appendUIDListLocked(folder string, uid uint32, filename st
 	}
 	// The ordinary case is a name the list has never seen: one line at the end
 	// of the file, held for that write alone (#1840).
-	if u.listCanTakeRow(folder, base) {
+	cached := u.listCanTakeRow(folder, base)
+	if fresh || cached {
 		appended, aerr := u.appendUIDRowHeld(folder, rec)
 		if aerr != nil {
 			return aerr
 		}
 		if appended {
-			u.adoptRow(folder, base, uid, guid, guidOverride)
+			if cached {
+				u.adoptRow(folder, base, uid, guid, guidOverride)
+			} else {
+				// A cache that did not hold the list before the row cannot be
+				// made current by adding it: another writer's rows are missing.
+				u.folderCacheFor(folder).invalidateUIDs("own-write")
+			}
 			return nil
 		}
 	}

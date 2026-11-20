@@ -46,6 +46,9 @@ func TestAFoldNeverWritesIntoTheCachedBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rel()
+	if err := v.ensureRecords(); err != nil { // as a read of records does
+		t.Fatal(err)
+	}
 	if got := v.recordCount(); got != 31 {
 		t.Errorf("the view after the append holds %d records, want 31", got)
 	}

@@ -68,6 +68,15 @@ func (c *counter) load() int { c.mu.Lock(); defer c.mu.Unlock(); return c.n }
 func Folds() int     { return folds.load() }
 func MapCopies() int { return mapCopies.load() }
 
+// DropBaseImages forgets every cached parse of a base, as a process that has
+// just started holds none: for a measurement of a cold open.
+func DropBaseImages() {
+	baseImages.Range(func(k, _ any) bool {
+		baseImages.Delete(k)
+		return true
+	})
+}
+
 // ResetMapCounters zeroes both, for a row that counts one folder's work.
 func ResetMapCounters() {
 	folds.mu.Lock()
@@ -159,8 +168,10 @@ func (fs *folderState) releaseView(m *indexMap) {
 // publishRecords turns a forked view's writer into the map's: readers get a
 // snapshot of it, and the next fold writes on.
 func (m *indexMap) publishRecords() {
-	if m.view.recs == nil || m.img != nil && m.view.recs == m.img.recs {
-		return // decoded, or the shared image's records, which nobody writes
+	if m.view.recs == nil || m.img != nil && m.view.recs == m.img.recs || len(m.view.pending) > 0 {
+		// Decoded, the shared image's records, which nobody writes, or a
+		// view's own with pending, which ensureRecords replaces.
+		return
 	}
 	m.w = m.view.recs
 	m.view.recs = m.w.Snapshot()
@@ -173,18 +184,55 @@ var mapWaitSeam func(time.Duration)
 // sibling is a folderState for the next version of a view: the same folder,
 // header and records until the fold makes them its own.
 func (v *folderState) sibling() *folderState {
+	if v.isView {
+		v.pendMu.Lock()
+		defer v.pendMu.Unlock()
+	}
+	return v.siblingLocked()
+}
+
+// siblingLocked is sibling under v.pendMu: the records and what is pending on
+// them, unless ensureRecords applied it already.
+func (v *folderState) siblingLocked() *folderState {
+	s := v.siblingBase()
+	s.recs = v.recs
+	if !v.applied.Load() {
+		s.pending = append([][]byte(nil), v.pending...)
+		if v.pendingUIDs != nil {
+			s.pendingUIDs = make(map[uint32]struct{}, len(v.pendingUIDs))
+			for u := range v.pendingUIDs {
+				s.pendingUIDs[u] = struct{}{}
+			}
+		}
+		s.countersUnknown, s.pendingExpunge = v.countersUnknown, v.pendingExpunge
+	}
+	return s
+}
+
+// holdsRecords says the view has records, read under pendMu: a reader's
+// ensureRecords may be replacing them.
+func (v *folderState) holdsRecords() bool {
+	if v.isView {
+		v.pendMu.Lock()
+		defer v.pendMu.Unlock()
+	}
+	return v.recs != nil
+}
+
+func (v *folderState) siblingBase() *folderState {
 	return &folderState{
-		user:      v.user,
-		folder:    v.folder,
-		indexDir:  v.indexDir,
-		indexPath: v.indexPath,
-		traceID:   v.traceID,
-		file:      v.file,
-		recs:      v.recs,
-		keywords:  v.keywords,
-		lineage:   v.lineage,
-		logSize:   v.logSize,
-		vsize:     v.vsize,
+		user:        v.user,
+		folder:      v.folder,
+		indexDir:    v.indexDir,
+		indexPath:   v.indexPath,
+		traceID:     v.traceID,
+		file:        v.file,
+		keywords:    v.keywords,
+		lineage:     v.lineage,
+		logSize:     v.logSize,
+		vsize:       v.vsize,
+		isView:      v.isView,
+		baseNextUID: v.baseNextUID,
 	}
 }
 
@@ -269,7 +317,7 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	fs.mapMu.Unlock()
 	onWriter := false
 	switch {
-	case from.w != nil || from.view.recs != nil:
+	case from.w != nil || from.view.holdsRecords():
 		// Chunked: the next version writes through the map's writer, which
 		// copies only a chunk a live snapshot still shares (INDEX-MEMORY.md §4).
 		target = from.view.sibling()
@@ -277,17 +325,15 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 			fs.retire(from)
 			target.file, target.recs = cloneIndexFile(from.view.file), from.w
 			onWriter = true
-		} else if err := target.forkRecords(); err != nil {
-			return nil, err
+		} else {
+			target.forkRecords()
 		}
 	case shared:
 		// Somebody is reading these decoded records: they stay as they are,
 		// and the fold goes onto a copy (the reference's move-to-private).
 		mapCopies.add()
 		target = from.view.sibling()
-		if err := target.forkRecords(); err != nil {
-			return nil, err
-		}
+		target.forkRecords()
 	}
 
 	end, aerr := target.applyLogFrom(lg, from.committedEnd)

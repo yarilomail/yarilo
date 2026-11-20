@@ -573,7 +573,7 @@ func TestReadUIDList_CacheUpdatedAfterAppend(t *testing.T) {
 
 	// Append a second entry the way the uid cycle does.
 	fn2 := "second.file:2,"
-	if err := box.appendUIDListLocked("INBOX", 2, fn2, false, [16]byte{}); err != nil {
+	if err := box.appendUIDListLocked("INBOX", 2, fn2, false, false, [16]byte{}); err != nil {
 		t.Fatal(err)
 	}
 
