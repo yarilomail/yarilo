@@ -176,7 +176,7 @@ func sameLayout(a, b mailindex.RecordLayout) bool {
 		m := map[string]place{}
 		for _, e := range l.Extensions {
 			if e.RecordSize != 0 {
-				m[e.Name] = place{uint16(e.RecordOffset), uint16(e.RecordSize)}
+				m[e.Name] = place{e.RecordOffset, e.RecordSize}
 			}
 		}
 		return m
