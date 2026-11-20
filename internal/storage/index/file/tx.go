@@ -235,10 +235,11 @@ func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byt
 			fs.file.Header.NextUID = next + 1
 			op.meta.UID = next
 		}
-		if err := fs.appendLocked(op.meta); err != nil {
+		rec, err := fs.appendLockedWith(op.meta, nil)
+		if err != nil {
 			return nil, err
 		}
-		return fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+		return fs.appendLogRecords(rec)
 	case opMarkDirty:
 		return fs.markDirtyLocked(op.uid, op.dirty)
 	}
