@@ -589,6 +589,7 @@ type folderState struct {
 
 	file        *mailindex.File    // the wire-format snapshot
 	recs        *mailindex.Records // a view's lazy records; file.Records is then nil
+	onBase      bool               // a view whose records are the base's, with no tail on them
 	recordsLeft bool               // file holds the header only; the next locked use reads all
 	headerFixed bool               // the header was corrected from records in memory
 	keywords    keywordsHdr        // parsed keyword name registry
@@ -819,7 +820,9 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 		}
 		return u.evictIfGone(folderID, fs, err)
 	}
-	if view.recs != nil {
+	if view.onBase {
+		// Only a view the base alone holds: a handle dropping its records
+		// under one with a tail would read the base whole on every write.
 		fs.leaveRecordsOnDisk()
 	}
 	buildStart := time.Now()

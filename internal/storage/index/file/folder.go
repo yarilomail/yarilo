@@ -2494,6 +2494,11 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if err != nil {
 		return fromOffset, fmt.Errorf("fileindex/applylog: record layout: %w", err)
 	}
+	if fs.recs != nil && !sameLayout(fs.recs.Layout(), layout) {
+		if err := fs.decodeRecords(); err != nil {
+			return fromOffset, err
+		}
+	}
 
 	var maxModseq uint64
 	// EXT_HDR_UPDATE patches the extension the preceding intro named, as the
@@ -2571,14 +2576,8 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				if modseq > maxModseq {
 					maxModseq = modseq
 				}
-				for _, rec := range fs.file.Records {
-					if rec.UID == uid {
-						if rec.Ext == nil {
-							rec.Ext = make(map[string][]byte)
-						}
-						rec.Ext[extNameModSeq] = encodeModseqRec(modseq)
-						break
-					}
+				if seq, ok := fs.recSeqOfUID(uid); ok {
+					fs.recSetExt(seq, extNameModSeq, encodeModseqRec(modseq))
 				}
 			}
 
@@ -2588,16 +2587,15 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				uid2 := le.Uint32(payload[i+4:])
 				addFlags := mailindex.MailFlag(payload[i+8])
 				removeFlags := mailindex.MailFlag(payload[i+9])
-				for _, rec := range fs.file.Records {
-					if rec.UID >= uid1 && rec.UID <= uid2 {
-						old := rec.Flags
-						rec.Flags = (rec.Flags | addFlags) &^ removeFlags
-						// The counts move with the flags, as the reference's
-						// replay does (#1831).
-						fs.file.Header.SeenMessagesCount = moveCount(fs.file.Header.SeenMessagesCount, old, rec.Flags, mailindex.FlagSeen)
-						fs.file.Header.DeletedMessagesCount = moveCount(fs.file.Header.DeletedMessagesCount, old, rec.Flags, mailindex.FlagDeleted)
-					}
-				}
+				fs.recEachInRange(uid1, uid2, func(seq int) {
+					old := fs.recFlags(seq)
+					now := (old | addFlags) &^ removeFlags
+					fs.recSetFlags(seq, now)
+					// The counts move with the flags, as the reference's
+					// replay does (#1831).
+					fs.file.Header.SeenMessagesCount = moveCount(fs.file.Header.SeenMessagesCount, old, now, mailindex.FlagSeen)
+					fs.file.Header.DeletedMessagesCount = moveCount(fs.file.Header.DeletedMessagesCount, old, now, mailindex.FlagDeleted)
+				})
 			}
 
 		case kind == mailindex.TxTypeExpungeGUID|mailindex.TxType(mailindex.TxExpungeProt):
@@ -2616,19 +2614,16 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 						maxModseq = ms
 					}
 				}
-				for j, rec := range fs.file.Records {
-					if rec.UID != uid {
-						continue
-					}
-					if rec.Flags&mailindex.FlagSeen != 0 {
+				if seq, ok := fs.recSeqOfUID(uid); ok {
+					flags := fs.recFlags(seq)
+					if flags&mailindex.FlagSeen != 0 {
 						fs.file.Header.SeenMessagesCount--
 					}
-					if rec.Flags&mailindex.FlagDeleted != 0 {
+					if flags&mailindex.FlagDeleted != 0 {
 						fs.file.Header.DeletedMessagesCount--
 					}
-					fs.file.Records = append(fs.file.Records[:j], fs.file.Records[j+1:]...)
+					fs.recExpunge(seq)
 					fs.file.Header.MessagesCount--
-					break
 				}
 			}
 
@@ -2670,7 +2665,13 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				return committedEnd, fmt.Errorf("fileindex/applylog: torn extension intro at offset %d (%d payload bytes)",
 					recStart, len(payload))
 			}
-			// The header's bytes arrive in the EXT_HDR_UPDATE that follows.
+			// The header's bytes arrive in the EXT_HDR_UPDATE that follows. A
+			// new record width is decoded records' to take (INDEX-MEMORY.md §4).
+			if intro.RecordSize != 0 && fs.recs != nil {
+				if derr := fs.decodeRecords(); derr != nil {
+					return committedEnd, derr
+				}
+			}
 			if aerr := fs.file.AddRecordExtension(intro.Name, make([]byte, intro.HdrSize),
 				intro.RecordSize, intro.RecordAlign, intro.ResetID); aerr != nil {
 				return committedEnd, fmt.Errorf("fileindex/applylog: declare %q: %w", intro.Name, aerr)
@@ -2701,22 +2702,31 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 			if stride == 0 {
 				break
 			}
-			// Build a UID set from existing records for O(1) dedup.
-			existing := make(map[uint32]struct{}, len(fs.file.Records))
-			for _, r := range fs.file.Records {
-				existing[r.UID] = struct{}{}
+			// Decoded records keep no uid order to search, so a set for O(1) dedup.
+			var existing map[uint32]struct{}
+			if fs.recs == nil {
+				existing = make(map[uint32]struct{}, len(fs.file.Records))
+				for _, r := range fs.file.Records {
+					existing[r.UID] = struct{}{}
+				}
 			}
 			for i := 0; i+stride <= len(payload); i += stride {
 				rec, recErr := mailindex.DecodeRecord(payload[i:i+stride], layout)
 				if recErr != nil {
 					break
 				}
-				if _, dup := existing[rec.UID]; dup {
+				dup := false
+				if existing != nil {
+					_, dup = existing[rec.UID]
+					existing[rec.UID] = struct{}{}
+				} else {
+					_, dup = fs.recSeqOfUID(rec.UID)
+				}
+				if dup {
 					continue // already present from base file or earlier log replay
 				}
 				rp := rec
-				fs.file.Records = append(fs.file.Records, &rp)
-				existing[rp.UID] = struct{}{}
+				fs.recAppend(&rp, payload[i:i+stride])
 				// The append moves next_uid itself, as the reference's replay
 				// does, not only a header update (#1831).
 				if rp.UID >= fs.file.Header.NextUID {
@@ -2751,34 +2761,23 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 				return committedEnd, fmt.Errorf("fileindex/applylog: keyword registry: %w", regErr)
 			}
 			for _, r := range rec.UIDRanges {
-				for _, mr := range fs.file.Records {
-					if mr.UID < r.UID1 || mr.UID > r.UID2 {
-						continue
-					}
-					cur := decodeKeywordsRec(mr.Ext[extNameKeywords])
+				fs.recEachInRange(r.UID1, r.UID2, func(seq int) {
+					data, _ := fs.recExt(seq, extNameKeywords)
+					cur := decodeKeywordsRec(data)
 					if rec.ModifyType == mailindex.TxKeywordModifyRemove {
 						cur &^= bits
 					} else {
 						cur |= bits
 					}
-					if mr.Ext == nil {
-						mr.Ext = make(map[string][]byte)
-					}
-					mr.Ext[extNameKeywords] = encodeKeywordsRec(cur)
-				}
+					fs.recSetExt(seq, extNameKeywords, encodeKeywordsRec(cur))
+				})
 			}
 
 		case kind == mailindex.TxTypeKeywordReset:
 			for _, r := range mailindex.DecodeTxKeywordResetPayload(payload) {
-				for _, mr := range fs.file.Records {
-					if mr.UID < r.UID1 || mr.UID > r.UID2 {
-						continue
-					}
-					if mr.Ext == nil {
-						mr.Ext = make(map[string][]byte)
-					}
-					mr.Ext[extNameKeywords] = encodeKeywordsRec(0)
-				}
+				fs.recEachInRange(r.UID1, r.UID2, func(seq int) {
+					fs.recSetExt(seq, extNameKeywords, encodeKeywordsRec(0))
+				})
 			}
 
 		case kind == mailindex.TxTypeExpunge || kind == mailindex.TxTypeExpungeGUID:

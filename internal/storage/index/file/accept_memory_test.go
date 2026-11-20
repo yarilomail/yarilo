@@ -14,7 +14,7 @@ import (
 
 // INDEX-MEMORY.md §7, as the slope between two folders. A marked row that
 // starts passing fails, so the step that fixes it drops its mark.
-var acceptExpectedFail = map[int]bool{2: true, 3: true, 6: true, 7: true}
+var acceptExpectedFail = map[int]bool{2: true, 3: true, 7: true}
 
 const (
 	acceptSmall = 2000
@@ -35,6 +35,8 @@ func acceptance(t *testing.T, row int, ok bool, measured string) {
 		t.Logf("acceptance %d, expected to fail until its step lands: %s", row, measured)
 	case !ok:
 		t.Errorf("acceptance %d: %s", row, measured)
+	default:
+		t.Logf("acceptance %d: %s", row, measured)
 	}
 }
 

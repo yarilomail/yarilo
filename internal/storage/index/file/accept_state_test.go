@@ -72,6 +72,7 @@ func TestAcceptAChangeCopiesNoFolder(t *testing.T) {
 			if !ok {
 				t.Errorf("%s", measured)
 			}
+			t.Log(measured)
 			continue
 		}
 		acceptance(t, 6, ok, measured)

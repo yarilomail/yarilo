@@ -33,7 +33,7 @@ func TestAFoldNeverWritesIntoTheCachedBase(t *testing.T) {
 	fs.current = m
 	fs.mapMu.Unlock()
 
-	before, count := len(cached.file.Records), cached.file.Header.MessagesCount
+	before, count := imageRecords(cached), cached.file.Header.MessagesCount
 	uid, err := u.AllocateUID(folder.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -46,11 +46,18 @@ func TestAFoldNeverWritesIntoTheCachedBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rel()
-	if got := len(v.file.Records); got != 31 {
+	if got := v.recordCount(); got != 31 {
 		t.Errorf("the view after the append holds %d records, want 31", got)
 	}
-	if len(cached.file.Records) != before || cached.file.Header.MessagesCount != count {
+	if imageRecords(cached) != before || cached.file.Header.MessagesCount != count {
 		t.Errorf("the fold wrote into the cached base: %d records (count %d), it held %d (%d)",
-			len(cached.file.Records), cached.file.Header.MessagesCount, before, count)
+			imageRecords(cached), cached.file.Header.MessagesCount, before, count)
 	}
+}
+
+func imageRecords(img *baseImage) int {
+	if img.recs != nil {
+		return img.recs.Len()
+	}
+	return len(img.file.Records)
 }

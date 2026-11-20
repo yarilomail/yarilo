@@ -235,3 +235,33 @@ func TestReadersNeverSeeAChangeHalfWritten(t *testing.T) {
 	t.Logf("2000 changes: %d chunk copies, %d list copies; %d of %d reads found no published snapshot",
 		r.ChunkCopies(), r.ListCopies(), fallbacks, reads)
 }
+
+// A fork changes its own copy and never the records it was forked from, which
+// other readers keep reading; its own chunks it then changes in place.
+func TestAForkNeverWritesTheRecordsItCameFrom(t *testing.T) {
+	l := chunkLayout(t)
+	base, err := ChunksFromRecords(chunkRecs(l, 3*ChunkRecords), l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := base.Bytes()
+	f := base.Fork()
+	f.SetFlags(ChunkRecords+1, FlagFlagged)
+	f.SetFlags(ChunkRecords+2, FlagFlagged)
+	f.Append(cowRecord(l, 1<<20, FlagSeen))
+	f.Expunge(0)
+	if !bytes.Equal(base.Bytes(), want) {
+		t.Fatal("a change to the fork reached the records it came from")
+	}
+	if f.ChunkCopies() != 2 {
+		t.Errorf("the fork copied %d chunks, want 2: chunk 1 it changed twice and chunk 0 it expunged from; the append starts a chunk of its own", f.ChunkCopies())
+	}
+	if f.Flags(ChunkRecords) != FlagFlagged || f.Len() != 3*ChunkRecords {
+		t.Errorf("the fork reads flags %d at its record %d and holds %d", f.Flags(ChunkRecords), ChunkRecords, f.Len())
+	}
+	before := f.ChunkCopies()
+	f.SetFlags(ChunkRecords, FlagAnswered)
+	if f.ChunkCopies() != before {
+		t.Error("the fork copied a chunk it already owns")
+	}
+}
