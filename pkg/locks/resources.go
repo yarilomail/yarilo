@@ -68,6 +68,10 @@ func SieveScriptsKey(user string) string { return "sieve:" + user }
 // conversation.
 func ThreadsKey(user string) string { return "threads:" + user }
 
+// ThreadsMergeKey returns the lock key for merging a user's thread log into
+// its base: one merge at a time, without the ThreadsKey a delivery waits on.
+func ThreadsMergeKey(user string) string { return "threads-merge:" + user }
+
 // SubscriptionsKey returns the lock key for a user's mailbox-subscription
 // file (LIST-EXTENDED §SELECT SUBSCRIBED / RETURN SUBSCRIBED). Independent
 // of mailbox keys - subscribe is metadata, never racing with mail writes.

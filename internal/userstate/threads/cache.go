@@ -125,6 +125,29 @@ func (c *Cache) Note(user, path string) {
 	}
 }
 
+// Applied brings a cached account up to a placement this process just wrote:
+// the cached state takes it when it was current for the file as it stood
+// before the write (before), and is dropped otherwise. A delivery writes the
+// pair without the cached maps, and Note alone would mark them current.
+func (c *Cache) Applied(user, path string, before os.FileInfo, p Placement) {
+	fi, err := os.Stat(path)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[user]
+	if !ok {
+		return
+	}
+	current := before == nil && e.size == 0 ||
+		before != nil && e.size == before.Size() && e.modTime.Equal(before.ModTime())
+	if !current || err != nil {
+		delete(c.entries, user)
+		return
+	}
+	e.state.applyPlacement(p)
+	e.size, e.modTime = fi.Size(), fi.ModTime()
+	e.lastUsed = time.Now()
+}
+
 // Forget drops an account, for a caller that knows the state on disk was
 // replaced wholesale -- the migration step rebuilding it, say.
 func (c *Cache) Forget(user string) {

@@ -384,6 +384,9 @@ func (s *Server) threadRenamed(h *userHandle, old jmapcore.Description, nowGen, 
 	}
 	path := threads.PathFor(h.info)
 	ch, err := threads.ChangesSince(path, int(since))
+	if errors.Is(err, threads.ErrBeforeBase) {
+		return nil, cannotCalculate("the threading history was merged past that state")
+	}
 	if err != nil {
 		return nil, storeFailure("Email/changes threads", accountID, err)
 	}

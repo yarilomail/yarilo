@@ -1281,6 +1281,10 @@ type ThreadingConfig struct {
 	// ThreadingCacheIdle: seconds an account's fold is kept after its last use (#1396).
 	// Unset 300; 0 never caches.
 	ThreadingCacheIdle int `koanf:"threading_cache_idle"`
+	// ThreadingTailSize is the thread log's size past which it is merged into
+	// its sorted base; unset 128 KiB, "0" never merges (#2641).
+	ThreadingTailSize    int64  `koanf:"-"` // resolved from ThreadingTailSizeRaw at load
+	ThreadingTailSizeRaw string `koanf:"threading_tail_size"`
 }
 
 // CacheIdle reports the fold cache's idle period.
@@ -3003,6 +3007,7 @@ func Defaults() *Config {
 	}
 	c.Threading.Enabled = true
 	c.Threading.ThreadingCacheIdle = 300
+	c.Threading.ThreadingTailSizeRaw = "128k"
 	c.Storage.LockStaleTimeout = 180
 	c.Storage.MailCachePurgeDeletePercentage = 20
 	c.Storage.MailCachePurgeContinuedPercentage = 200
@@ -3348,6 +3353,7 @@ func (cfg *Config) validate() error {
 	resolve("storage.mail_index_log_rotate_min_size", cfg.Storage.MailIndexLogRotateMinSizeRaw, &cfg.Storage.MailIndexLogRotateMinSize)
 	resolve("storage.mail_index_log_rotate_max_size", cfg.Storage.MailIndexLogRotateMaxSizeRaw, &cfg.Storage.MailIndexLogRotateMaxSize)
 	resolve("storage.mail_cache_purge_min_size", cfg.Storage.MailCachePurgeMinSizeRaw, &cfg.Storage.MailCachePurgeMinSize)
+	resolve("threading.threading_tail_size", cfg.Threading.ThreadingTailSizeRaw, &cfg.Threading.ThreadingTailSize)
 	resolve("protocol.jmap.jmap_max_size_upload", cfg.Protocol.JMAP.MaxSizeUploadRaw, &cfg.Protocol.JMAP.MaxSizeUpload)
 	resolve("protocol.jmap.jmap_max_size_request", cfg.Protocol.JMAP.MaxSizeRequestRaw, &cfg.Protocol.JMAP.MaxSizeRequest)
 	resolve("protocol.jmap.jmap_max_body_value_bytes", cfg.Protocol.JMAP.MaxBodyValueBytesRaw, &cfg.Protocol.JMAP.MaxBodyValueBytes)

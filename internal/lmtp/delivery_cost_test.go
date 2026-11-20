@@ -27,13 +27,10 @@ const (
 )
 
 // costExpectedFail marks the drivers whose delivery still reads something
-// whole: the thread file on all three (#2641), maildir's uid list for its
-// header, mdbox's map (#2642). A marked driver that starts passing fails, so
+// whole: mdbox's map (#2642). A marked driver that starts passing fails, so
 // the fix that frees it drops its mark.
 var costExpectedFail = map[string]string{
-	"maildir": "#2641",
-	"sdbox":   "#2641",
-	"mdbox":   "#2641 and #2642",
+	"mdbox": "#2642",
 }
 
 type costDriver struct {
@@ -96,6 +93,11 @@ func deliveryCost(t *testing.T, d costDriver, n int) uint64 {
 	}
 	box.Close() //nolint:errcheck
 	ui.Close()  //nolint:errcheck
+	// The thread log merged, as a merge leaves it: what a delivery reads of it
+	// is bounded by threading_tail_size, and not the folder's to measure.
+	if err := threads.MergeStore(threads.PathFor(info), func(fn func() error) error { return fn() }); err != nil {
+		t.Fatal(err)
+	}
 
 	fileindex.DropBaseImages()
 	// As RCPT TO left it from the userdb: the driver is the user's.

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/sortedfile"
@@ -39,7 +40,13 @@ type Store struct {
 	// swapOwed says the log is the previous generation's: a merge renamed
 	// this base and stopped before swapping the log.
 	swapOwed bool
+	// keepLog asks readTail to keep the records it applies, in order, for
+	// ChangesSince; log holds them.
+	keepLog bool
+	log     []tailRecord
 }
+
+type tailRecord struct{ typ, key, val string }
 
 // ErrPairBroken says the tail continues no base this store can open with it.
 var ErrPairBroken = errors.New("threads: the log continues another base")
@@ -60,9 +67,11 @@ var betweenOpens func()
 // today's account: the log is the whole history. A log newer than the base
 // opened is a base that moved in between: the pair is opened again, and only
 // a mismatch that stays is ErrPairBroken.
-func OpenStore(path string) (*Store, error) {
+func OpenStore(path string) (*Store, error) { return openStore(path, false) }
+
+func openStore(path string, keepLog bool) (*Store, error) {
 	for attempt := 1; ; attempt++ {
-		s, err := openStoreOnce(path)
+		s, err := openStoreOnce(path, keepLog)
 		if !errors.Is(err, errBaseBehind) {
 			return s, err
 		}
@@ -72,8 +81,8 @@ func OpenStore(path string) (*Store, error) {
 	}
 }
 
-func openStoreOnce(path string) (*Store, error) {
-	s := &Store{path: path}
+func openStoreOnce(path string, keepLog bool) (*Store, error) {
+	s := &Store{path: path, keepLog: keepLog}
 	base, err := sortedfile.Open(path + BaseSuffix)
 	switch {
 	case err == nil:
@@ -147,6 +156,9 @@ func (s *Store) readTail() error {
 				s.tail.apply(string(fields[0]), string(fields[1]), string(fields[2]))
 				if string(fields[0]) != recGen {
 					s.tailRecords++
+					if s.keepLog {
+						s.log = append(s.log, tailRecord{string(fields[0]), string(fields[1]), string(fields[2])})
+					}
 				}
 			}
 			s.tailEnd = off
@@ -235,6 +247,13 @@ func (s *Store) ThreadOfGUID(guid string) (string, bool, error) {
 // swap runs under hold, which takes the lock and copies what arrived since
 // (THREADS-STORE.md §4, §5). The caller holds the merge's own lock.
 func MergeStore(path string, hold func(func() error) error) error {
+	// One merge a path in this process: the caller's lock covers the others.
+	v, _ := merging.LoadOrStore(path, &sync.Mutex{})
+	mu, _ := v.(*sync.Mutex)
+	if !mu.TryLock() {
+		return nil
+	}
+	defer mu.Unlock()
 	basePath := path + BaseSuffix
 	if _, err := sortedfile.RemoveTemps(basePath); err != nil {
 		return err
@@ -268,7 +287,14 @@ func MergeStore(path string, hold func(func() error) error) error {
 	if err != nil {
 		return err
 	}
-	resolve := func(v []byte) []byte { return []byte(s.resolve(string(v))) }
+	// Only a value an alias names is rewritten: the rest pass as read, with
+	// nothing allocated a base entry.
+	resolve := func(v []byte) []byte {
+		if _, aliased := s.tail.aliasOf[string(v)]; !aliased {
+			return v
+		}
+		return []byte(s.resolve(string(v)))
+	}
 	for _, sec := range []struct {
 		id uint32
 		m  map[string]string
@@ -318,6 +344,8 @@ func logGeneration(path string) uint64 {
 	}
 	return 0
 }
+
+var merging sync.Map // path -> *sync.Mutex
 
 // mergeSwapSeam is a test seam: a merge stopped after the base's rename and
 // before the log's swap. Nil elsewhere.
@@ -384,4 +412,82 @@ func removeTailTemps(path string) (int, error) {
 		}
 	}
 	return len(left), nil
+}
+
+// baseRecords is how many records the base stands for: the first positions of
+// a Thread state in this generation (Load counts the same).
+func (s *Store) baseRecords() int {
+	if s.base == nil {
+		return 0
+	}
+	n := 0
+	for _, id := range baseSections {
+		n += int(s.base.Count(id))
+	}
+	return n
+}
+
+// ErrBeforeBase says a position names records the base absorbed: what
+// changed since then is folded away, and the client starts again.
+var ErrBeforeBase = errors.New("threads: the position is before the base's records")
+
+// changesSincePair is ChangesSince over a base and its log: the base's records
+// come first, the log's after them, counted as Load counts them. A thread
+// a G record names after its own message was created by it; any other was
+// there before, in the base or the log (#2649).
+func changesSincePair(path string, since int) (Changes, error) {
+	s, err := openStore(path, true)
+	if err != nil {
+		return Changes{}, err
+	}
+	defer s.Close() //nolint:errcheck
+	ch := Changes{Generation: s.base.Generation}
+	n := s.baseRecords()
+	if since < n {
+		ch.Head = n + s.tailRecords
+		return ch, ErrBeforeBase
+	}
+	known := map[string]bool{}
+	created := map[string]bool{}
+	updated := map[string]bool{}
+	destroyed := map[string]bool{}
+	for _, r := range s.log {
+		n++
+		if n <= since {
+			switch r.typ {
+			case recGUID:
+				known[r.val] = true
+			case recAlias:
+				delete(known, r.key)
+			}
+			continue
+		}
+		switch r.typ {
+		case recGUID:
+			if known[r.val] || created[r.val] || r.val != r.key {
+				if !created[r.val] {
+					updated[r.val] = true
+				}
+			} else {
+				created[r.val] = true
+			}
+			known[r.val] = true
+		case recAlias:
+			if created[r.key] {
+				delete(created, r.key)
+			} else {
+				destroyed[r.key] = true
+			}
+			delete(updated, r.key)
+			if !created[r.val] {
+				updated[r.val] = true
+			}
+			known[r.val] = true
+		}
+	}
+	ch.Head = n
+	ch.Created = sortedKeys(created)
+	ch.Updated = sortedKeys(updated)
+	ch.Destroyed = sortedKeys(destroyed)
+	return ch, nil
 }
