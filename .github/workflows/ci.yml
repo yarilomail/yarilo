@@ -73,6 +73,9 @@ jobs:
     if: github.event_name == 'push'
     needs: [gate]
     runs-on: [self-hosted, linux]
+    ## Three bounded pushes of each of the three tags are an hour and a half
+    ## at worst; the rest is the build and the scan. The default is six hours.
+    timeout-minutes: 120
     concurrency:
       group: build-main-${{ github.ref }}
       cancel-in-progress: false
