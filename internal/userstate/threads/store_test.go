@@ -239,3 +239,65 @@ func TestALogOfAnotherGenerationIsRefused(t *testing.T) {
 		t.Errorf("a log of generation 40 opened with %v, want ErrPairBroken", err)
 	}
 }
+
+// Two merges in a row that stop before the log's swap: the second finishes
+// the first's swap before it merges, so the pair still opens and answers,
+// and the next merge goes through.
+func TestTwoStoppedMergesInARowLeaveAPairThatOpens(t *testing.T) {
+	h := newHistory(t, 11)
+	for round := 0; round < 2; round++ {
+		for i := 0; i < 40; i++ {
+			h.place()
+		}
+		mergeSwapSeam = func() error { return errors.New("stopped before the swap") }
+		err := MergeStore(h.store, direct)
+		mergeSwapSeam = nil
+		if err == nil {
+			t.Fatalf("round %d: the stopped merge reported success", round)
+		}
+		h.check(fmt.Sprintf("after stopped merge %d", round+1))
+	}
+	for i := 0; i < 5; i++ {
+		h.place()
+	}
+	if err := MergeStore(h.store, direct); err != nil {
+		t.Fatalf("the merge after two stopped ones: %v", err)
+	}
+	h.check("after the merge that went through")
+}
+
+// A reader that opened the base just before a merge renamed a new one, and
+// reads the merge's new log, opens the pair again rather than refusing it.
+func TestAReaderCaughtBetweenAMergesFilesOpensThePairAgain(t *testing.T) {
+	h := newHistory(t, 12)
+	for i := 0; i < 30; i++ {
+		h.place()
+	}
+	if err := MergeStore(h.store, direct); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		h.place()
+	}
+	merged := false
+	betweenOpens = func() {
+		if merged {
+			return
+		}
+		merged = true
+		if err := MergeStore(h.store, direct); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() { betweenOpens = nil }()
+	s, err := OpenStore(h.store)
+	if err != nil {
+		t.Fatalf("a reader caught by a merge: %v", err)
+	}
+	s.Close() //nolint:errcheck
+	if !merged {
+		t.Fatal("the merge did not run between the opens")
+	}
+	betweenOpens = nil
+	h.check("after the merge between the opens")
+}

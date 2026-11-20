@@ -36,14 +36,43 @@ type Store struct {
 	// records it applied from it.
 	tailEnd     int64
 	tailRecords int
+	// swapOwed says the log is the previous generation's: a merge renamed
+	// this base and stopped before swapping the log.
+	swapOwed bool
 }
 
 // ErrPairBroken says the tail continues no base this store can open with it.
 var ErrPairBroken = errors.New("threads: the log continues another base")
 
+// pairAttempts bounds the reopens a reader makes when a merge finishes
+// between its opening the base and reading the log.
+const pairAttempts = 3
+
+// errBaseBehind says the log is newer than the base this reader opened: a
+// merge renamed a new base in between, and the pair is opened again.
+var errBaseBehind = errors.New("threads: the log continues a newer base than the one opened")
+
+// betweenOpens is a test seam: a merge finishing after the base is opened
+// and before the log is read. Nil elsewhere.
+var betweenOpens func()
+
 // OpenStore opens the pair at path (the log) and path+BaseSuffix. No base is
-// today's account: the log is the whole history.
+// today's account: the log is the whole history. A log newer than the base
+// opened is a base that moved in between: the pair is opened again, and only
+// a mismatch that stays is ErrPairBroken.
 func OpenStore(path string) (*Store, error) {
+	for attempt := 1; ; attempt++ {
+		s, err := openStoreOnce(path)
+		if !errors.Is(err, errBaseBehind) {
+			return s, err
+		}
+		if attempt >= pairAttempts {
+			return nil, fmt.Errorf("%w: %w", ErrPairBroken, err)
+		}
+	}
+}
+
+func openStoreOnce(path string) (*Store, error) {
 	s := &Store{path: path}
 	base, err := sortedfile.Open(path + BaseSuffix)
 	switch {
@@ -52,6 +81,9 @@ func OpenStore(path string) (*Store, error) {
 	case errors.Is(err, os.ErrNotExist):
 	default:
 		return nil, err
+	}
+	if betweenOpens != nil {
+		betweenOpens()
 	}
 	if err := s.readTail(); err != nil {
 		s.Close() //nolint:errcheck
@@ -103,6 +135,9 @@ func (s *Store) readTail() error {
 					case gen == s.base.Generation:
 					case gen+1 == s.base.Generation:
 						from = int64(s.base.Absorbed)
+						s.swapOwed = true
+					case gen > s.base.Generation:
+						return fmt.Errorf("%w: log generation %d, base %d", errBaseBehind, gen, s.base.Generation)
 					default:
 						return fmt.Errorf("%w: log generation %d, base %d", ErrPairBroken, gen, s.base.Generation)
 					}
@@ -211,6 +246,19 @@ func MergeStore(path string, hold func(func() error) error) error {
 	if err != nil {
 		return err
 	}
+	// A merge that stopped after its base's rename owes the log its swap:
+	// finished first, or this merge would write a base two generations past
+	// that log, a pair nothing opens.
+	if s.swapOwed {
+		gen, absorbed := s.base.Generation, int64(s.base.Absorbed)
+		s.Close() //nolint:errcheck
+		if err := hold(func() error { return finishSwap(path, gen, absorbed) }); err != nil {
+			return err
+		}
+		if s, err = OpenStore(path); err != nil {
+			return err
+		}
+	}
 	defer s.Close() //nolint:errcheck
 	gen := s.tail.generation + 1
 	if s.base != nil {
@@ -243,6 +291,32 @@ func MergeStore(path string, hold func(func() error) error) error {
 		}
 	}
 	return hold(func() error { return swapTail(path, gen, s.tailEnd) })
+}
+
+// finishSwap swaps the log a stopped merge left, under the caller's hold: only
+// when the log is still the generation before gen, as another process may
+// have finished it first.
+func finishSwap(path string, gen uint64, absorbed int64) error {
+	if logGeneration(path) != gen-1 {
+		return nil
+	}
+	return swapTail(path, gen, absorbed)
+}
+
+// logGeneration is the generation the log's first record names; 0 for none.
+func logGeneration(path string) uint64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close() //nolint:errcheck
+	line, _ := bufio.NewReader(f).ReadString('\n')
+	fields := bytes.Split([]byte(line), []byte("\t"))
+	if len(fields) == 3 && string(fields[0]) == recGen {
+		g, _ := strconv.ParseUint(string(fields[1]), 10, 64)
+		return g
+	}
+	return 0
 }
 
 // mergeSwapSeam is a test seam: a merge stopped after the base's rename and
