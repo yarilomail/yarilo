@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/maildir"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
@@ -112,4 +114,79 @@ func readFile(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// counterValue is a counter's value from the default registry.
+func counterValue(t *testing.T, name string) float64 {
+	t.Helper()
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() == name {
+			var v float64
+			for _, m := range mf.GetMetric() {
+				v += m.GetCounter().GetValue()
+			}
+			return v
+		}
+	}
+	return 0
+}
+
+// A delivery after one that recorded the list's stamp takes its UID space
+// from the index, not from the list (#2643); a row another writer appended
+// changes the stamp, and the next delivery reads the list and goes past it.
+func TestAMaildirDeliveryReadsTheListOnlyWhenItMoved(t *testing.T) {
+	d := costDrivers[0]
+	resolver := &mailbox.Resolver{Root: t.TempDir(), HomeTemplate: "%d/%n", DefaultQuotaRules: []string{"*:storage=10G"}}
+	info, err := resolver.UserInfo("alice@example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info.Driver = d.name
+	deliver := func(i int) uint32 {
+		t.Helper()
+		s := &session{opts: costOptions(d, resolver), from: "s@x", rcpts: []string{info.Username},
+			rcptUserInfo: map[string]*mailbox.UserInfo{info.Username: info}}
+		sink := &statusSink{}
+		if err := s.LMTPData(strings.NewReader(costMessage(i)), sink); err != nil || sink.errs[info.Username] != nil {
+			t.Fatalf("deliver %d: %v %v", i, err, sink.errs[info.Username])
+		}
+		check := s.opts.Index.OpenUser(info)
+		defer check.Close() //nolint:errcheck
+		f, err := check.OpenFolder("INBOX", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f.NextUID - 1
+	}
+	// The first writes the list whole, the second reads it and records it.
+	deliver(0)
+	deliver(1)
+	aligned := counterValue(t, "maildir_uidlist_stamp_aligned_total")
+	deliver(2)
+	deliver(3)
+	if got := counterValue(t, "maildir_uidlist_stamp_aligned_total") - aligned; got != 2 {
+		t.Errorf("%v of two deliveries took the UID space from the index", got)
+	}
+
+	// Another writer's row, past every uid the index handed out.
+	list := uidListOf(t, info.Home)
+	f, err := os.OpenFile(list, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("90 :1700000000.M1P1.other\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close() //nolint:errcheck
+	aligned = counterValue(t, "maildir_uidlist_stamp_aligned_total")
+	if uid := deliver(4); uid <= 90 {
+		t.Errorf("the delivery after another writer's row took uid %d, at or below its 90", uid)
+	}
+	if got := counterValue(t, "maildir_uidlist_stamp_aligned_total") - aligned; got != 0 {
+		t.Errorf("a list another writer moved was taken on the index's word %v times", got)
+	}
 }

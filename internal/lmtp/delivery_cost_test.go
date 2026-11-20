@@ -31,7 +31,7 @@ const (
 // header, mdbox's map (#2642). A marked driver that starts passing fails, so
 // the fix that frees it drops its mark.
 var costExpectedFail = map[string]string{
-	"maildir": "#2641 and the uid list's header",
+	"maildir": "#2641",
 	"sdbox":   "#2641",
 	"mdbox":   "#2641 and #2642",
 }
