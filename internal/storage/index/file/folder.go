@@ -1292,7 +1292,7 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 
 // appendLockedWith appends m with extra record extensions set, and returns the
 // record as journalled. The record reaches memory through the one replay.
-func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string][]byte) (*mailindex.Record, error) {
+func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string][]byte) ([]byte, error) {
 	if m.UID == 0 {
 		return nil, fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
 	}
@@ -1334,31 +1334,32 @@ func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string
 	if m.AltTier {
 		flags |= mailindex.FlagBackend
 	}
-	rec := &mailindex.Record{
-		UID:   m.UID,
-		Flags: flags,
-		Ext: map[string][]byte{
-			extNameModSeq:       encodeModseqRec(modseq),
-			extNameKeywords:     encodeKeywordsRec(kwBits),
-			extNameInternalDate: encodeIdateRec(m.InternalDate),
-			extNameVsize:        encodeVsizeRec(m.RFC822Size()),
-			extNameGUID:         encodeGUIDRec(m.GUID),
-		},
-	}
+	// The extensions first, then the record in the layout they leave.
 	if m.MapUID != 0 {
-		rec.Ext[extNameMdbox] = encodeMdboxRec(m.MapUID, m.SaveDate)
 		fs.ensureMdboxExtLocked()
-	}
-	if m.VirtualBacking != 0 {
-		rec.Ext[extNameVirtual] = encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID)
 	}
 	if err := fs.ensureVsizeExtLocked(); err != nil {
 		slog.Warn("fileindex: vsize extension not declared", "folder", fs.folder, "err", err)
 	}
-	for name, v := range extra {
-		rec.Ext[name] = v
+	rec, err := fs.newRecord(m.UID, flags)
+	if err != nil {
+		return nil, err
 	}
-	recs, err := fs.appendRecords(rec)
+	rec.set(extNameModSeq, encodeModseqRec(modseq))
+	rec.set(extNameKeywords, encodeKeywordsRec(kwBits))
+	rec.set(extNameInternalDate, encodeIdateRec(m.InternalDate))
+	rec.set(extNameVsize, encodeVsizeRec(m.RFC822Size()))
+	rec.set(extNameGUID, encodeGUIDRec(m.GUID))
+	if m.MapUID != 0 {
+		rec.set(extNameMdbox, encodeMdboxRec(m.MapUID, m.SaveDate))
+	}
+	if m.VirtualBacking != 0 {
+		rec.set(extNameVirtual, encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID))
+	}
+	for name, v := range extra {
+		rec.set(name, v)
+	}
+	recs, err := fs.appendRecords(rec.raw)
 	if err != nil {
 		return nil, err
 	}
@@ -1371,7 +1372,7 @@ func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string
 		fs.vsize.HighestUID = m.UID
 	}
 	m.ModSeq = modseq
-	return rec, nil
+	return rec.raw, nil
 }
 
 // UpdateFlags replaces the flag set + keyword set for one UID.
@@ -2874,48 +2875,31 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 		if stride == 0 {
 			return nil
 		}
-		// The writer's own appends were found absent before they were built.
-		// Otherwise decoded records keep no uid order to search, so a set,
-		// built once for the payload. The header's next uid is no proof: a
-		// stale header is what a replay may be healing.
-		var existing map[uint32]struct{}
+		// The writer's own appends were found absent before they were built;
+		// any other is searched for in the chunks' uid order. The header's
+		// next uid is no proof: a stale header is what a replay may be healing.
 		for i := 0; i+stride <= len(payload); i += stride {
-			rec, recErr := mailindex.DecodeRecord(payload[i:i+stride], st.layout)
-			if recErr != nil {
+			raw := payload[i : i+stride]
+			uid, flags := le.Uint32(raw), mailindex.MailFlag(raw[4])
+			if uid == 0 {
 				break
 			}
-			dup := false
-			switch {
-			case st.checked:
-			case fs.recs != nil:
-				_, dup = fs.recSeqOfUID(rec.UID)
-			default:
-				if existing == nil {
-					existing = make(map[uint32]struct{}, len(fs.file.Records))
-					for _, r := range fs.file.Records {
-						existing[r.UID] = struct{}{}
-					}
+			if !st.checked {
+				if _, dup := fs.recSeqOfUID(uid); dup {
+					continue // already present from base file or earlier log replay
 				}
-				_, dup = existing[rec.UID]
 			}
-			if existing != nil {
-				existing[rec.UID] = struct{}{}
-			}
-			if dup {
-				continue // already present from base file or earlier log replay
-			}
-			rp := rec
-			fs.recAppend(&rp, payload[i:i+stride])
+			fs.recAppend(uid, raw)
 			// The append moves next_uid itself, as the reference's replay
 			// does, not only a header update (#1831).
-			if rp.UID >= fs.file.Header.NextUID {
-				fs.file.Header.NextUID = rp.UID + 1
+			if uid >= fs.file.Header.NextUID {
+				fs.file.Header.NextUID = uid + 1
 			}
 			fs.file.Header.MessagesCount++
-			if rp.Flags&mailindex.FlagSeen != 0 {
+			if flags&mailindex.FlagSeen != 0 {
 				fs.file.Header.SeenMessagesCount++
 			}
-			if rp.Flags&mailindex.FlagDeleted != 0 {
+			if flags&mailindex.FlagDeleted != 0 {
 				fs.file.Header.DeletedMessagesCount++
 			}
 		}
@@ -3012,9 +2996,9 @@ func (fs *folderState) truncateLog(logPath string, committedEnd, readEnd int64) 
 }
 
 // flushAppend persists a newly appended record and updates the names sidecar;
-// rec must be the last element of fs.file.Records. Caller holds fs.mu.
-func (fs *folderState) flushAppend(rec *mailindex.Record) error {
-	records, err := fs.appendLogRecords(rec)
+// raw is the record as journalled. Caller holds fs.mu.
+func (fs *folderState) flushAppend(raw []byte) error {
+	records, err := fs.appendLogRecords(raw)
 	if err != nil {
 		return err
 	}
@@ -3026,43 +3010,48 @@ func (fs *folderState) flushAppend(rec *mailindex.Record) error {
 // appendRecords is the journal of appending rec: the header it carries is the
 // one the append leaves, so the replay that applies it and the header updates
 // agree.
-func (fs *folderState) appendRecords(rec *mailindex.Record) ([][]byte, error) {
+func (fs *folderState) appendRecords(raw []byte) ([][]byte, error) {
+	uid, flags := binary.LittleEndian.Uint32(raw), mailindex.MailFlag(raw[4])
 	h := fs.file.Header
 	h.MessagesCount++
-	if rec.Flags&mailindex.FlagSeen != 0 {
+	if flags&mailindex.FlagSeen != 0 {
 		h.SeenMessagesCount++
 	}
-	if rec.Flags&mailindex.FlagDeleted != 0 {
+	if flags&mailindex.FlagDeleted != 0 {
 		h.DeletedMessagesCount++
 	}
-	if rec.UID >= h.NextUID {
-		h.NextUID = rec.UID + 1
+	if uid >= h.NextUID {
+		h.NextUID = uid + 1
 	}
-	return fs.appendLogRecordsWith(rec, h)
+	return fs.appendLogRecordsWith(raw, h)
 }
 
-func (fs *folderState) appendLogRecords(rec *mailindex.Record) ([][]byte, error) {
-	return fs.appendLogRecordsWith(rec, fs.file.Header)
+func (fs *folderState) appendLogRecords(raw []byte) ([][]byte, error) {
+	return fs.appendLogRecordsWith(raw, fs.file.Header)
 }
 
-func (fs *folderState) appendLogRecordsWith(rec *mailindex.Record, h mailindex.Header) ([][]byte, error) {
+func (fs *folderState) appendLogRecordsWith(raw []byte, h mailindex.Header) ([][]byte, error) {
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
 	if err != nil {
 		return nil, fmt.Errorf("fileindex/append: layout: %w", err)
 	}
-	appendPayload, err := mailindex.EncodeTxAppendPayload(layout, []*mailindex.Record{rec})
-	if err != nil {
-		return nil, fmt.Errorf("fileindex/append: encode: %w", err)
+	if len(raw) != int(layout.RecordSize) {
+		return nil, fmt.Errorf("fileindex/append: a %d-byte record in a %d-byte layout", len(raw), layout.RecordSize)
 	}
+	uid := binary.LittleEndian.Uint32(raw)
 	// Emit a TxModseqUpdate alongside the append, or a cross-process reader's
 	// applyLog never advances HighestModSeq from it -- only TxModseqUpdate
 	// feeds the header, not the append's own record-level modseq -- leaving it
 	// stale for other sessions and breaking CONDSTORE HIGHESTMODSEQ.
-	modseq := decodeModseqRec(rec.Ext[extNameModSeq])
+	var modseq uint64
+	if id, ok := layout.ExtID(extNameModSeq); ok {
+		e := layout.Extensions[id]
+		modseq = decodeModseqRec(raw[e.RecordOffset : e.RecordOffset+e.RecordSize])
+	}
 	return [][]byte{
-		encLogRec(mailindex.TxTypeAppend, 0, appendPayload),
+		encLogRec(mailindex.TxTypeAppend, 0, append([]byte(nil), raw...)),
 		encLogRec(mailindex.TxTypeModseqUpdate, 0, mailindex.EncodeTxModseqUpdatePayload([]mailindex.TxModseqUpdate{{
-			UID: rec.UID, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
+			UID: uid, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
 		}})),
 		encU32Update(28, h.NextUID),
 		encU32Update(32, h.MessagesCount),

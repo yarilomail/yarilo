@@ -40,10 +40,6 @@ var (
 	buildViewSeam func() error
 )
 
-// decodedImages is a test seam: images decoded whole, as before the lazy
-// form, so a row can compare the two. False everywhere else.
-var decodedImages bool
-
 // afterViewImage is a test seam: the base and log replaced between the image a
 // view is built on and the log it opens. Nil everywhere else.
 var afterViewImage func()
@@ -55,7 +51,7 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cached, ok := baseImages.Load(fs.indexPath); ok && !decodedImages {
+	if cached, ok := baseImages.Load(fs.indexPath); ok {
 		img, _ := cached.(*baseImage)
 		if img != nil && img.ident != nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
 			return img, nil
@@ -67,10 +63,6 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	for attempt := 0; ; attempt++ {
 		pre := st
 		parsed, recs, perr := mailindex.OpenLazy(fs.indexPath)
-		if decodedImages {
-			parsed, perr = mailindex.Open(fs.indexPath)
-			recs = nil
-		}
 		if perr != nil {
 			return nil, asCorrupt(fs.folder, perr)
 		}
@@ -108,9 +100,7 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if err := orderImage(img, fs.indexPath); err != nil {
 		return nil, err
 	}
-	if !decodedImages {
-		baseImages.Store(fs.indexPath, img)
-	}
+	baseImages.Store(fs.indexPath, img)
 	return img, nil
 }
 
@@ -230,23 +220,11 @@ func (fs *folderState) imageAndItsLog() (*baseImage, *logReader, error) {
 	}
 }
 
-// cloneIndexFile copies what a replay writes into: the records and their
-// extension data. The header and extension list are copied by value.
+// cloneIndexFile copies what a replay writes into besides the records: the
+// header, the extension list and the extensions' header data.
 func cloneIndexFile(src *mailindex.File) *mailindex.File {
 	out := *src
-	out.Records = make([]*mailindex.Record, len(src.Records))
-	for i, rec := range src.Records {
-		cp := *rec
-		if rec.Ext != nil {
-			cp.Ext = make(map[string][]byte, len(rec.Ext))
-			for k, v := range rec.Ext {
-				b := make([]byte, len(v))
-				copy(b, v)
-				cp.Ext[k] = b
-			}
-		}
-		out.Records[i] = &cp
-	}
+	out.Records = nil
 	out.Extensions = make([]mailindex.Extension, len(src.Extensions))
 	copy(out.Extensions, src.Extensions)
 	for i := range out.Extensions {

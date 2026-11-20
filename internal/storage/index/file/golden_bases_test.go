@@ -11,9 +11,9 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
-// The bases each operation writes, fixed as bytes while the decoded path still
-// stands beside the chunks: once it is gone there is nothing left to compare
-// with (reviewer, 2026-11-20). YARILO_UPDATE_GOLDEN=1 writes them anew.
+// The bases each operation writes, fixed as bytes in #2635 while the decoded
+// path still stood beside the chunks and matched them (reviewer, 2026-11-20).
+// YARILO_UPDATE_GOLDEN=1 writes them anew; a change to one goes to review.
 var updateGolden = os.Getenv("YARILO_UPDATE_GOLDEN") != ""
 
 const goldenClock = 1700000000
@@ -92,8 +92,8 @@ func goldenMeta(uid uint32) *mailbox.MessageMeta {
 }
 
 // goldenBase builds the folder, runs op, folds, and returns the bytes of the
-// file op is about, on chunks or on decoded records.
-func goldenBase(t *testing.T, op goldenOp, decoded bool) []byte {
+// file op is about.
+func goldenBase(t *testing.T, op goldenOp) []byte {
 	t.Helper()
 	clock := nowUnix
 	nowUnix = func() int64 { return goldenClock }
@@ -121,8 +121,6 @@ func goldenBase(t *testing.T, op goldenOp, decoded bool) []byte {
 		withoutExtension(t, home, extNameMdbox)
 	}
 	baseImages.Delete(indexPathFor(home))
-	writerDecoded, decodedImages = decoded, decoded
-	defer func() { writerDecoded, decodedImages = false, false }()
 	h, f = open()
 	defer h.Close() //nolint:errcheck
 	u := h.(*userHandle).ui
@@ -146,21 +144,17 @@ func goldenBase(t *testing.T, op goldenOp, decoded bool) []byte {
 func TestEveryOperationWritesTheGoldenBase(t *testing.T) {
 	for _, op := range goldenOps {
 		t.Run(op.name, func(t *testing.T) {
-			fromChunks := goldenBase(t, op, false)
-			again := goldenBase(t, op, false)
+			fromChunks := goldenBase(t, op)
+			again := goldenBase(t, op)
 			if !bytes.Equal(fromChunks, again) {
 				t.Fatal("two runs wrote different bytes: the base is not reproducible")
 			}
 			golden := filepath.Join("testdata", "golden", op.name+".index")
 			if updateGolden {
-				fromDecoded := goldenBase(t, op, true)
-				if !bytes.Equal(fromChunks, fromDecoded) {
-					t.Fatalf("chunks wrote %d bytes, decoded records %d, and they differ", len(fromChunks), len(fromDecoded))
-				}
 				if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(golden, fromDecoded, 0o644); err != nil {
+				if err := os.WriteFile(golden, fromChunks, 0o644); err != nil {
 					t.Fatal(err)
 				}
 				return

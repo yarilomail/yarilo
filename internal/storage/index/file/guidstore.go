@@ -541,7 +541,7 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 	})
 }
 
-func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) (*mailindex.Record, error) {
+func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) ([]byte, error) {
 	uid := fs.file.Header.NextUID
 	if uid == 0 {
 		uid = 1

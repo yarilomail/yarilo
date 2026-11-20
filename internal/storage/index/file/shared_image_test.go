@@ -56,8 +56,5 @@ func TestAFoldNeverWritesIntoTheCachedBase(t *testing.T) {
 }
 
 func imageRecords(img *baseImage) int {
-	if img.recs != nil {
-		return img.recs.Len()
-	}
-	return len(img.file.Records)
+	return img.recs.Len()
 }

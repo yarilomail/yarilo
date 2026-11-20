@@ -28,8 +28,8 @@ func extUpdate(width int, upds ...mailindex.TxExtRecUpdate) []byte {
 	return encLogRec(mailindex.TxTypeExtRecUpdate, 0, mailindex.EncodeTxExtRecUpdatePayload(width, upds))
 }
 
-// The per-record extension update follows the reference's rules, the same on
-// chunks as on decoded records (INDEX-MEMORY.md §4; #2628).
+// The per-record extension update follows the reference's rules
+// (INDEX-MEMORY.md §4; #2628).
 func TestARecordUpdateFollowsTheReferencesRules(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -65,8 +65,7 @@ func TestARecordUpdateFollowsTheReferencesRules(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var forms [2][]byte
-			for i, decoded := range []bool{false, true} {
+			{
 				home := movedFolder(t, 2*mailindex.ChunkRecords)
 				// Both cache extensions in the base, so the writer's layout
 				// stays and it holds chunks after a reopen.
@@ -78,7 +77,6 @@ func TestARecordUpdateFollowsTheReferencesRules(t *testing.T) {
 					t.Fatal(err)
 				}
 				o.Close() //nolint:errcheck
-				writerDecoded = decoded
 				h, f := acceptOpen(t, home)
 				fs, err := h.(*userHandle).ui.state(f.ID)
 				if err != nil {
@@ -91,32 +89,27 @@ func TestARecordUpdateFollowsTheReferencesRules(t *testing.T) {
 				if err := fs.loadWriterRecords(); err != nil {
 					t.Fatal(err)
 				}
-				if (fs.recs == nil) != decoded {
-					t.Fatalf("decoded %v, yet the writer holds chunks: %v", decoded, fs.recs != nil)
+				if fs.recs == nil {
+					t.Fatal("the writer holds no chunks")
 				}
 				reset := findExt(fs.file.Extensions, extNameCache).ResetID
 				aerr := fs.applyRecords(c.recs(t, fs, reset))
 				seq, _ := fs.recSeqOfUID(5)
 				got, _ := fs.recExt(seq, extNameCache)
-				forms[i] = append([]byte(nil), got...)
 				fs.mu.Unlock()
 				h.Close() //nolint:errcheck
-				writerDecoded = false
 				if c.wantErr {
 					if aerr == nil {
-						t.Errorf("decoded %v: the records applied, want an error", decoded)
+						t.Error("the records applied, want an error")
 					}
-					continue
+					return
 				}
 				if aerr != nil {
-					t.Fatalf("decoded %v: %v", decoded, aerr)
+					t.Fatal(aerr)
 				}
 				if !bytes.Equal(got, c.want) {
-					t.Errorf("decoded %v: uid 5's cache is %x, want %x", decoded, got, c.want)
+					t.Errorf("uid 5's cache is %x, want %x", got, c.want)
 				}
-			}
-			if !c.wantErr && !bytes.Equal(forms[0], forms[1]) {
-				t.Errorf("chunks give %x, decoded records %x", forms[0], forms[1])
 			}
 		})
 	}

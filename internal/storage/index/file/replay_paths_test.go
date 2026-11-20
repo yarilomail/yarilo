@@ -46,24 +46,17 @@ func viewRecords(t *testing.T, h mailbox.UserIndex, id uint64) ([]*mailbox.Messa
 	if err := v.loadRecords(); err != nil {
 		t.Fatal(err)
 	}
-	if v.recs != nil {
-		return msgs, v.recs.Bytes(), true
+	if v.recs == nil {
+		return msgs, nil, false
 	}
-	layout, err := mailindex.ComputeRecordLayout(v.file.Extensions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := mailindex.ChunksFromRecords(v.file.Records, layout)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return msgs, r.Bytes(), false
+	return msgs, v.recs.Bytes(), true
 }
 
-// The one journal replay gives the same records through a view's chunks as
-// through decoded records, after every step of a random run of appends, flag
-// and keyword changes, expunges, a new record extension (which re-encodes the
-// view's chunks) and base rewrites.
+// A long-lived view, extended by the journal step by step, holds what a cold
+// reader builds from the base and the journal, and what the writer holds,
+// after every step of a random run of appends, flag and keyword changes,
+// expunges, a new record extension (which re-encodes the view's chunks in
+// memory, reading nothing again) and base rewrites.
 func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 	seed := replaySeed(t)
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
@@ -73,8 +66,6 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 	defer w.Close() //nolint:errcheck
 	chunked, cf := acceptOpen(t, home)
 	defer chunked.Close() //nolint:errcheck
-	decoded, df := acceptOpen(t, home)
-	defer decoded.Close() //nolint:errcheck
 
 	uids := func() []uint32 {
 		msgs, err := w.GetMessages(wf.ID, mailbox.SeqSet{})
@@ -88,9 +79,9 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 		return out
 	}
 	introduced := false
-	// The chunked reader's view keeps its chunks across the new extension:
-	// they are re-encoded into the new layout, not decoded.
-	var chunksAfter, decodedAfter bool
+	// The chunked reader's view goes through the new extension on its chunks:
+	// re-encoded in memory, not read from the base again.
+	var chunksAfter, sawIntro bool
 	for step := 0; step < 300; step++ {
 		live := uids()
 		op := rng.IntN(20)
@@ -109,7 +100,7 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 			}
 			m := &mailbox.MessageMeta{UID: uid, Size: 100 + uint32(step), VSize: 120, InternalDate: time.Unix(1700000000+int64(step), 0)}
 			if !introduced && step > 100 {
-				m.MapUID, introduced = 7, true // the mdbox extension enters the journal
+				m.MapUID, introduced, sawIntro = 7, true, true // the mdbox extension enters the journal
 			}
 			what = "append " + strconv.Itoa(int(uid))
 			if err := w.AppendMessage(wf.ID, m); err != nil {
@@ -134,20 +125,26 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 		default:
 			what = "a read"
 		}
+		opens := mailindex.LazyOpens()
 		cm, cb, inChunks := viewRecords(t, chunked, cf.ID)
-		decodedImages = true
-		dm, db, _ := viewRecords(t, decoded, df.ID)
-		decodedImages = false
-		if introduced {
-			chunksAfter = chunksAfter || inChunks
-			decodedAfter = decodedAfter || !inChunks
+		if sawIntro {
+			if got := mailindex.LazyOpens() - opens; got != 0 || !inChunks {
+				t.Fatalf("seed %d step %d: past the new extension the view read the base %d times, holds chunks %v", seed, step, got, inChunks)
+			}
+			chunksAfter, sawIntro = true, false
 		}
-		ch, dh := viewHeader(t, chunked, cf.ID), viewHeader(t, decoded, df.ID)
+		// What a reader starting cold, with no image cached, builds from the
+		// base and the journal on disk.
+		baseImages.Delete(indexPathFor(home))
+		cold, coldF := acceptOpen(t, home)
+		dm, db, _ := viewRecords(t, cold, coldF.ID)
+		ch, dh := viewHeader(t, chunked, cf.ID), viewHeader(t, cold, coldF.ID)
+		cold.Close() //nolint:errcheck
 		if ch != dh {
-			t.Fatalf("seed %d step %d after %s: the chunked view's header %+v, the decoded one's %+v", seed, step, what, ch, dh)
+			t.Fatalf("seed %d step %d after %s: the long-lived view's header %+v, a cold reader's %+v", seed, step, what, ch, dh)
 		}
 		if !reflect.DeepEqual(cm, dm) {
-			t.Fatalf("seed %d step %d after %s: the chunked view answers %d messages, the decoded one %d, and they differ",
+			t.Fatalf("seed %d step %d after %s: the long-lived view answers %d messages, a cold reader %d, and they differ",
 				seed, step, what, len(cm), len(dm))
 		}
 		if wb := writerRecords(t, w, wf.ID); !bytes.Equal(wb, db) {
@@ -158,8 +155,8 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 			t.Fatalf("seed %d step %d after %s: the records differ as bytes (%d and %d)", seed, step, what, len(cb), len(db))
 		}
 	}
-	if !introduced || !chunksAfter || decodedAfter {
-		t.Fatalf("seed %d: extension %v; after it the view held chunks %v, decoded records %v", seed, introduced, chunksAfter, decodedAfter)
+	if !introduced || !chunksAfter {
+		t.Fatalf("seed %d: extension %v, checked past it %v", seed, introduced, chunksAfter)
 	}
 }
 
@@ -224,16 +221,8 @@ func writerRecords(t *testing.T, h mailbox.UserIndex, id uint64) []byte {
 	if err := fs.loadWriterRecords(); err != nil {
 		t.Fatal(err)
 	}
-	if fs.recs != nil {
-		return fs.recs.Bytes()
+	if fs.recs == nil {
+		t.Fatal("the writer holds no records")
 	}
-	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := mailindex.ChunksFromRecords(fs.file.Records, layout)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r.Bytes()
+	return fs.recs.Bytes()
 }

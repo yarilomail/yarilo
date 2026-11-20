@@ -588,7 +588,7 @@ type folderState struct {
 	fsyncOnFlush bool
 
 	file        *mailindex.File    // the wire-format snapshot
-	recs        *mailindex.Records // a view's lazy records; file.Records is then nil
+	recs        *mailindex.Records // the records, as chunks; file holds none
 	onBase      bool               // a view whose records are the base's, with no tail on them
 	recordsLeft bool               // file holds the header only; the next locked use reads all
 	headerFixed bool               // the header was corrected from records in memory
@@ -798,7 +798,7 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	if err != nil {
 		return err
 	}
-	if !fs.canReadUnlocked() {
+	if !fs.canReadUnlocked() || lockedReadsSeam {
 		// Counted apart: this is the migration not having reached this folder,
 		// not a read that wanted the lock.
 		return u.withFolderROSite(folderID, lockSiteFallback, fn)
@@ -837,6 +837,10 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	}
 	return ferr
 }
+
+// lockedReadsSeam is a test seam: every read takes the locked path, the
+// writer's records, so a row can compare it with the views. False elsewhere.
+var lockedReadsSeam bool
 
 // canReadUnlocked reports whether this folder's files carry the pairing a
 // lock-free read stands on. Per read: a folder gains it mid-session.
@@ -991,7 +995,7 @@ func (u *userIndex) DeleteFolder(folder string) error {
 		if guid == ([16]byte{}) {
 			// Not open here: read the identity off the file rather than leave
 			// the folder's copies in the store for ever.
-			if f, ferr := mailindex.Open(filepath.Join(dir, IndexFileName)); ferr == nil {
+			if f, _, ferr := mailindex.OpenLazy(filepath.Join(dir, IndexFileName)); ferr == nil {
 				if ext := findExt(f.Extensions, extNameDboxHdr); ext != nil {
 					if hdr, herr := decodeDboxHdr(ext.HdrData); herr == nil {
 						guid = hdr.MailboxGUID

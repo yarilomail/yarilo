@@ -10,14 +10,14 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
-// A view with no log tail holds the base's lazy chunks (recs), every other
-// folderState file.Records; the accessors read either (INDEX-MEMORY.md §3).
+// A folder state holds its records as chunks (recs), lazy on a view of the
+// base alone, loaded on a writer (INDEX-MEMORY.md §3).
 
 func (fs *folderState) recordCount() int {
-	if fs.recs != nil {
-		return fs.recs.Len()
+	if fs.recs == nil {
+		return 0 // a handle that left its records on disk
 	}
-	return len(fs.file.Records)
+	return fs.recs.Len()
 }
 
 // loadRecords brings a lazy view's chunks into memory: one open of the base.
@@ -32,36 +32,22 @@ func (fs *folderState) loadRecords() error {
 	return nil
 }
 
-func (fs *folderState) recUID(i int) uint32 {
-	if fs.recs != nil {
-		return fs.recs.UID(i)
-	}
-	return fs.file.Records[i].UID
-}
+func (fs *folderState) recUID(i int) uint32 { return fs.recs.UID(i) }
 
-func (fs *folderState) recFlags(i int) mailindex.MailFlag {
-	if fs.recs != nil {
-		return fs.recs.Flags(i)
-	}
-	return fs.file.Records[i].Flags
-}
+func (fs *folderState) recFlags(i int) mailindex.MailFlag { return fs.recs.Flags(i) }
 
-// recExt is the extension's bytes in record i, ok when the layout carries it.
-// From a lazy view the bytes are the chunk's: copied by a caller keeping them.
+// recExt is the extension's bytes in record i, ok when the layout carries it:
+// the chunk's bytes, copied by a caller keeping them.
 func (fs *folderState) recExt(i int, name string) ([]byte, bool) {
-	if fs.recs != nil {
-		id, ok := fs.recs.Layout().ExtID(name)
-		if !ok {
-			return nil, false
-		}
-		return fs.recs.Ext(i, id), true
+	id, ok := fs.recs.Layout().ExtID(name)
+	if !ok {
+		return nil, false
 	}
-	v, ok := fs.file.Records[i].Ext[name]
-	return v, ok
+	return fs.recs.Ext(i, id), true
 }
 
 // forkRecords gives a view private header data and records a replay may
-// write: chunks forked from the shared ones, or decoded records copied.
+// write: chunks forked from the shared ones.
 func (fs *folderState) forkRecords() error {
 	fs.file = cloneIndexFile(fs.file)
 	if fs.recs == nil {
@@ -78,93 +64,43 @@ func (fs *folderState) forkRecords() error {
 // records are changed as before, a view's records through the structure, which
 // copies a chunk only while a snapshot shares it.
 
-// recSeqOfUID finds a uid: by search in the chunks, which hold the base's uid
-// order; by scan in decoded records, whose order no writer promises.
+// recSeqOfUID finds a uid by search in the chunks' uid order.
 func (fs *folderState) recSeqOfUID(uid uint32) (int, bool) {
-	if fs.recs != nil {
-		return fs.recs.SeqOfUID(uid)
+	if fs.recs == nil {
+		return 0, false
 	}
-	for i, rec := range fs.file.Records {
-		if rec.UID == uid {
-			return i, true
-		}
-	}
-	return 0, false
+	return fs.recs.SeqOfUID(uid)
 }
 
 // recEachInRange calls fn for every record with a uid in [uid1, uid2].
 func (fs *folderState) recEachInRange(uid1, uid2 uint32, fn func(seq int)) {
-	if fs.recs != nil {
-		seq, _ := fs.recs.SeqOfUID(uid1)
-		for ; seq < fs.recs.Len() && fs.recs.UID(seq) <= uid2; seq++ {
-			fn(seq)
-		}
-		return
-	}
-	for i, rec := range fs.file.Records {
-		if rec.UID >= uid1 && rec.UID <= uid2 {
-			fn(i)
-		}
+	seq, _ := fs.recSeqOfUID(uid1)
+	for ; seq < fs.recordCount() && fs.recs.UID(seq) <= uid2; seq++ {
+		fn(seq)
 	}
 }
 
-func (fs *folderState) recSetFlags(seq int, f mailindex.MailFlag) {
-	if fs.recs != nil {
-		fs.recs.SetFlags(seq, f)
-		return
-	}
-	fs.file.Records[seq].Flags = f
-}
+func (fs *folderState) recSetFlags(seq int, f mailindex.MailFlag) { fs.recs.SetFlags(seq, f) }
 
-// recSetExt writes an extension the layout carries; in decoded records any.
+// recSetExt writes an extension the layout carries.
 func (fs *folderState) recSetExt(seq int, name string, b []byte) {
-	if fs.recs != nil {
-		if id, ok := fs.recs.Layout().ExtID(name); ok {
-			fs.recs.SetExt(seq, id, b)
-		}
-		return
+	if id, ok := fs.recs.Layout().ExtID(name); ok {
+		fs.recs.SetExt(seq, id, b)
 	}
-	rec := fs.file.Records[seq]
-	if rec.Ext == nil {
-		rec.Ext = make(map[string][]byte)
-	}
-	rec.Ext[name] = b
 }
 
-// recAppend adds rec, whose bytes in the current layout are raw.
-func (fs *folderState) recAppend(rec *mailindex.Record, raw []byte) {
-	if fs.recs != nil {
-		// Records keep uid order, which the searches stand on: an append
-		// below the last uid goes to its place.
-		if n := fs.recs.Len(); n > 0 && rec.UID < fs.recs.UID(n-1) {
-			seq, _ := fs.recs.SeqOfUID(rec.UID)
-			fs.recs.Insert(seq, raw)
-			return
-		}
-		fs.recs.Append(raw)
+// recAppend adds a record, raw in the current layout. Records keep uid order,
+// which the searches stand on: an append below the last uid goes to its place.
+func (fs *folderState) recAppend(uid uint32, raw []byte) {
+	if n := fs.recs.Len(); n > 0 && uid < fs.recs.UID(n-1) {
+		seq, _ := fs.recs.SeqOfUID(uid)
+		fs.recs.Insert(seq, raw)
 		return
 	}
-	fs.file.Records = append(fs.file.Records, rec)
+	fs.recs.Append(raw)
 }
 
-func (fs *folderState) recExpunge(seq int) {
-	if fs.recs != nil {
-		fs.recs.Expunge(seq)
-		return
-	}
-	fs.file.Records = append(fs.file.Records[:seq], fs.file.Records[seq+1:]...)
-}
-
-// decodeRecords leaves the chunks for decoded records: what a record width the
-// structure does not have takes, until the next base.
-func (fs *folderState) decodeRecords() error {
-	recs, err := fs.recs.Decode()
-	if err != nil {
-		return fmt.Errorf("fileindex/records: %w", err)
-	}
-	fs.file.Records, fs.recs = recs, nil
-	return nil
-}
+func (fs *folderState) recExpunge(seq int) { fs.recs.Expunge(seq) }
 
 func sameLayout(a, b mailindex.RecordLayout) bool {
 	if a.RecordSize != b.RecordSize {
@@ -194,40 +130,15 @@ func sameLayout(a, b mailindex.RecordLayout) bool {
 	return true
 }
 
-// writerDecoded is a test seam: the writer holds decoded records, as before
-// chunks, so a row can compare the two. False everywhere else.
-var writerDecoded bool
-
 // openWriterBase loads a base for the writer: a fork of the base image the
 // readers share, every chunk in memory, so the base's records are held once
 // however many handles and views read it (INDEX-MEMORY.md §4).
 func openWriterBase(fs *folderState) (*mailindex.File, *mailindex.Records, error) {
-	if writerDecoded {
-		f, err := mailindex.Open(fs.indexPath)
-		return f, nil, err
-	}
 	img, err := imageFor(fs)
 	if err != nil {
 		return nil, nil, err
 	}
-	if img.recs == nil {
-		return cloneIndexFile(img.file), nil, nil
-	}
 	return cloneIndexFile(img.file), img.recs.Fork(), nil
-}
-
-// decodeForRewrite gives an operation that still writes decoded records
-// those records, until step 3b-2b moves it onto chunks. A layout that does not
-// decode is a damaged index: an error for the caller, not the process's end.
-func (fs *folderState) decodeForRewrite() error {
-	if fs.recs == nil {
-		return nil
-	}
-	if err := fs.decodeRecords(); err != nil {
-		slog.Error("fileindex: the writer's records do not decode", "folder", fs.folder, "err", err)
-		return err
-	}
-	return nil
 }
 
 // extIntroRecord names a known extension by its place and generation, for the
@@ -284,10 +195,6 @@ func orderImage(img *baseImage, path string) error {
 	if img.lineage.Flags&lineageInUIDOrder != 0 {
 		return nil
 	}
-	if img.recs == nil {
-		sort.SliceStable(img.file.Records, func(i, j int) bool { return img.file.Records[i].UID < img.file.Records[j].UID })
-		return nil
-	}
 	if err := img.recs.LoadAll(); err != nil {
 		return fmt.Errorf("fileindex/order: %w", err)
 	}
@@ -301,13 +208,9 @@ func orderImage(img *baseImage, path string) error {
 
 // orderRecords puts the state's records in uid order before a base write.
 func (fs *folderState) orderRecords() {
-	if fs.recs != nil {
-		if !fs.recs.InUIDOrder() {
-			fs.recs = fs.recs.SortedByUID()
-		}
-		return
+	if fs.recs != nil && !fs.recs.InUIDOrder() {
+		fs.recs = fs.recs.SortedByUID()
 	}
-	sort.SliceStable(fs.file.Records, func(i, j int) bool { return fs.file.Records[i].UID < fs.file.Records[j].UID })
 }
 
 // nowUnix is the clock the index stamps its files with; a test of their bytes
@@ -358,7 +261,7 @@ func (fs *folderState) replaceRecords(raws [][]byte) error {
 	if err != nil {
 		return fmt.Errorf("fileindex/records: %w", err)
 	}
-	fs.file.Records, fs.recs = nil, recs
+	fs.recs = recs
 	return nil
 }
 
