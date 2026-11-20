@@ -740,11 +740,14 @@ func (fs *folderState) flush() error {
 		}
 		lg.close()
 	}
+	// Every base goes to disk in uid order, and says so (#2632).
+	fs.orderRecords()
 	next := lineageHdr{
 		Lineage:       prev.Lineage + 1,
 		FoldedLineage: folded,
 		FoldedOffset:  uint64(fs.logSize),
 		RecordsDigest: fs.digestRecords(),
+		Flags:         lineageInUIDOrder,
 	}
 	// Lineages start above the pre-extension constant, so a stamped base cannot
 	// claim such a log as its own and replay what it already absorbed.

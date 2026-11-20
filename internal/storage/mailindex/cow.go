@@ -2,6 +2,7 @@ package mailindex
 
 import (
 	"fmt"
+	"sort"
 	"sync/atomic"
 )
 
@@ -220,4 +221,34 @@ func (r *Records) Insert(seq int, raw []byte) {
 		r.starts[k]++
 	}
 	r.n++
+}
+
+// InUIDOrder reports whether the records' uids rise; every chunk is loaded.
+func (r *Records) InUIDOrder() bool {
+	for seq := 1; seq < r.n; seq++ {
+		if r.UID(seq) <= r.UID(seq-1) {
+			return false
+		}
+	}
+	return true
+}
+
+// SortedByUID is the records in uid order, as a writer of its own; every chunk
+// is loaded.
+func (r *Records) SortedByUID() *Records {
+	size := int(r.layout.RecordSize)
+	order := make([]int, r.n)
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return r.UID(order[a]) < r.UID(order[b]) })
+	raw := make([]byte, 0, r.n*size)
+	for _, seq := range order {
+		raw = append(raw, r.rec(seq)...)
+	}
+	out, err := ChunksFromBytes(raw, r.layout)
+	if err != nil {
+		panic(fmt.Sprintf("mailindex: re-chunk sorted records: %v", err))
+	}
+	return out
 }

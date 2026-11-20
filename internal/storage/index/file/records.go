@@ -259,3 +259,36 @@ func (fs *folderState) journalRecords(recs [][]byte) error {
 	}
 	return fs.appendMutLog(recs...)
 }
+
+// orderImage makes the records of a base not marked as in uid order ordered in
+// memory before anything searches them: such a base is read whole, and the
+// next base write puts it on disk in order, marked (#2632).
+func orderImage(img *baseImage, path string) error {
+	if img.lineage.Flags&lineageInUIDOrder != 0 {
+		return nil
+	}
+	if img.recs == nil {
+		sort.SliceStable(img.file.Records, func(i, j int) bool { return img.file.Records[i].UID < img.file.Records[j].UID })
+		return nil
+	}
+	if err := img.recs.LoadAll(); err != nil {
+		return fmt.Errorf("fileindex/order: %w", err)
+	}
+	if !img.recs.InUIDOrder() {
+		slog.Info("fileindex: a base's records are out of uid order; ordered in memory until the next base write",
+			"index", path, "records", img.recs.Len())
+		img.recs = img.recs.SortedByUID()
+	}
+	return nil
+}
+
+// orderRecords puts the state's records in uid order before a base write.
+func (fs *folderState) orderRecords() {
+	if fs.recs != nil {
+		if !fs.recs.InUIDOrder() {
+			fs.recs = fs.recs.SortedByUID()
+		}
+		return
+	}
+	sort.SliceStable(fs.file.Records, func(i, j int) bool { return fs.file.Records[i].UID < fs.file.Records[j].UID })
+}
