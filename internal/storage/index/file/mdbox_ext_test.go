@@ -72,11 +72,16 @@ func TestOurRecordCarriesTheMapUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs := b.folderStateFor(t, "INBOX")
-	if len(fs.file.Records) != 1 {
-		t.Fatalf("got %d records, want 1", len(fs.file.Records))
+	v, release, err := b.folderStateFor(t, "INBOX").openView()
+	if err != nil {
+		t.Fatal(err)
 	}
-	mapUID, saveDate := decodeMdboxRec(fs.file.Records[0].Ext[extNameMdbox])
+	defer release()
+	if err := v.loadRecords(); err != nil || v.recordCount() != 1 {
+		t.Fatalf("got %d records, want 1: %v", v.recordCount(), err)
+	}
+	ext, _ := v.recExt(0, extNameMdbox)
+	mapUID, saveDate := decodeMdboxRec(ext)
 	if mapUID != 7 || saveDate != 1788000000 {
 		t.Errorf("the record says map uid %d saved %d, want 7 and 1788000000", mapUID, saveDate)
 	}

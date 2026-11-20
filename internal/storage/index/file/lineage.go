@@ -109,8 +109,9 @@ func replayStart(h lineageHdr, logLineage uint32) (offset int64, paired bool) {
 
 // digestRecords hashes what a reader would serve, in file order, with FNV-1a --
 // a change detector for our own file, not a defence against a forged one. Runs
-// over records already in memory, so the proof costs no I/O beyond the header.
-func digestRecords(f *mailindex.File) uint64 {
+// over records already in memory, chunked or decoded alike, so the proof costs
+// no I/O beyond the header.
+func (fs *folderState) digestRecords() uint64 {
 	const (
 		offset64 = 14695981039346656037
 		prime64  = 1099511628211
@@ -124,18 +125,18 @@ func digestRecords(f *mailindex.File) uint64 {
 	}
 	var scratch [8]byte
 	var zero [1]byte
-	for _, rec := range f.Records {
-		binary.LittleEndian.PutUint32(scratch[0:4], rec.UID)
-		binary.LittleEndian.PutUint32(scratch[4:8], uint32(rec.Flags))
+	for i := range fs.recordCount() {
+		binary.LittleEndian.PutUint32(scratch[0:4], fs.recUID(i))
+		binary.LittleEndian.PutUint32(scratch[4:8], uint32(fs.recFlags(i)))
 		write(scratch[:])
 		// Hashed as on disk: an unset extension is its width in zeros, and one
 		// holding no record bytes is not part of a record at all.
-		for _, ext := range f.Extensions {
+		for _, ext := range fs.file.Extensions {
 			if ext.RecordSize == 0 {
 				continue
 			}
 			write([]byte(ext.Name))
-			b := rec.Ext[ext.Name]
+			b, _ := fs.recExt(i, ext.Name)
 			if len(b) > int(ext.RecordSize) {
 				b = b[:ext.RecordSize]
 			}

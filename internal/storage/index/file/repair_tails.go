@@ -23,6 +23,7 @@ func (u *userIndex) RepairRecordTails(folderID uint64, tails map[uint32]mailbox.
 			guidRecSize, 1, fs.file.Header.UIDValidity); err != nil {
 			return err
 		}
+		fs.mustDecode() // decoded until step 3b-2b
 		for _, rec := range fs.file.Records {
 			tail, ok := tails[rec.UID]
 			if !ok {

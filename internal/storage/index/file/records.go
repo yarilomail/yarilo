@@ -167,3 +167,37 @@ func sameLayout(a, b mailindex.RecordLayout) bool {
 	}
 	return true
 }
+
+// writerDecoded is a test seam: the writer holds decoded records, as before
+// chunks, so a row can compare the two. False everywhere else.
+var writerDecoded bool
+
+// openWriterBase loads a base for the writer: a fork of the base image the
+// readers share, every chunk in memory, so the base's records are held once
+// however many handles and views read it (INDEX-MEMORY.md §4).
+func openWriterBase(fs *folderState) (*mailindex.File, *mailindex.Records, error) {
+	if writerDecoded {
+		f, err := mailindex.Open(fs.indexPath)
+		return f, nil, err
+	}
+	img, err := imageFor(fs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if img.recs == nil {
+		return cloneIndexFile(img.file), nil, nil
+	}
+	return cloneIndexFile(img.file), img.recs.Fork(), nil
+}
+
+// mustDecode gives an operation that still writes decoded records those
+// records, until step 3b-2b moves it onto chunks. The writer's chunks are all
+// loaded, so decoding cannot fail but on a broken layout.
+func (fs *folderState) mustDecode() {
+	if fs.recs == nil {
+		return
+	}
+	if err := fs.decodeRecords(); err != nil {
+		panic(fmt.Sprintf("fileindex: decode the writer's loaded records: %v", err))
+	}
+}

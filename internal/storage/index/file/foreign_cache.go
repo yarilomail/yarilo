@@ -113,6 +113,7 @@ func (fs *folderState) stampAdoptedCache(metas []*mailbox.MessageMeta) error {
 		cacheCRCRecSize, 4, fs.file.Header.UIDValidity); err != nil {
 		return err
 	}
+	fs.mustDecode() // decoded until step 3b-2b
 	for _, rec := range fs.file.Records {
 		stamp, ok := stamps[rec.UID]
 		if !ok {

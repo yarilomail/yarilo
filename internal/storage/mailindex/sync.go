@@ -32,8 +32,11 @@ type RecreateInput struct {
 	Header     Header
 	Extensions []Extension
 	Records    []*Record
-	KeepBackup bool
-	Fsync      bool
+	// RecordBytes, when set, is the records section as it goes to disk, in
+	// the layout of Extensions, written instead of encoding Records.
+	RecordBytes []byte
+	KeepBackup  bool
+	Fsync       bool
 	// TmpDir, when non-empty, redirects the tmp file to a separate directory
 	// (e.g. local tmpfs) so the fsync cost lands on local storage, not NFS.
 	// The closed tmp is then copied to a staging path next to the target and
@@ -96,7 +99,16 @@ func Recreate(in RecreateInput) (backupPath string, err error) {
 			return "", fmt.Errorf("mailindex/recreate: write ext headers: %w", err)
 		}
 	}
-	if layout.RecordSize > 0 && len(in.Records) > 0 {
+	if in.RecordBytes != nil {
+		if layout.RecordSize == 0 || len(in.RecordBytes)%int(layout.RecordSize) != 0 {
+			cleanup(true)
+			return "", fmt.Errorf("mailindex/recreate: %d record bytes are not whole %d-byte records: %w", len(in.RecordBytes), layout.RecordSize, ErrCorrupted)
+		}
+		if _, err := f.Write(in.RecordBytes); err != nil {
+			cleanup(true)
+			return "", fmt.Errorf("mailindex/recreate: write records: %w", err)
+		}
+	} else if layout.RecordSize > 0 && len(in.Records) > 0 {
 		stride := int(layout.RecordSize)
 		buf := make([]byte, stride)
 		for i, rec := range in.Records {

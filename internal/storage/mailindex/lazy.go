@@ -129,7 +129,9 @@ func (r *Records) Load(lo, hi int) error {
 		if err := readFull(rd, raw, r.src.dataOff+int64(ci*ChunkRecords*size)); err != nil {
 			return err
 		}
-		r.chunks[ci].CompareAndSwap(nil, &Chunk{raw: raw, size: uint32(size), n: cn, owner: r.w})
+		// Owned by no writer: the slot may be shared with forks, and each
+		// copies the chunk before changing it.
+		r.chunks[ci].CompareAndSwap(nil, &Chunk{raw: raw, size: uint32(size), n: cn})
 	}
 	return nil
 }
@@ -162,4 +164,14 @@ func (r *Records) Decode() ([]*Record, error) {
 		out[i] = &rec
 	}
 	return out, nil
+}
+
+// AllLoaded reports whether every chunk is in memory.
+func (r *Records) AllLoaded() bool {
+	for ci := range r.chunks {
+		if r.chunks[ci].Load() == nil {
+			return false
+		}
+	}
+	return true
 }

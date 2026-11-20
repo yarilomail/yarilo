@@ -166,3 +166,12 @@ func (r *Records) Expunge(seq int) {
 	}
 	r.n--
 }
+
+// RecordBytes is a copy of the record at seq as it lies on disk.
+func (r *Records) RecordBytes(seq int) []byte { return append([]byte(nil), r.rec(seq)...) }
+
+// SetRecord writes the record at seq whole, from bytes in the layout.
+func (r *Records) SetRecord(seq int, raw []byte) {
+	ci, i := r.locate(seq)
+	copy(r.owned(ci).at(i), raw)
+}
