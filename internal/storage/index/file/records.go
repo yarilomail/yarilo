@@ -285,3 +285,12 @@ func (fs *folderState) reencodeRecords() error {
 	fs.recs = fs.recs.Reencode(layout)
 	return nil
 }
+
+// absoluteCounters journals the header's message, seen and deleted counts as
+// they stand: every flag change and expunge carries them, so a replay that
+// defers the change to a chunk not loaded keeps the counters right
+// (INDEX-MEMORY.md §4, reviewer 2026-11-20).
+func (fs *folderState) absoluteCounters() [][]byte {
+	h := fs.file.Header
+	return [][]byte{encU32Update(32, h.MessagesCount), encU32Update(40, h.SeenMessagesCount), encU32Update(44, h.DeletedMessagesCount)}
+}

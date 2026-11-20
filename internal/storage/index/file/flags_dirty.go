@@ -40,6 +40,9 @@ func (fs *folderState) markDirtyLocked(uid uint32, dirty bool) ([][]byte, error)
 	if dirty && fs.file.Header.Flags&mailindex.HdrFlagHaveDirty == 0 {
 		recs = append(recs, encU32Update(20, uint32(fs.file.Header.Flags|mailindex.HdrFlagHaveDirty)))
 	}
+	// The tier and dirty bits move no counter; the absolute ones go with every
+	// flag change all the same, for a replay that cannot see old flags.
+	recs = append(recs, fs.absoluteCounters()...)
 	if err := fs.applyRecords(recs); err != nil {
 		return nil, err
 	}

@@ -2057,7 +2057,8 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 		if len(upds) == 0 {
 			return nil
 		}
-		return fs.journalRecords([][]byte{encLogRec(mailindex.TxTypeFlagUpdate, 0, mailindex.EncodeTxFlagUpdatePayload(upds))})
+		return fs.journalRecords(append([][]byte{encLogRec(mailindex.TxTypeFlagUpdate, 0, mailindex.EncodeTxFlagUpdatePayload(upds))},
+			fs.absoluteCounters()...))
 	})
 }
 
