@@ -297,6 +297,30 @@ One run on one image, never alongside a window arm; bash 5, so the runner.
 It prints `push_latency` (count, lost, p50, p99 and max in milliseconds). A
 lost event fails the run. The stand-runs row takes p99 under 1 s as its bar.
 
+## The thread merge
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/thread-merge.sh <out-dir> <merges> \
+  u60@d00002.test /var/mail/vhosts/d00002.test/u60@d00002.test/Maildir ...
+```
+
+Times the merge of an account's thread log into its base, on the tag the stand
+runs. Per account the backend restarts first, so the lmtp container's memory
+peak is that account's; `mem.txt` also gives its anon and file bytes, because
+the peak counts page cache. The log is filled in batches to 20 KB short of
+`threading_tail_size`, the watchers start, and then one delivery goes at a time
+with the log's size after each, until one crosses and 30 more after it.
+
+- `thread-merge-watch.sh` runs in each backend pod and reports, in hundredths
+  of a second of uptime, the log passing the size and the new base appearing.
+  It is copied with `kubectl exec -i` and checked: without `-i` the pod got an
+  empty file and the window measured nothing (d2621e).
+- A batch must not cross the size itself: the merge then ran before the
+  watchers did (d2621f, d2621g).
+- `thread-merge-summary.sh <out-dir>` prints per merge its time, the delivery
+  that triggered it and the 30 after it, the memory, and the deliveries not
+  answered 250. It exits 0 when that count is none.
+
 ## The same start
 
 Mailbox fill moves throughput further than most things under test, so every arm
