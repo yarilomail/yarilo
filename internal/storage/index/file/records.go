@@ -361,3 +361,24 @@ func (fs *folderState) replaceRecords(raws [][]byte) error {
 	fs.file.Records, fs.recs = nil, recs
 	return nil
 }
+
+// reencodeRecords puts the state's chunks in the layout its extensions now
+// describe: a record extension added or resized, once for every record, as
+// the reference's resize (INDEX-MEMORY.md §4).
+func (fs *folderState) reencodeRecords() error {
+	if fs.recs == nil {
+		return nil
+	}
+	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
+	if err != nil {
+		return fmt.Errorf("fileindex/records: layout: %w", err)
+	}
+	if sameLayout(layout, fs.recs.Layout()) {
+		return nil
+	}
+	if err := fs.recs.LoadAll(); err != nil {
+		return fmt.Errorf("fileindex/records: %w", err)
+	}
+	fs.recs = fs.recs.Reencode(layout)
+	return nil
+}

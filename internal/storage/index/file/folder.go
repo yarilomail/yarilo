@@ -769,15 +769,11 @@ func (fs *folderState) flush() error {
 	fs.reconcileHeaderLocked()
 	ri := fs.file.ToRecreateInput(fs.indexPath)
 	if fs.recs != nil {
-		if layout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions); lerr == nil && sameLayout(layout, fs.recs.Layout()) {
-			ri.Records, ri.RecordBytes = nil, fs.recs.Bytes()
-		} else {
-			// Chunks in another layout than the base will have: encoded anew.
-			if err := fs.decodeForRewrite(); err != nil {
-				return err
-			}
-			ri = fs.file.ToRecreateInput(fs.indexPath)
+		// Chunks in another layout than the base will have go to it first.
+		if err := fs.reencodeRecords(); err != nil {
+			return err
 		}
+		ri.Records, ri.RecordBytes = nil, fs.recs.Bytes()
 	}
 	if fs.volatileDir != "" {
 		if err := os.MkdirAll(fs.volatileDir, 0o700); err != nil {
@@ -1495,10 +1491,8 @@ func (fs *folderState) applyChecked(recs [][]byte, checked bool) error {
 	if err != nil {
 		return fmt.Errorf("fileindex/apply: record layout: %w", err)
 	}
-	if fs.recs != nil && !sameLayout(fs.recs.Layout(), layout) {
-		if err := fs.decodeRecords(); err != nil {
-			return err
-		}
+	if err := fs.reencodeRecords(); err != nil {
+		return err
 	}
 	st := replayState{layout: layout, checked: checked}
 	for _, rec := range recs {
@@ -2569,10 +2563,8 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if err != nil {
 		return fromOffset, fmt.Errorf("fileindex/applylog: record layout: %w", err)
 	}
-	if fs.recs != nil && !sameLayout(fs.recs.Layout(), layout) {
-		if err := fs.decodeRecords(); err != nil {
-			return fromOffset, err
-		}
+	if err := fs.reencodeRecords(); err != nil {
+		return fromOffset, err
 	}
 
 	st := replayState{layout: layout}
@@ -2806,15 +2798,13 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 				recStart, len(payload))
 		}
 		// The header's bytes arrive in the EXT_HDR_UPDATE that follows. A
-		// new record width is decoded records' to take (INDEX-MEMORY.md §4).
-		if intro.RecordSize != 0 && fs.recs != nil {
-			if derr := fs.decodeRecords(); derr != nil {
-				return derr
-			}
-		}
+		// new record width re-encodes the chunks, once (INDEX-MEMORY.md §4).
 		if aerr := fs.file.AddRecordExtension(intro.Name, make([]byte, intro.HdrSize),
 			intro.RecordSize, intro.RecordAlign, intro.ResetID); aerr != nil {
 			return fmt.Errorf("fileindex/applylog: declare %q: %w", intro.Name, aerr)
+		}
+		if rerr := fs.reencodeRecords(); rerr != nil {
+			return rerr
 		}
 		newLayout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions)
 		if lerr != nil {

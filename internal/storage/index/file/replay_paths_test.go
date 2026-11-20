@@ -62,8 +62,8 @@ func viewRecords(t *testing.T, h mailbox.UserIndex, id uint64) ([]*mailbox.Messa
 
 // The one journal replay gives the same records through a view's chunks as
 // through decoded records, after every step of a random run of appends, flag
-// and keyword changes, expunges, a new record extension (where a chunked view
-// turns to decoded records) and base rewrites (where it turns back).
+// and keyword changes, expunges, a new record extension (which re-encodes the
+// view's chunks) and base rewrites.
 func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 	seed := replaySeed(t)
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
@@ -88,9 +88,9 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 		return out
 	}
 	introduced := false
-	// The forms the chunked reader's view took: chunks before the extension,
-	// decoded records after it, chunks again after the next base rewrite.
-	var sawChunks, sawDecoded, sawChunksAgain bool
+	// The chunked reader's view keeps its chunks across the new extension:
+	// they are re-encoded into the new layout, not decoded.
+	var chunksAfter, decodedAfter bool
 	for step := 0; step < 300; step++ {
 		live := uids()
 		op := rng.IntN(20)
@@ -138,13 +138,9 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 		decodedImages = true
 		dm, db, _ := viewRecords(t, decoded, df.ID)
 		decodedImages = false
-		switch {
-		case inChunks && !introduced:
-			sawChunks = true
-		case !inChunks && introduced:
-			sawDecoded = true
-		case inChunks && sawDecoded:
-			sawChunksAgain = true
+		if introduced {
+			chunksAfter = chunksAfter || inChunks
+			decodedAfter = decodedAfter || !inChunks
 		}
 		ch, dh := viewHeader(t, chunked, cf.ID), viewHeader(t, decoded, df.ID)
 		if ch != dh {
@@ -162,9 +158,8 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 			t.Fatalf("seed %d step %d after %s: the records differ as bytes (%d and %d)", seed, step, what, len(cb), len(db))
 		}
 	}
-	if !introduced || !sawChunks || !sawDecoded || !sawChunksAgain {
-		t.Fatalf("seed %d: the run did not cross both ways: extension %v, chunks %v, decoded %v, chunks again %v",
-			seed, introduced, sawChunks, sawDecoded, sawChunksAgain)
+	if !introduced || !chunksAfter || decodedAfter {
+		t.Fatalf("seed %d: extension %v; after it the view held chunks %v, decoded records %v", seed, introduced, chunksAfter, decodedAfter)
 	}
 }
 
