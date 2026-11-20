@@ -1,6 +1,7 @@
 package file
 
 import (
+	"container/list"
 	"errors"
 	"fmt"
 	"os"
@@ -20,9 +21,11 @@ type baseImage struct {
 	size     int64
 	mod      time.Time
 	// path, refs and idleAt are the cache's, under baseImages.mu.
-	path   string
-	refs   int
-	idleAt time.Time
+	path     string
+	refs     int
+	idleAt   time.Time
+	idleElem *list.Element // on the idle list
+	idleSize int64         // what it counted there
 }
 
 // baseImages keeps one parse per base version, shared between readers. Keyed
