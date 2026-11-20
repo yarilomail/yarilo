@@ -91,10 +91,11 @@ func appendOps(uids ...uint32) func(t *testing.T, fs *folderState) [][]byte {
 	return func(t *testing.T, fs *folderState) [][]byte {
 		var out [][]byte
 		for _, uid := range uids {
-			if err := fs.appendLocked(&mailbox.MessageMeta{UID: uid, Size: 10}); err != nil {
+			rec, err := fs.appendLockedWith(&mailbox.MessageMeta{UID: uid, Size: 10}, nil)
+			if err != nil {
 				t.Fatal(err)
 			}
-			recs, err := fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+			recs, err := fs.appendLogRecords(rec)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,10 +108,11 @@ func appendOps(uids ...uint32) func(t *testing.T, fs *folderState) [][]byte {
 // appendSeenExpungeOps appends 4 as seen, marks 1 seen, and expunges 2.
 func appendSeenExpungeOps(t *testing.T, fs *folderState) [][]byte {
 	out := appendOps()(t, fs)
-	if err := fs.appendLocked(&mailbox.MessageMeta{UID: 4, Size: 10, Flags: []string{`\Seen`}}); err != nil {
+	rec, err := fs.appendLockedWith(&mailbox.MessageMeta{UID: 4, Size: 10, Flags: []string{`\Seen`}}, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	recs, err := fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+	recs, err := fs.appendLogRecords(rec)
 	if err != nil {
 		t.Fatal(err)
 	}

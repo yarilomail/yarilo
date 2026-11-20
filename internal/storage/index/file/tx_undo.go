@@ -19,6 +19,12 @@ type txUndo struct {
 	// shift the slice in place, and a per-record pre-image cannot undo that.
 	records []*mailindex.Record
 	recs    map[uint32]*mailindex.Record
+	// chunks is the pre-image of a writer holding chunks: a snapshot, which
+	// its changes copy around, released once the transaction is settled.
+	chunks *mailindex.Records
+	// raw is the pre-image of the touched records of a writer holding chunks,
+	// for a transaction that adds and removes none: no snapshot, no copy.
+	raw map[uint32][]byte
 	// metas is the caller's own message: an append stamps uid and modseq on it,
 	// and a uid nothing was written under must not travel back to the caller.
 	metas   []metaUndo
@@ -60,6 +66,19 @@ func (fs *folderState) snapshotForTx(ops []txOp) *txUndo {
 			touched[ops[i].uid] = struct{}{}
 		}
 	}
+	if fs.recs != nil {
+		if structural {
+			u.chunks = fs.recs.Snapshot()
+			return u
+		}
+		u.raw = make(map[uint32][]byte, len(touched))
+		for uid := range touched {
+			if seq, ok := fs.recs.SeqOfUID(uid); ok {
+				u.raw[uid] = fs.recs.RecordBytes(seq)
+			}
+		}
+		return u
+	}
 	if structural {
 		u.records = append([]*mailindex.Record(nil), fs.file.Records...)
 	}
@@ -88,6 +107,17 @@ func (fs *folderState) restore(u *txUndo) {
 		m.m.UID = m.uid
 		m.m.ModSeq = m.modseq
 	}
+	for uid, raw := range u.raw {
+		if seq, ok := fs.recs.SeqOfUID(uid); ok {
+			fs.recs.SetRecord(seq, raw)
+		}
+	}
+	if u.chunks != nil {
+		// The writer's chunks since the snapshot are dropped; it goes on from
+		// the pre-image, copying a chunk of it before changing it.
+		fs.file.Records, fs.recs = nil, u.chunks.Fork()
+		u.settle()
+	}
 	if u.records != nil {
 		fs.file.Records = u.records
 	}
@@ -115,4 +145,13 @@ func cloneRecord(rec *mailindex.Record) *mailindex.Record {
 		}
 	}
 	return &cp
+}
+
+// settle releases the chunks' pre-image: a transaction that committed or was
+// restored no longer needs it, and with it alive every change copies.
+func (u *txUndo) settle() {
+	if u != nil && u.chunks != nil {
+		u.chunks.Release()
+		u.chunks = nil
+	}
 }

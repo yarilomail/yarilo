@@ -88,6 +88,7 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 		// The ops apply to fs.file before the log takes them, so the pre-image
 		// is what a refused write is put back to (#1831).
 		undo := fs.snapshotForTx(t.ops)
+		defer undo.settle()
 		fs.cacheGone = 0
 		out.Skipped = t.dropUnmet(fs)
 		if len(t.ops) == 0 {
@@ -116,9 +117,10 @@ func (t *indexTx) dropUnmet(fs *folderState) []uint32 {
 		return nil
 	}
 	now := make(map[uint32]uint64, len(t.expect))
-	for _, rec := range fs.file.Records {
-		if _, ok := t.expect[rec.UID]; ok {
-			now[rec.UID] = decodeModseqRec(rec.Ext[extNameModSeq])
+	for uid := range t.expect {
+		if seq, ok := fs.recSeqOfUID(uid); ok {
+			data, _ := fs.recExt(seq, extNameModSeq)
+			now[uid] = decodeModseqRec(data)
 		}
 	}
 	var skipped []uint32

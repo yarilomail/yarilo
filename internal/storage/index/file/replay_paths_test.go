@@ -226,6 +226,9 @@ func writerRecords(t *testing.T, h mailbox.UserIndex, id uint64) []byte {
 	if err := fs.reload(); err != nil {
 		t.Fatal(err)
 	}
+	if err := fs.loadWriterRecords(); err != nil {
+		t.Fatal(err)
+	}
 	if fs.recs != nil {
 		return fs.recs.Bytes()
 	}

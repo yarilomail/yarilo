@@ -12,6 +12,9 @@ func (u *userIndex) StampSizes(folderID uint64, vsizes map[uint32]uint32) (int, 
 		if err := fs.ensureVsizeExtLocked(); err != nil {
 			return err
 		}
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		for _, rec := range fs.file.Records {
 			vsize, known := vsizes[rec.UID]
 			if !known || vsize == 0 {

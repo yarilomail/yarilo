@@ -396,6 +396,9 @@ func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 	var copies []mailbox.GUIDRecord
 	for _, fid := range folderIDs {
 		err := u.withFolderSite(fid, lockSiteGUIDRebuild, func(fs *folderState) error {
+			if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+				return err
+			}
 			for _, rec := range fs.file.Records {
 				g := decodeGUIDRec(rec.Ext[extNameGUID])
 				if g == ([16]byte{}) {
@@ -490,12 +493,13 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 		// delivery the whole account's copies (#2617).
 		var logRecs [][]byte
 		if b.goneFolder != nil {
-			for i := len(fs.file.Records) - 1; i >= 0; i-- {
-				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+			for i := fs.recordCount() - 1; i >= 0; i-- {
+				data, _ := fs.recExt(i, extNameGUIDMap)
+				r, ok := decodeGUIDMapRec(data)
 				if !ok || r.FolderGUID != *b.goneFolder {
 					continue
 				}
-				recs, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0)
+				recs, eerr := fs.expungeLocked(fs.recUID(i), 0)
 				if eerr != nil {
 					return eerr
 				}
@@ -503,12 +507,13 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 			}
 		}
 		for _, c := range b.gone {
-			for i := range fs.file.Records {
-				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+			for i := range fs.recordCount() {
+				data, _ := fs.recExt(i, extNameGUIDMap)
+				r, ok := decodeGUIDMapRec(data)
 				if !ok || r.FolderGUID != c.folderGUID || r.UID != c.uid {
 					continue
 				}
-				recs, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0)
+				recs, eerr := fs.expungeLocked(fs.recUID(i), 0)
 				if eerr != nil {
 					return eerr
 				}

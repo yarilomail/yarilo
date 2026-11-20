@@ -1,6 +1,7 @@
 package file
 
 import (
+	"fmt"
 	"log/slog"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
@@ -57,4 +58,45 @@ func moveCount(n uint32, old, now, flag mailindex.MailFlag) uint32 {
 		return n - 1
 	}
 	return n
+}
+
+// checkHeaderLocked is the cheap check after a load or a replay, as the
+// reference's mail_index_map_check_header (INDEX-MEMORY.md §4): counts the
+// header can be held to without reading the records, and the last uid from
+// the last chunk only. A failed check is the one sign that recounts all.
+func (fs *folderState) checkHeaderLocked() error {
+	h := fs.file.Header
+	n := uint32(fs.recordCount())
+	ok := h.NextUID != 0 && h.MessagesCount == n &&
+		h.SeenMessagesCount <= h.MessagesCount && h.DeletedMessagesCount <= h.MessagesCount
+	if ok && n > 0 {
+		if fs.recs != nil {
+			if err := fs.recs.Load(int(n)-1, int(n)); err != nil {
+				return fmt.Errorf("fileindex/header: %w", err)
+			}
+		}
+		ok = fs.recUID(int(n)-1) < h.NextUID
+	}
+	if ok {
+		return nil
+	}
+	if err := fs.loadRecords(); err != nil {
+		return err
+	}
+	fs.reconcileHeaderLocked()
+	return nil
+}
+
+// loadWriterRecords loads a writer's chunks, and on the load that brings in
+// the last of them recounts the header on the way: a stale count does not
+// outlive the first whole read, and no read is made for it alone.
+func (fs *folderState) loadWriterRecords() error {
+	if fs.recs == nil || fs.recs.AllLoaded() {
+		return nil
+	}
+	if err := fs.loadRecords(); err != nil {
+		return err
+	}
+	fs.reconcileHeaderLocked()
+	return nil
 }

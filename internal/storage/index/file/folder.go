@@ -155,7 +155,7 @@ func (fs *folderState) leaveRecordsOnDisk() {
 	}
 	header := *fs.file
 	header.Records = nil
-	fs.file = &header
+	fs.file, fs.recs = &header, nil
 	fs.recordsLeft = true
 }
 
@@ -318,11 +318,11 @@ func (u *userIndex) loadExisting(fs *folderState) error {
 // readBase opens the base into fs.file, records its mtime and replays the log,
 // resetting a mismatched-IndexID one under the folder lock.
 func (u *userIndex) readBase(fs *folderState) error {
-	mf, err := mailindex.Open(fs.indexPath)
+	mf, recs, err := openWriterBase(fs)
 	if err != nil {
 		return fmt.Errorf("fileindex/openfolder: open: %w", err)
 	}
-	fs.file = mf
+	fs.file, fs.recs = mf, recs
 	// Every path that loads a base learns its pairing here, so the lineage
 	// question is answered by the file, not by which function loaded it.
 	fs.lineage = readLineage(mf)
@@ -528,6 +528,10 @@ func (fs *folderState) ensureVsizeLocked() {
 	if fs.vsizeCurrent() {
 		return
 	}
+	if err := fs.loadWriterRecords(); err != nil {
+		slog.Warn("fileindex: vsize recount needs the records", "folder", fs.folder, "err", err)
+		return
+	}
 	fs.recalcVsizeLocked()
 }
 
@@ -605,10 +609,28 @@ func (fs *folderState) countFrom(uid uint32) (uint32, error) {
 	if uid >= fs.file.Header.NextUID {
 		return 0, nil
 	}
+	n := fs.recordCount()
+	if fs.recs != nil && n > 0 {
+		// The recent ones are the newest: the last chunk answers it alone, and
+		// a mark at or below the first record says all, without the rest.
+		last := (n - 1) / mailindex.ChunkRecords * mailindex.ChunkRecords
+		if err := fs.recs.Load(last, n); err != nil {
+			return 0, err
+		}
+		if uid >= fs.recUID(last) {
+			i := last + sort.Search(n-last, func(i int) bool { return fs.recUID(last+i) >= uid })
+			return uint32(n - i), nil
+		}
+		if err := fs.recs.Load(0, 1); err != nil {
+			return 0, err
+		}
+		if uid <= fs.recUID(0) {
+			return uint32(n), nil
+		}
+	}
 	if err := fs.loadRecords(); err != nil {
 		return 0, err
 	}
-	n := fs.recordCount()
 	i := sort.Search(n, func(i int) bool { return fs.recUID(i) >= uid })
 	return uint32(n - i), nil
 }
@@ -680,6 +702,10 @@ func (fs *folderState) flush() error {
 	if fs.recordsLeft {
 		return errRecordsLeft
 	}
+	// The base is written from every record: a writer's chunks all loaded.
+	if err := fs.loadWriterRecords(); err != nil {
+		return err
+	}
 	// flush persists Header.NextUID as ground truth and discards the log; name
 	// the caller so a NextUID regression traces to the flush that wrote it.
 	if pc, _, _, ok := runtime.Caller(1); ok {
@@ -718,7 +744,7 @@ func (fs *folderState) flush() error {
 		Lineage:       prev.Lineage + 1,
 		FoldedLineage: folded,
 		FoldedOffset:  uint64(fs.logSize),
-		RecordsDigest: digestRecords(fs.file),
+		RecordsDigest: fs.digestRecords(),
 	}
 	// Lineages start above the pre-extension constant, so a stamped base cannot
 	// claim such a log as its own and replay what it already absorbed.
@@ -735,6 +761,17 @@ func (fs *folderState) flush() error {
 	}
 	fs.reconcileHeaderLocked()
 	ri := fs.file.ToRecreateInput(fs.indexPath)
+	if fs.recs != nil {
+		if layout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions); lerr == nil && sameLayout(layout, fs.recs.Layout()) {
+			ri.Records, ri.RecordBytes = nil, fs.recs.Bytes()
+		} else {
+			// Chunks in another layout than the base will have: encoded anew.
+			if err := fs.decodeForRewrite(); err != nil {
+				return err
+			}
+			ri = fs.file.ToRecreateInput(fs.indexPath)
+		}
+	}
 	if fs.volatileDir != "" {
 		if err := os.MkdirAll(fs.volatileDir, 0o700); err != nil {
 			return fmt.Errorf("fileindex/flush: mkdir volatile: %w", err)
@@ -787,6 +824,10 @@ func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folder
 			defer release()
 		}
 		if err := fs.missingBase(fs.reload()); err != nil {
+			return err
+		}
+		// A write may change any record: the writer's chunks are all loaded.
+		if err := fs.loadWriterRecords(); err != nil {
 			return err
 		}
 		return fn(fs)
@@ -934,7 +975,7 @@ func (fs *folderState) reloadLocked() error {
 	}
 	recordsBefore := 0
 	if fs.file != nil {
-		recordsBefore = len(fs.file.Records)
+		recordsBefore = fs.recordCount()
 	}
 	slog.Debug("fileindex: reload full",
 		"trace_id", fs.traceID, "folder", fs.folder,
@@ -953,10 +994,12 @@ func (fs *folderState) reloadLocked() error {
 		// A rewritten base often holds exactly what this handle holds -- a
 		// compaction folding in the applied log. The digest proves it: several
 		// paths fold the same log, so offsets agreeing is not enough (#1228).
-		if fs.file != nil && !logReplaced && !fs.recordsLeft {
+		// Only a writer holding every record can prove the new base holds the
+		// same: chunks it never loaded belong to a base that is gone.
+		if fs.file != nil && !logReplaced && !fs.recordsLeft && (fs.recs == nil || fs.recs.AllLoaded()) {
 			if h, perr := peekLineage(fs.indexPath); perr == nil && h.Lineage != lineageUnknown &&
 				h.FoldedLineage == fs.lineage.Lineage && uint64(fs.logSize) >= h.FoldedOffset &&
-				h.RecordsDigest == digestRecords(fs.file) {
+				h.RecordsDigest == fs.digestRecords() {
 				fs.lineage = h
 				fs.baseMod = newBaseMod
 				fs.baseIdent = baseStat
@@ -975,11 +1018,11 @@ func (fs *folderState) reloadLocked() error {
 				return fs.applyLogTail(lg)
 			}
 		}
-		mf, err := mailindex.Open(fs.indexPath)
+		mf, recs, err := openWriterBase(fs)
 		if err != nil {
 			return fmt.Errorf("fileindex/reload: %w", err)
 		}
-		fs.file = mf
+		fs.file, fs.recs = mf, recs
 		fs.recordsLeft = false
 		if err := fs.refreshExtState(); err != nil {
 			return err
@@ -1004,7 +1047,7 @@ func (fs *folderState) reloadLocked() error {
 	slog.Debug("fileindex: reload applied",
 		"trace_id", fs.traceID, "folder", fs.folder,
 		"records_before", recordsBefore,
-		"records_after", len(fs.file.Records),
+		"records_after", fs.recordCount(),
 		"next_uid_before", nextUIDBefore,
 		"next_uid_after", fs.file.Header.NextUID,
 		"log_size", fs.logSize,
@@ -1060,6 +1103,9 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 		return fmt.Errorf("fileindex/adopt: uid validity 0")
 	}
 	return u.withFolderSite(folderID, lockSiteAdoptUidSpace, func(fs *folderState) error {
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		if len(fs.file.Records) > 0 {
 			return fmt.Errorf("fileindex/adopt: folder %q holds %d messages: %w",
 				fs.folder, len(fs.file.Records), mailbox.ErrUIDSpaceInUse)
@@ -1144,6 +1190,9 @@ func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 		// existing records gain 16 zero bytes on the next write.
 		if err := fs.declareRecordExtLocked(extNameGUID, encodeGUIDHdr(guidStatePending),
 			guidRecSize, 1, fs.file.Header.UIDValidity); err != nil {
+			return err
+		}
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
 			return err
 		}
 		for _, rec := range fs.file.Records {
@@ -1442,6 +1491,11 @@ func (fs *folderState) applyChecked(recs [][]byte, checked bool) error {
 	}
 	st := replayState{layout: layout, checked: checked}
 	for _, rec := range recs {
+		if replaySeam != nil {
+			if err := replaySeam(); err != nil {
+				return err
+			}
+		}
 		hdr, err := mailindex.DecodeTxHeader(rec)
 		if err != nil {
 			return fmt.Errorf("fileindex/apply: %w", err)
@@ -1806,6 +1860,9 @@ func (u *userIndex) AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 			current = was
 			return fs.flush()
 		}
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		if was != uidValidity && len(fs.file.Records) > 0 {
 			dropped := len(fs.file.Records)
 			if _, err := u.resetFolderLocked(fs, nil); err != nil {
@@ -1844,6 +1901,9 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 		}
 		// What the folder held before the reset, with each record's identity:
 		// a dropped one is retracted from the search index by it (#1986).
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		before := make(map[uint32][16]byte, len(fs.file.Records))
 		for _, rec := range fs.file.Records {
 			before[rec.UID] = decodeGUIDRec(rec.Ext[extNameGUID])
@@ -1953,7 +2013,7 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 		slog.Debug("fileindex: reset folder",
 			"folder", fs.folder,
 			"records_before", len(before),
-			"records_after", len(fs.file.Records),
+			"records_after", fs.recordCount(),
 			"dropped", len(expunged))
 		return nil
 	}()
@@ -1976,6 +2036,9 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 	}
 	return u.withFolderSite(folderID, lockSiteSetAltTier, func(fs *folderState) error {
 		changed := false
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		for _, rec := range fs.file.Records {
 			mapUID, _ := decodeMdboxRec(rec.Ext[extNameMdbox])
 			if _, ok := set[strconv.FormatUint(uint64(mapUID), 10)]; !ok {
@@ -2488,6 +2551,11 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if err != nil {
 		return fromOffset, err
 	}
+	if len(tail) > 0 {
+		if err := fs.loadRecords(); err != nil {
+			return fromOffset, err
+		}
+	}
 
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
 	if err != nil {
@@ -2584,7 +2652,9 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 		}
 	}
 
-	fs.reconcileHeaderLocked()
+	if err := fs.checkHeaderLocked(); err != nil {
+		return committedEnd, err
+	}
 
 	// Truncate any partial tail after the last complete BOUNDARY, only on full
 	// replay (fromOffset==0) -- incremental appends are always complete.
@@ -2995,6 +3065,9 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.C
 			cacheCRCRecSize, 4, fs.file.Header.UIDValidity); err != nil {
 			return err
 		}
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		for _, rec := range fs.file.Records {
 			stamp, ok := stamps[rec.UID]
 			if !ok || stamp.Offset == 0 {
@@ -3066,6 +3139,9 @@ func (u *userIndex) PurgeCache(folderID uint64) (carried int, reclaimed int64, e
 			return nil
 		}
 
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		live := make(map[uint32]uint32, len(fs.file.Records))
 		for _, rec := range fs.file.Records {
 			if off := decodeCacheRec(rec.Ext[extNameCache]); off != 0 {
@@ -3129,6 +3205,9 @@ func abandonCacheGeneration(fs *folderState) (uint32, error) {
 		return 0, nil
 	}
 	ext.ResetID = newCacheGeneration(ext.ResetID)
+	if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+		return 0, err
+	}
 	for _, rec := range fs.file.Records {
 		delete(rec.Ext, extNameCache)
 	}

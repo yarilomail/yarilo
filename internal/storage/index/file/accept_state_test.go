@@ -122,7 +122,11 @@ func writerAppendAlloc(t *testing.T, n int) uint64 {
 	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	// As a locked write does: reload, then every chunk the writer may change.
 	if err := fs.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.loadWriterRecords(); err != nil {
 		t.Fatal(err)
 	}
 	const appends = 10
@@ -146,4 +150,32 @@ func TestTheWritersAppendAllocatesNothingPerFolderMessage(t *testing.T) {
 		t.Errorf("one append allocates %d B at %d, %d B at %d: %.1f B a folder message, bound %d",
 			small, acceptSmall, large, acceptLarge, grow, changeGrowth)
 	}
+}
+
+// writingSessionHeld is the heap a session holds on a folder of n after a
+// flag change and a read of every record.
+func writingSessionHeld(t *testing.T, n int) uint64 {
+	t.Helper()
+	home := movedFolder(t, n)
+	// The image the fill left in the cache would sit in the baseline.
+	baseImages.Delete(indexPathFor(home))
+	before := heapInUse()
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	if err := h.UpdateFlags(f.ID, 3, []string{`\Seen`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := h.GetMessages(f.ID, mailbox.SeqSet{})
+	if err != nil || len(msgs) != n {
+		t.Fatalf("read %d of %d: %v", len(msgs), n, err)
+	}
+	return max(heapInUse(), before) - before
+}
+
+// 8: a session that writes holds its folder as bytes too: the writer's reload
+// under the hold no longer decodes the folder (step 3b-2a-ii).
+func TestAcceptAWritingSessionHoldsItsFolderAsBytes(t *testing.T) {
+	small, large := writingSessionHeld(t, acceptSmall), writingSessionHeld(t, acceptLarge)
+	held := slope(small, large)
+	acceptance(t, 8, held <= 1.5*acceptRecord, fmt.Sprintf("%.0f B a message held after a write, bound %.0f", held, 1.5*acceptRecord))
 }

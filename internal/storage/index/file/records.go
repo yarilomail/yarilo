@@ -2,6 +2,7 @@ package file
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
@@ -166,4 +167,40 @@ func sameLayout(a, b mailindex.RecordLayout) bool {
 		}
 	}
 	return true
+}
+
+// writerDecoded is a test seam: the writer holds decoded records, as before
+// chunks, so a row can compare the two. False everywhere else.
+var writerDecoded bool
+
+// openWriterBase loads a base for the writer: a fork of the base image the
+// readers share, every chunk in memory, so the base's records are held once
+// however many handles and views read it (INDEX-MEMORY.md §4).
+func openWriterBase(fs *folderState) (*mailindex.File, *mailindex.Records, error) {
+	if writerDecoded {
+		f, err := mailindex.Open(fs.indexPath)
+		return f, nil, err
+	}
+	img, err := imageFor(fs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if img.recs == nil {
+		return cloneIndexFile(img.file), nil, nil
+	}
+	return cloneIndexFile(img.file), img.recs.Fork(), nil
+}
+
+// decodeForRewrite gives an operation that still writes decoded records
+// those records, until step 3b-2b moves it onto chunks. A layout that does not
+// decode is a damaged index: an error for the caller, not the process's end.
+func (fs *folderState) decodeForRewrite() error {
+	if fs.recs == nil {
+		return nil
+	}
+	if err := fs.decodeRecords(); err != nil {
+		slog.Error("fileindex: the writer's records do not decode", "folder", fs.folder, "err", err)
+		return err
+	}
+	return nil
 }
