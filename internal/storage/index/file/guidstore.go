@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/yarilomail/yarilo/v2/internal/sortedfile"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -73,7 +72,7 @@ type guidStore struct {
 	mu sync.Mutex
 	id uint64
 	// lookup is the open lookup file (guidlookup.go).
-	lookup *sortedfile.Reader
+	lookup *lookupRef
 	// rebuilding: a rebuild of this process holds the store, and a writer here
 	// would pass that hold as its own; it fails and marks its folder instead.
 	rebuilding atomic.Bool
@@ -585,6 +584,9 @@ func (u *userIndex) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
 			return u.guidCopiesByScan(guids)
 		case errors.Is(err, errGUIDBaseMoved):
 			continue
+		case errors.Is(err, errGUIDLookupUnread) && attempt == 0:
+			u.dropGUIDLookup()
+			continue
 		default:
 			return nil, err
 		}
@@ -677,10 +679,7 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	// keeps them answers from a store nobody has any more (#1986).
 	id := u.guid.id
 	u.guid.id = 0
-	if u.guid.lookup != nil {
-		u.guid.lookup.Close() //nolint:errcheck
-		u.guid.lookup = nil
-	}
+	u.guid.retireLookupLocked()
 	if id != 0 {
 		u.mu.Lock()
 		if fs := u.open[id]; fs != nil {

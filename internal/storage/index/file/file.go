@@ -968,10 +968,7 @@ func (u *userIndex) Close() error {
 	u.byDir = nil
 	u.mu.Unlock()
 	u.guid.mu.Lock()
-	if u.guid.lookup != nil {
-		u.guid.lookup.Close() //nolint:errcheck
-		u.guid.lookup = nil
-	}
+	u.guid.retireLookupLocked()
 	u.guid.mu.Unlock()
 	return nil
 }
