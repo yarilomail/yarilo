@@ -140,4 +140,8 @@ var (
 		Name: "maildir_uidlist_stamp_miss_total",
 		Help: "Folder opens where the uid list had moved on from the stamp, or there was none.",
 	})
+	metricListStampAligned = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "maildir_uidlist_stamp_aligned_total",
+		Help: "Saves whose UID space the index answered alone, the uid list matching the stamp it recorded.",
+	})
 )

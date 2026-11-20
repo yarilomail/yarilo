@@ -102,7 +102,9 @@ func (fs *folderState) sizelessCandidate(uid uint32) (candidate, ok bool, err er
 		}
 		switch hdr.Type.Kind() {
 		case mailindex.TxTypeAppend:
-		case mailindex.TxTypeExtRecUpdate, mailindex.TxTypeExtIntro, mailindex.TxTypeExpungeGUID | mailindex.TxType(mailindex.TxExpungeProt):
+		case mailindex.TxTypeExtIntro:
+			continue // it names the extension what follows writes, no size
+		case mailindex.TxTypeExtRecUpdate, mailindex.TxTypeExpungeGUID | mailindex.TxType(mailindex.TxExpungeProt):
 			// A size stamped, or a record gone, after the append: the applied
 			// records answer.
 			return true, true, nil

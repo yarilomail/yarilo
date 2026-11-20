@@ -348,6 +348,20 @@ type NamingAppender interface {
 	AllocateAndAppendNamed(folderID uint64, m *MessageMeta, name func(uid uint32) (string, error)) error
 }
 
+// StampingAppender is a NamingAppender that also records, in the same hold,
+// the stamp of the uid list the naming left: the next save then need not read
+// the list for its UID space (#2643).
+type StampingAppender interface {
+	AllocateAndAppendStamped(folderID uint64, m *MessageMeta, name func(uid uint32) (string, *MaildirStamp, error)) error
+}
+
+// AppendedListStamper is a driver that knows the stamp of its uid list after
+// the row it just appended, when that row is all that changed since the list
+// last agreed with the index.
+type AppendedListStamper interface {
+	AppendedListStamp(folder string) (MaildirStamp, bool)
+}
+
 // StaleTemp is when a body a save left behind stops meaning "in flight" and
 // starts meaning "died": one value, so every driver sweeps alike (#1736).
 const StaleTemp = 24 * time.Hour

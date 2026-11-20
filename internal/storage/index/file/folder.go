@@ -503,7 +503,7 @@ func (fs *folderState) recalcVsizeLocked() {
 		return
 	}
 	fs.vsize = hdrVsize{}
-	fs.vsizeAddFrom(0, nil, nil)
+	_ = fs.vsizeAddFrom(0, nil, nil)
 }
 
 // isGUIDStore says this state is the user's GUID store, not a folder.
@@ -515,7 +515,7 @@ func (fs *folderState) isGUIDStore() bool {
 // appends in pending, in uid order, stopping before the first without a size.
 // Through them all, it reaches the folder's next uid less one: a uid with no
 // record does not hold it.
-func (fs *folderState) vsizeAddFrom(seq int, appends [][]byte, gone map[uint32]bool) {
+func (fs *folderState) vsizeAddFrom(seq int, appends [][]byte, gone map[uint32]bool) (reached bool) {
 	add := func(uid, size uint32) bool {
 		if gone[uid] {
 			return true
@@ -532,14 +532,28 @@ func (fs *folderState) vsizeAddFrom(seq int, appends [][]byte, gone map[uint32]b
 	for i := seq; i < fs.recordCount(); i++ {
 		v, _ := fs.recExt(i, extNameVsize)
 		if !add(fs.recUID(i), decodeVsizeRec(v)) {
-			return
+			return false
 		}
 	}
 	if !fs.vsizeAddAppends(appends, add) {
-		return
+		return false
 	}
 	if n := fs.file.Header.NextUID; n > 0 && n-1 > fs.vsize.HighestUID {
 		fs.vsize.HighestUID = n - 1
+	}
+	return true
+}
+
+// vsizeForget takes an expunged record out of the aggregate, once, in the
+// replay every expunge goes through: only a record the aggregate counted.
+func (fs *folderState) vsizeForget(seq int, uid uint32) {
+	if uid > fs.vsize.HighestUID || fs.isGUIDStore() {
+		return
+	}
+	v, _ := fs.recExt(seq, extNameVsize)
+	fs.vsize.Vsize -= min(fs.vsize.Vsize, uint64(decodeVsizeRec(v)))
+	if fs.vsize.MessageCount > 0 {
+		fs.vsize.MessageCount--
 	}
 }
 
@@ -556,11 +570,10 @@ func (fs *folderState) ensureVsizeView() error {
 	return fs.catchUpVsize()
 }
 
-// vsizeCurrentBefore says the aggregate counts every record below uid: it is
-// current for the folder as it was before uid was handed out.
+// vsizeCurrentBefore says the aggregate counts every record below uid. Called
+// before the append's own replay, so the header does not count it yet.
 func (fs *folderState) vsizeCurrentBefore(uid uint32) bool {
-	return fs.vsize.HighestUID+1 == uid && fs.vsize.MessageCount+1 == fs.file.Header.MessagesCount ||
-		fs.vsize.HighestUID+1 == uid && fs.vsize.MessageCount == fs.file.Header.MessagesCount
+	return fs.vsize.HighestUID+1 == uid && fs.vsize.MessageCount == fs.file.Header.MessagesCount
 }
 
 func (fs *folderState) vsizeCurrent() bool {
@@ -648,7 +661,11 @@ func (fs *folderState) catchUpVsize() error {
 	if err := fs.recs.Load(seq, fs.recordCount()); err != nil {
 		return err
 	}
-	fs.vsizeAddFrom(seq, appends, gone)
+	// Through to the end, the aggregate counts every message the header does;
+	// any other count is one it was wrong about before, and is recounted.
+	if fs.vsizeAddFrom(seq, appends, gone) && fs.vsize.MessageCount != fs.file.Header.MessagesCount {
+		return fs.recountVsize()
+	}
 	return nil
 }
 
@@ -1001,6 +1018,18 @@ func (fs *folderState) flush() error {
 			"extensions", extInventory(ri.Extensions),
 			"keyword_names", len(fs.keywords.Names))
 		return fmt.Errorf("fileindex/flush: recreate: %w", err)
+	}
+	// The base lists its extensions in layout order; an intro journalled after
+	// this names one by its place there, so memory takes the same order: one
+	// added since the last base sat elsewhere, and an update went to another
+	// extension's header (#2643).
+	if layout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions); lerr == nil {
+		for i := range layout.Extensions {
+			if e := findExt(fs.file.Extensions, layout.Extensions[i].Name); e != nil {
+				layout.Extensions[i] = *e
+			}
+		}
+		fs.file.Extensions = layout.Extensions
 	}
 	fs.lineage = next
 	fs.flushes++
@@ -1467,6 +1496,19 @@ func (u *userIndex) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) e
 // AllocateAndAppendNamed settles the name inside the cycle that hands out the
 // uid: a second cycle would take the folder key twice for one APPEND (#1704).
 func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, error)) error {
+	var stamped func(uint32) (string, *mailbox.MaildirStamp, error)
+	if name != nil {
+		stamped = func(uid uint32) (string, *mailbox.MaildirStamp, error) {
+			n, err := name(uid)
+			return n, nil, err
+		}
+	}
+	return u.AllocateAndAppendStamped(folderID, m, stamped)
+}
+
+// AllocateAndAppendStamped is AllocateAndAppendNamed recording the uid list
+// stamp the naming answered with, in the same hold (#2643).
+func (u *userIndex) AllocateAndAppendStamped(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, *mailbox.MaildirStamp, error)) error {
 	if err := u.withFolderSite(folderID, lockSiteAppend, func(fs *folderState) error {
 		next := fs.file.Header.NextUID
 		if next == 0 {
@@ -1474,10 +1516,13 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 		}
 		fs.file.Header.NextUID = next + 1
 		m.UID = next
+		var stamp *mailbox.MaildirStamp
 		if name != nil {
-			if _, nerr := name(m.UID); nerr != nil {
+			_, s, nerr := name(m.UID)
+			if nerr != nil {
 				return nerr
 			}
+			stamp = s
 		}
 		rec, err := fs.appendLockedWith(m, nil)
 		if err != nil {
@@ -1485,6 +1530,11 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 		}
 		if err := fs.flushAppend(rec); err != nil {
 			return err
+		}
+		if stamp != nil {
+			if err := fs.setMaildirStampLocked(*stamp); err != nil {
+				return err
+			}
 		}
 		u.trackAppendedGUID(fs, m)
 		u.compactLogIfNeeded(fs)
@@ -1892,20 +1942,6 @@ func (fs *folderState) expungeLocked(uid uint32, modseq uint64) ([][]byte, error
 	}
 	if c, _ := fs.recExt(seq, extNameCache); decodeCacheRec(c) != 0 {
 		fs.cacheGone++
-	}
-	v, _ := fs.recExt(seq, extNameVsize)
-	expungedVSize := decodeVsizeRec(v)
-	// Only what the aggregate counted leaves it: a record above its highest
-	// uid was never in it.
-	if uid <= fs.vsize.HighestUID {
-		if uint64(expungedVSize) <= fs.vsize.Vsize {
-			fs.vsize.Vsize -= uint64(expungedVSize)
-		} else {
-			fs.vsize.Vsize = 0
-		}
-		if fs.vsize.MessageCount > 0 {
-			fs.vsize.MessageCount--
-		}
 	}
 
 	// 28-byte payload: uid(4)+guid(16)+modseq(8). Compatible with
@@ -2969,6 +3005,7 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 				if flags&mailindex.FlagDeleted != 0 {
 					fs.file.Header.DeletedMessagesCount--
 				}
+				fs.vsizeForget(seq, uid)
 				fs.recExpunge(seq)
 				fs.file.Header.MessagesCount--
 			}
