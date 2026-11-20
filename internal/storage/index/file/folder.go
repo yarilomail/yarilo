@@ -1309,7 +1309,7 @@ func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string
 	if err != nil {
 		return nil, err
 	}
-	if err := fs.applyRecords(recs); err != nil {
+	if err := fs.applyChecked(recs, true); err != nil {
 		return nil, err
 	}
 	fs.vsize.Vsize += uint64(m.RFC822Size())
@@ -1426,7 +1426,11 @@ func (fs *folderState) writeFlagsLocked(uid uint32, flags, keywords []string, mo
 
 // applyRecords applies journal records the writer is about to append, through
 // the replay every reader of the journal uses.
-func (fs *folderState) applyRecords(recs [][]byte) error {
+func (fs *folderState) applyRecords(recs [][]byte) error { return fs.applyChecked(recs, false) }
+
+// applyChecked is applyRecords for records whose appended uids the writer has
+// already found absent, so the replay does not search for them again.
+func (fs *folderState) applyChecked(recs [][]byte, checked bool) error {
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
 	if err != nil {
 		return fmt.Errorf("fileindex/apply: record layout: %w", err)
@@ -1436,7 +1440,7 @@ func (fs *folderState) applyRecords(recs [][]byte) error {
 			return err
 		}
 	}
-	st := replayState{layout: layout}
+	st := replayState{layout: layout, checked: checked}
 	for _, rec := range recs {
 		hdr, err := mailindex.DecodeTxHeader(rec)
 		if err != nil {
@@ -2602,6 +2606,8 @@ type replayState struct {
 	// lastIntro names the extension an EXT_HDR_UPDATE patches, as the wire
 	// format defines it: the record itself carries no name.
 	lastIntro string
+	// checked says the writer already found the appended uids absent.
+	checked bool
 }
 
 // applyRecord applies one journal record to the folder state: the one place
@@ -2743,25 +2749,32 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 		if stride == 0 {
 			return nil
 		}
-		// Decoded records keep no uid order to search, so a set for O(1) dedup.
+		// The writer's own appends were found absent before they were built.
+		// Otherwise decoded records keep no uid order to search, so a set,
+		// built once for the payload. The header's next uid is no proof: a
+		// stale header is what a replay may be healing.
 		var existing map[uint32]struct{}
-		if fs.recs == nil {
-			existing = make(map[uint32]struct{}, len(fs.file.Records))
-			for _, r := range fs.file.Records {
-				existing[r.UID] = struct{}{}
-			}
-		}
 		for i := 0; i+stride <= len(payload); i += stride {
 			rec, recErr := mailindex.DecodeRecord(payload[i:i+stride], st.layout)
 			if recErr != nil {
 				break
 			}
 			dup := false
-			if existing != nil {
-				_, dup = existing[rec.UID]
-				existing[rec.UID] = struct{}{}
-			} else {
+			switch {
+			case st.checked:
+			case fs.recs != nil:
 				_, dup = fs.recSeqOfUID(rec.UID)
+			default:
+				if existing == nil {
+					existing = make(map[uint32]struct{}, len(fs.file.Records))
+					for _, r := range fs.file.Records {
+						existing[r.UID] = struct{}{}
+					}
+				}
+				_, dup = existing[rec.UID]
+			}
+			if existing != nil {
+				existing[rec.UID] = struct{}{}
 			}
 			if dup {
 				continue // already present from base file or earlier log replay
