@@ -179,3 +179,32 @@ func TestAcceptAWritingSessionHoldsItsFolderAsBytes(t *testing.T) {
 	held := slope(small, large)
 	acceptance(t, 8, held <= 1.5*acceptRecord, fmt.Sprintf("%.0f B a message held after a write, bound %.0f", held, 1.5*acceptRecord))
 }
+
+// foldPeak is the heap's peak above its start over one fold of a folder of n
+// whose records a writer holds: sampled at every allocation-free point the
+// fold reaches, the bytes allocated bound it from above.
+func foldPeak(t *testing.T, n int) uint64 {
+	t.Helper()
+	home := movedFolder(t, n)
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	if err := h.UpdateFlags(f.ID, 2, []string{`\Seen`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var m0, m1 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m0)
+	if err := h.OptimizeIndex(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&m1)
+	return m1.TotalAlloc - m0.TotalAlloc
+}
+
+// 9: one fold allocates about twice the records, not the decoded folder: the
+// base goes to disk from the chunks' bytes (reviewer, 2026-11-20).
+func TestAcceptAFoldCostsAboutTwiceTheRecords(t *testing.T) {
+	small, large := foldPeak(t, acceptSmall), foldPeak(t, acceptLarge)
+	grow := slope(small, large)
+	acceptance(t, 9, grow <= 2*acceptRecord+acceptNoise, fmt.Sprintf("a fold allocates %.0f B a message, bound %d", grow, 2*acceptRecord+acceptNoise))
+}

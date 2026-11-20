@@ -166,12 +166,27 @@ func (fs *folderState) decodeRecords() error {
 }
 
 func sameLayout(a, b mailindex.RecordLayout) bool {
-	if a.RecordSize != b.RecordSize || len(a.Extensions) != len(b.Extensions) {
+	if a.RecordSize != b.RecordSize {
 		return false
 	}
-	for i := range a.Extensions {
-		if a.Extensions[i].Name != b.Extensions[i].Name || a.Extensions[i].RecordOffset != b.Extensions[i].RecordOffset ||
-			a.Extensions[i].RecordSize != b.Extensions[i].RecordSize {
+	// Only the extensions with bytes in a record place them; header-only ones
+	// sit at offset 0 in no fixed order.
+	type place struct{ off, size uint16 }
+	of := func(l mailindex.RecordLayout) map[string]place {
+		m := map[string]place{}
+		for _, e := range l.Extensions {
+			if e.RecordSize != 0 {
+				m[e.Name] = place{uint16(e.RecordOffset), uint16(e.RecordSize)}
+			}
+		}
+		return m
+	}
+	pa, pb := of(a), of(b)
+	if len(pa) != len(pb) {
+		return false
+	}
+	for name, p := range pa {
+		if pb[name] != p {
 			return false
 		}
 	}
