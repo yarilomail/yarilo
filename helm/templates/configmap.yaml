@@ -1208,6 +1208,8 @@ data:
       threading_cache_idle: {{ .Values.components.backend.threading.cache_idle | int64 }}
       ## The thread log's size past which it is merged into its sorted base.
       threading_tail_size: {{ .Values.components.backend.threading.tail_size | toString | quote }}
+      ## How many messages a conversation holds.
+      threading_max_thread: {{ .Values.components.backend.threading.max_thread | int64 }}
 
     director_service:
       listen: {{ printf ":%d" (int .Values.components.director.directorPort) | quote }}
