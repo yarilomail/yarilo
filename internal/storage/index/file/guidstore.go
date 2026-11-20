@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
@@ -299,7 +298,7 @@ func (fs *folderState) markGUIDMissedLocked() error {
 	if ext := findExt(fs.file.Extensions, extNameGUIDMissed); ext != nil && hdrStamp(ext.HdrData) != 0 {
 		return nil
 	}
-	return fs.setGUIDMissedLocked(uint64(time.Now().Unix()))
+	return fs.setGUIDMissedLocked(uint64(nowUnix()))
 }
 
 // setGUIDMissedLocked writes the folder's mark by a base rewrite: the mark is
@@ -635,7 +634,7 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	// the guidmap extension refuses the next append, which loses the copy.
 	complete := make([]byte, guidCompleteHdrSize)
 	if whole {
-		binary.LittleEndian.PutUint64(complete, uint64(time.Now().Unix()))
+		binary.LittleEndian.PutUint64(complete, uint64(nowUnix()))
 	}
 	exts := append(defaultExtensions(1, [16]byte{}), mailindex.Extension{
 		Name: extNameGUIDMap, RecordSize: guidMapRecSize, RecordAlign: 8, ResetID: 1,
@@ -650,7 +649,7 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	if err != nil {
 		return fmt.Errorf("fileindex/guid-rebuild: extension headers: %w", err)
 	}
-	hdr := mailindex.NewHeader(uint32(time.Now().Unix()))
+	hdr := mailindex.NewHeader(uint32(nowUnix()))
 	hdr.UIDValidity = 1
 	hdr.RecordSize = layout.RecordSize
 	hdr.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))

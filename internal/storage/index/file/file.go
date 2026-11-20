@@ -1231,7 +1231,7 @@ func ensureLogStub(indexPath, volatileDir string, indexID, lineage uint32) error
 	}
 	// The stub announces the base it belongs to: carrying the old constant it
 	// would pair with nothing, leaving the folder unprovable until an append.
-	hdr := mailindex.NewLogHeader(indexID, lineage, uint32(time.Now().Unix()))
+	hdr := mailindex.NewLogHeader(indexID, lineage, uint32(nowUnix()))
 	if err := hdr.Encode(f); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)

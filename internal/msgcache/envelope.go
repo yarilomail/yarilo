@@ -133,6 +133,10 @@ type Options struct {
 
 // openExclusive retries a shared open that reached a step which writes. Once:
 // the second pass is not shared, so it cannot come back here.
+// afterGenerationBump is a test seam: an open stopped between taking a new
+// generation and dropping the invalid file. Nil everywhere else.
+var afterGenerationBump func() error
+
 func openExclusive(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 	opts.Shared = false
 	return Open(idx, folderID, opts)
@@ -221,14 +225,20 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 			// would leave the index's stamps pointing into a fresh file,
 			// where the first append to reach one of those offsets answers
 			// its FETCH with another message's record. Enter a new
-			// generation, which kills every stamp in one index write.
-			_ = os.Remove(path)
+			// generation, which kills every stamp in one index write, and
+			// only then drop the file: stopped between the two, a missing
+			// file must not be recreated under the generation the stamps
+			// still name (#2634).
 			newSeq, berr := ic.BumpCacheGeneration(folderID)
+			if berr == nil && afterGenerationBump != nil {
+				berr = afterGenerationBump()
+			}
 			if berr != nil {
 				slog.Debug("msgcache: cache generation bump failed; serving uncached", "trace_id", opts.TraceID, "err", berr)
 				fc.release()
 				return nil
 			}
+			_ = os.Remove(path)
 			resetID = newSeq
 		}
 		cf, cerr := mailindex.CreateCache(path, indexID, resetID)

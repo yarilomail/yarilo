@@ -60,10 +60,10 @@ func moveCount(n uint32, old, now, flag mailindex.MailFlag) uint32 {
 	return n
 }
 
-// checkHeaderLocked is the cheap check after a load or a replay, as the
-// reference's mail_index_map_check_header (INDEX-MEMORY.md §4): counts the
-// header can be held to without reading the records, and the last uid from
-// the last chunk only. A failed check is the one sign that recounts all.
+// checkHeaderLocked is the cheap check after a load or a replay
+// (INDEX-MEMORY.md §4): counts the header can be held to without reading the
+// records, and the last uid from the last chunk only. A failed check is the
+// one sign that recounts all.
 func (fs *folderState) checkHeaderLocked() error {
 	h := fs.file.Header
 	n := uint32(fs.recordCount())
