@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // asUnorderedBase rewrites the folder's base as 2.4.7 could write it: the
@@ -156,5 +157,45 @@ func TestAWriterWritesItsBaseInOrder(t *testing.T) {
 	}
 	if got := mustLineage(t, home).Flags; got&lineageInUIDOrder == 0 {
 		t.Error("the base is not marked as in order")
+	}
+}
+
+// A base whose header's next uid fell below its last record is written with it
+// raised, and a delivery's duplicate check, which trusts a marked base's next
+// uid, still finds the uid (INDEX-MEMORY.md §4, reviewer 2026-11-20).
+func TestABaseWithItsNextUIDLowIsWrittenWithItRaised(t *testing.T) {
+	const n = 2*mailindex.ChunkRecords + 3
+	home := movedFolder(t, n)
+	h, f := acceptOpen(t, home)
+	fs, err := h.(*userHandle).ui.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	if err := fs.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.loadWriterRecords(); err != nil {
+		t.Fatal(err)
+	}
+	fs.file.Header.NextUID = 5
+	ferr := fs.foldLocked()
+	fs.mu.Unlock()
+	h.Close() //nolint:errcheck
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	disk, err := mailindex.Open(indexPathFor(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := disk.Records[len(disk.Records)-1].UID; disk.Header.NextUID <= last {
+		t.Fatalf("the base was written with next uid %d at or below its last record %d", disk.Header.NextUID, last)
+	}
+	baseImages.Delete(indexPathFor(home))
+	d, df := acceptOpen(t, home)
+	defer d.Close() //nolint:errcheck
+	if err := d.AppendMessage(df.ID, &mailbox.MessageMeta{UID: n, Size: 10}); err == nil {
+		t.Error("a delivery of a uid the folder holds went through")
 	}
 }

@@ -590,9 +590,17 @@ type folderState struct {
 	file        *mailindex.File    // the wire-format snapshot
 	recs        *mailindex.Records // the records, as chunks; file holds none
 	onBase      bool               // a view whose records are the base's, with no tail on them
-	recordsLeft bool               // file holds the header only; the next locked use reads all
-	headerFixed bool               // the header was corrected from records in memory
-	keywords    keywordsHdr        // parsed keyword name registry
+	recordsLeft bool
+	// pending is the journal records deferred for chunks not loaded, in
+	// journal order; pendingUIDs the uids they append; countersUnknown the
+	// header counters they moved unseen; baseNextUID no base record reaches.
+	pending         [][]byte
+	pendingUIDs     map[uint32]struct{}
+	countersUnknown uint8
+	baseNextUID     uint32
+	loading         bool        // file holds the header only; the next locked use reads all
+	headerFixed     bool        // the header was corrected from records in memory
+	keywords        keywordsHdr // parsed keyword name registry
 
 	// flushes counts base rewrites, so a transaction can tell whether one
 	// happened while it was applying its own ops (#1831).

@@ -63,6 +63,10 @@ func logWithout(t *testing.T, dir string, drop func(rec []byte) bool, ops func(t
 	a.mu.Unlock()
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	// As a locked write does: every chunk the writer may change, loaded.
+	if err := fs.loadWriterRecords(); err != nil {
+		t.Fatal(err)
+	}
 	var kept [][]byte
 	for _, r := range ops(t, fs) {
 		if !drop(r) {

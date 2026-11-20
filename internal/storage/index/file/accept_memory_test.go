@@ -14,7 +14,7 @@ import (
 
 // INDEX-MEMORY.md §7, as the slope between two folders. A marked row that
 // starts passing fails, so the step that fixes it drops its mark.
-var acceptExpectedFail = map[int]bool{2: true, 3: true, 7: true}
+var acceptExpectedFail = map[int]bool{3: true, 7: true}
 
 const (
 	acceptSmall = 2000
@@ -149,7 +149,7 @@ func TestAcceptASessionHoldsItsFolderAsBytes(t *testing.T) {
 // n allocates: a bound on its peak that needs no sampler stopping the world.
 func deliveryAlloc(t *testing.T, n int) (uint64, time.Duration) {
 	t.Helper()
-	home := acceptFolder(t, n)
+	home := movedFolder(t, n) // its vsize aggregate current, as a folder in use has it
 	var m0, m1 runtime.MemStats
 	runtime.ReadMemStats(&m0)
 	start := time.Now()

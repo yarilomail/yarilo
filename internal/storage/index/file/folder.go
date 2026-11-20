@@ -323,6 +323,7 @@ func (u *userIndex) readBase(fs *folderState) error {
 	if err != nil {
 		return fmt.Errorf("fileindex/openfolder: open: %w", err)
 	}
+	fs.newBaseLoaded(mf)
 	fs.file, fs.recs = mf, recs
 	// Every path that loads a base learns its pairing here, so the lineage
 	// question is answered by the file, not by which function loaded it.
@@ -532,6 +533,11 @@ func (fs *folderState) ensureVsizeLocked() {
 	if fs.vsizeCurrent() {
 		return
 	}
+	if fs.recs != nil && !fs.recs.AllLoaded() {
+		// Recounted when the chunks load, as a fold loads them: a delivery
+		// does not read the folder for a quota aggregate it does not answer.
+		return
+	}
 	if err := fs.loadWriterRecords(); err != nil {
 		slog.Warn("fileindex: vsize recount needs the records", "folder", fs.folder, "err", err)
 		return
@@ -614,6 +620,19 @@ func (fs *folderState) countFrom(uid uint32) (uint32, error) {
 		return 0, nil
 	}
 	n := fs.recordCount()
+	if uid <= 1 {
+		return fs.file.Header.MessagesCount, nil // every message is recent
+	}
+	if fs.recs != nil && !fs.recs.AllLoaded() && fs.baseNextUID != 0 && uid >= fs.baseNextUID {
+		// Above every base record: the recent ones are appends not loaded yet.
+		var recent uint32
+		for p := range fs.pendingUIDs {
+			if p >= uid {
+				recent++
+			}
+		}
+		return recent, nil
+	}
 	if fs.recs != nil && n > 0 {
 		// The recent ones are the newest: the last chunk answers it alone, and
 		// a mark at or below the first record says all, without the rest.
@@ -830,8 +849,12 @@ func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folder
 			return err
 		}
 		// A write may change any record: the writer's chunks are all loaded.
-		if err := fs.loadWriterRecords(); err != nil {
-			return err
+		// A delivery and the header's own changes read none (INDEX-MEMORY.md
+		// §4): the deferred records wait for the next writer that does.
+		if !headerOnlySite(site) {
+			if err := fs.loadWriterRecords(); err != nil {
+				return err
+			}
 		}
 		return fn(fs)
 	})
@@ -1025,6 +1048,7 @@ func (fs *folderState) reloadLocked() error {
 		if err != nil {
 			return fmt.Errorf("fileindex/reload: %w", err)
 		}
+		fs.newBaseLoaded(mf)
 		fs.file, fs.recs = mf, recs
 		fs.recordsLeft = false
 		if err := fs.refreshExtState(); err != nil {
@@ -1297,7 +1321,9 @@ func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string
 		return nil, fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
 	}
 	// One uid, one record: a second one hides a message from every client (#2083).
-	if _, taken := fs.recSeqOfUID(m.UID); taken {
+	if taken, err := fs.uidTaken(m.UID); err != nil {
+		return nil, err
+	} else if taken {
 		return nil, fmt.Errorf("fileindex/append: uid %d: %w", m.UID, mailbox.ErrUIDInUse)
 	}
 	fs.debugSizelessAppend(m)
@@ -1359,17 +1385,17 @@ func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string
 	for name, v := range extra {
 		rec.set(name, v)
 	}
+	fs.vsize.Vsize += uint64(m.RFC822Size())
+	fs.vsize.MessageCount++
+	if m.UID > fs.vsize.HighestUID {
+		fs.vsize.HighestUID = m.UID
+	}
 	recs, err := fs.appendRecords(rec.raw)
 	if err != nil {
 		return nil, err
 	}
 	if err := fs.applyChecked(recs, true); err != nil {
 		return nil, err
-	}
-	fs.vsize.Vsize += uint64(m.RFC822Size())
-	fs.vsize.MessageCount++
-	if m.UID > fs.vsize.HighestUID {
-		fs.vsize.HighestUID = m.UID
 	}
 	m.ModSeq = modseq
 	return rec.raw, nil
@@ -1908,6 +1934,10 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 		}
 
 		var raws [][]byte
+		layout, err := fs.recordLayout()
+		if err != nil {
+			return err
+		}
 		fs.file.Header.MessagesCount = 0
 		fs.file.Header.SeenMessagesCount = 0
 		fs.file.Header.DeletedMessagesCount = 0
@@ -1934,10 +1964,7 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 				maxModseq = modseq
 			}
 			flags := mailindex.MailFlag(imapFlagsToIndex(m.Flags))
-			rec, err := fs.newRecord(m.UID, flags)
-			if err != nil {
-				return err
-			}
+			rec := newRecordIn(layout, m.UID, flags)
 			rec.set(extNameModSeq, encodeModseqRec(modseq))
 			rec.set(extNameKeywords, encodeKeywordsRec(kwBits))
 			rec.set(extNameVsize, encodeVsizeRec(m.RFC822Size()))
@@ -2057,7 +2084,8 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 		if len(upds) == 0 {
 			return nil
 		}
-		return fs.journalRecords([][]byte{encLogRec(mailindex.TxTypeFlagUpdate, 0, mailindex.EncodeTxFlagUpdatePayload(upds))})
+		return fs.journalRecords(append([][]byte{encLogRec(mailindex.TxTypeFlagUpdate, 0, mailindex.EncodeTxFlagUpdatePayload(upds))},
+			fs.absoluteCounters()...))
 	})
 }
 
@@ -2184,6 +2212,10 @@ func (fs *folderState) adoptLegacy(snap legacySnapshot) error {
 	mf.Header.MessagesCount = uint32(len(snap.Records))
 	fs.file = mf
 	raws := make([][]byte, 0, len(snap.Records))
+	layout, err := fs.recordLayout()
+	if err != nil {
+		return err
+	}
 	for _, lr := range snap.Records {
 		if lr.flags&mailindex.FlagSeen != 0 {
 			mf.Header.SeenMessagesCount++
@@ -2191,10 +2223,7 @@ func (fs *folderState) adoptLegacy(snap legacySnapshot) error {
 		if lr.flags&mailindex.FlagDeleted != 0 {
 			mf.Header.DeletedMessagesCount++
 		}
-		rec, rerr := fs.newRecord(lr.uid, lr.flags)
-		if rerr != nil {
-			return rerr
-		}
+		rec := newRecordIn(layout, lr.uid, lr.flags)
 		rec.set(extNameModSeq, encodeModseqRec(lr.modseq))
 		rec.set(extNameKeywords, encodeKeywordsRec(lr.kwBits))
 		raws = append(raws, rec.raw)
@@ -2548,11 +2577,6 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if err != nil {
 		return fromOffset, err
 	}
-	if len(tail) > 0 {
-		if err := fs.loadRecords(); err != nil {
-			return fromOffset, err
-		}
-	}
 
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
 	if err != nil {
@@ -2650,6 +2674,13 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if err := fs.checkHeaderLocked(); err != nil {
 		return committedEnd, err
 	}
+	// A replay that left a counter unknown, from a journal without the
+	// absolute updates, loads what the deferred changes touch and counts.
+	if fs.countersUnknown != 0 {
+		if err := fs.loadWriterRecords(); err != nil {
+			return committedEnd, err
+		}
+	}
 
 	// Truncate any partial tail after the last complete BOUNDARY, only on full
 	// replay (fromOffset==0) -- incremental appends are always complete.
@@ -2684,6 +2715,9 @@ type replayState struct {
 // reference's one sync handler (INDEX-MEMORY.md §4).
 func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *replayState, recStart int64) error {
 	le := binary.LittleEndian
+	if deferred, err := fs.deferRecord(kind, payload, st); deferred || err != nil {
+		return err
+	}
 	switch {
 	case kind == mailindex.TxTypeModseqUpdate:
 		for i := 0; i+12 <= len(payload); i += 12 {
@@ -2764,10 +2798,13 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 					fs.file.Header.NextUID = v
 				case 32:
 					fs.file.Header.MessagesCount = v
+					fs.countersUnknown &^= counterMessages
 				case 40:
 					fs.file.Header.SeenMessagesCount = v
+					fs.countersUnknown &^= counterSeen
 				case 44:
 					fs.file.Header.DeletedMessagesCount = v
+					fs.countersUnknown &^= counterDeleted
 				case 48:
 					fs.file.Header.FirstRecentUID = v
 				}
@@ -3048,7 +3085,7 @@ func (fs *folderState) appendLogRecordsWith(raw []byte, h mailindex.Header) ([][
 		e := layout.Extensions[id]
 		modseq = decodeModseqRec(raw[e.RecordOffset : e.RecordOffset+e.RecordSize])
 	}
-	return [][]byte{
+	recs := [][]byte{
 		encLogRec(mailindex.TxTypeAppend, 0, append([]byte(nil), raw...)),
 		encLogRec(mailindex.TxTypeModseqUpdate, 0, mailindex.EncodeTxModseqUpdatePayload([]mailindex.TxModseqUpdate{{
 			UID: uid, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
@@ -3057,7 +3094,8 @@ func (fs *folderState) appendLogRecordsWith(raw []byte, h mailindex.Header) ([][
 		encU32Update(32, h.MessagesCount),
 		encU32Update(40, h.SeenMessagesCount),
 		encU32Update(44, h.DeletedMessagesCount),
-	}, nil
+	}
+	return recs, nil
 }
 
 // ---- log file expunge tracking (legacy, pre-Phase-2.5) --------------------
@@ -3525,3 +3563,13 @@ func extIndex(exts []mailindex.Extension, name string) int {
 // purgeAfterRenameSeam is a test seam: a purge that stops between the cache
 // file and the index taking its generation, either order. Nil elsewhere.
 var purgeAfterRenameSeam func() error
+
+// headerOnlySite is a lock site whose work reads and writes the header and
+// the journal, and no record: a delivery, a uid allocation, a recent claim.
+func headerOnlySite(site string) bool {
+	switch site {
+	case lockSiteAppend, lockSiteAllocateUid, lockSiteClaimRecent, lockSiteRefresh, lockSiteGUIDAppend:
+		return true
+	}
+	return false
+}

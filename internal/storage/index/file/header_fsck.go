@@ -1,7 +1,6 @@
 package file
 
 import (
-	"fmt"
 	"log/slog"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
@@ -65,16 +64,18 @@ func moveCount(n uint32, old, now, flag mailindex.MailFlag) uint32 {
 // records, and the last uid from the last chunk only. A failed check is the
 // one sign that recounts all.
 func (fs *folderState) checkHeaderLocked() error {
+	if len(fs.pending) > 0 {
+		// Counted from the journal's absolute updates, or unknown and
+		// resolved by a load at the end of the replay.
+		return nil
+	}
 	h := fs.file.Header
 	n := uint32(fs.recordCount())
 	ok := h.NextUID != 0 && h.MessagesCount == n &&
 		h.SeenMessagesCount <= h.MessagesCount && h.DeletedMessagesCount <= h.MessagesCount
-	if ok && n > 0 {
-		if fs.recs != nil {
-			if err := fs.recs.Load(int(n)-1, int(n)); err != nil {
-				return fmt.Errorf("fileindex/header: %w", err)
-			}
-		}
+	// The last uid only from a chunk in memory: a base marked as in order
+	// is written with its next uid above its last record.
+	if ok && n > 0 && (fs.recs == nil || fs.recs.Loaded(fs.recs.Chunks()-1)) {
 		ok = fs.recUID(int(n)-1) < h.NextUID
 	}
 	if ok {
@@ -91,11 +92,19 @@ func (fs *folderState) checkHeaderLocked() error {
 // the last of them recounts the header on the way: a stale count does not
 // outlive the first whole read, and no read is made for it alone.
 func (fs *folderState) loadWriterRecords() error {
-	if fs.recs == nil || fs.recs.AllLoaded() {
+	if fs.recs == nil || fs.loading {
 		return nil
 	}
+	if fs.recs.AllLoaded() {
+		return fs.applyPending()
+	}
+	fs.loading = true
+	defer func() { fs.loading = false }()
 	if err := fs.loadRecords(); err != nil {
 		return err
+	}
+	if len(fs.pending) > 0 || fs.countersUnknown != 0 {
+		return fs.applyPending() // recounts the header too
 	}
 	fs.reconcileHeaderLocked()
 	return nil
