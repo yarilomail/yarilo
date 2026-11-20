@@ -243,3 +243,39 @@ func TestAPurgeLeavesNoJournalBehind(t *testing.T) {
 		t.Errorf("the journal holds %d bytes after the purge, want its header alone", st.Size())
 	}
 }
+
+// A reset without kept data zeroes the extension's header as well as its
+// records, whatever the extension: here the GUID store's state (#2635 review).
+func TestAResetZeroesTheExtensionsHeaderToo(t *testing.T) {
+	home := movedFolder(t, mailindex.ChunkRecords)
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	fs, err := h.(*userHandle).ui.state(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if err := fs.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.loadWriterRecords(); err != nil {
+		t.Fatal(err)
+	}
+	ext := findExt(fs.file.Extensions, extNameGUID)
+	if ext == nil || len(ext.HdrData) == 0 || bytes.Equal(ext.HdrData, make([]byte, len(ext.HdrData))) {
+		t.Fatal("the fixture's GUID extension has no header to clear")
+	}
+	recs := [][]byte{extIntro(t, fs, extNameGUID, ext.ResetID, uint16(ext.RecordSize)),
+		encLogRec(mailindex.TxTypeExtReset, 0, mailindex.EncodeTxExtResetPayload(mailindex.TxExtReset{NewResetID: ext.ResetID + 1}))}
+	if err := fs.applyRecords(recs); err != nil {
+		t.Fatal(err)
+	}
+	ext = findExt(fs.file.Extensions, extNameGUID)
+	if !bytes.Equal(ext.HdrData, make([]byte, len(ext.HdrData))) {
+		t.Errorf("the extension's header is %x after the reset, want zeros", ext.HdrData)
+	}
+	if g, _ := fs.recExt(0, extNameGUID); !bytes.Equal(g, make([]byte, len(g))) {
+		t.Errorf("record 0's GUID is %x after the reset, want zeros", g)
+	}
+}

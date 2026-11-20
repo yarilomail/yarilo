@@ -2778,7 +2778,7 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 		intro, ok := mailindex.DecodeTxExtIntroPayload(payload)
 		if ok && intro.ExtID != mailindex.TxExtIntroNewExt && intro.Name == "" {
 			// Names a known extension, by its place, for the updates that
-			// follow (INDEX-MEMORY.md §4, the reference's sync_ext_intro).
+			// follow (INDEX-MEMORY.md §4).
 			if int(intro.ExtID) >= len(fs.file.Extensions) {
 				return fmt.Errorf("fileindex/applylog: extension intro names extension %d of %d at offset %d",
 					intro.ExtID, len(fs.file.Extensions), recStart)
@@ -2833,9 +2833,12 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 		}
 		ext.ResetID = rst.NewResetID
 		st.introReset = rst.NewResetID
+		if !rst.Preserve {
+			// The extension's header and every record's data of it are
+			// zeroed: a cache offset into the file that is gone.
+			clear(ext.HdrData)
+		}
 		if !rst.Preserve && ext.RecordSize != 0 {
-			// Every record's data of the extension goes, as the reference's
-			// sync_ext_clear: a cache offset into the file that is gone.
 			zero := make([]byte, ext.RecordSize)
 			for seq := range fs.recordCount() {
 				if have, _ := fs.recExt(seq, ext.Name); !bytes.Equal(have, zero) {
