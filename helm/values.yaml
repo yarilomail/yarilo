@@ -417,6 +417,10 @@ components:
       ## the account's lock: a delivery reads the log whole and a few pages of the
       ## base. "0" never merges, and every delivery reads a log that only grows.
       tail_size: "128k"
+      ## How many messages a conversation holds; the next one that would join a
+      ## full conversation starts a new one. At most 2047, what one stored member
+      ## list holds.
+      max_thread: 1000
 
     ## coLocated: true renders the merged StatefulSet and suppresses the legacy
     ## per-protocol backend Deployments. This is the model behind a director.

@@ -26,13 +26,16 @@ func MergeSection(w *Writer, base *Reader, id uint32, updates []KV) error {
 	return MergeSectionMapped(w, base, id, updates, nil)
 }
 
-// MergeSectionMapped is MergeSection passing every value written through
-// mapVal, which may rewrite it, as a merge folds aliases on the way; nil
-// keeps them.
-func MergeSectionMapped(w *Writer, base *Reader, id uint32, updates []KV, mapVal func([]byte) []byte) error {
+// MergeSectionMapped is MergeSection passing every entry written through
+// mapEntry, which may rewrite its value or drop it (keep false), as a merge
+// folds aliases on the way; nil keeps them all.
+func MergeSectionMapped(w *Writer, base *Reader, id uint32, updates []KV, mapEntry func(k, v []byte) ([]byte, bool)) error {
 	add := func(k, v []byte) error {
-		if mapVal != nil {
-			v = mapVal(v)
+		if mapEntry != nil {
+			var keep bool
+			if v, keep = mapEntry(k, v); !keep {
+				return nil
+			}
 		}
 		return w.Add(k, v)
 	}

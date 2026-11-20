@@ -21,6 +21,8 @@ type Recorder struct {
 	cache *Cache
 	// tailSize is the log size past which the pair is merged (§4); 0 never.
 	tailSize int64
+	// maxThread is how many messages a conversation holds.
+	maxThread int
 }
 
 // DefaultTailSize is threading.threading_tail_size unset.
@@ -32,12 +34,15 @@ type RecorderOption func(*Recorder)
 // WithTailSize sets the log size past which the store is merged; 0 never.
 func WithTailSize(n int64) RecorderOption { return func(r *Recorder) { r.tailSize = n } }
 
+// WithMaxThread sets how many messages a conversation holds.
+func WithMaxThread(n int) RecorderOption { return func(r *Recorder) { r.maxThread = n } }
+
 func NewRecorder(cache *Cache, opts ...RecorderOption) *Recorder {
 	if cache == nil {
 		cache = NewCache(DefaultIdle)
 	}
-	r := &Recorder{cache: cache, tailSize: DefaultTailSize}
-	for _, o := range opts {
+	r := &Recorder{cache: cache, tailSize: DefaultTailSize, maxThread: DefaultMaxThread}
+	for _, o := range append(append([]RecorderOption(nil), cache.limits...), opts...) {
 		o(r)
 	}
 	return r
@@ -72,6 +77,14 @@ func (k *storeKnown) ThreadOfMessage(id string) (string, bool) {
 }
 func (k *storeKnown) ThreadOfSubject(key string) (string, bool) {
 	return k.answer(k.s.ThreadOfSubject(key))
+}
+
+func (k *storeKnown) ThreadSize(id string) int {
+	n, err := k.s.ThreadSize(id)
+	if err != nil && k.err == nil {
+		k.err = err
+	}
+	return n
 }
 
 // Record threads one delivered message and returns the thread it belongs to.
@@ -110,7 +123,7 @@ func (r *Recorder) RecordNew(user, path, guid string, raw []byte) (string, bool,
 		return id, false, nil
 	}
 	known := &storeKnown{s: store}
-	p := PlacementFor(known, guid, raw)
+	p := PlacementFor(known, guid, raw, r.maxThread)
 	if known.err != nil {
 		return "", false, known.err
 	}
@@ -129,7 +142,17 @@ func (r *Recorder) RecordNew(user, path, guid string, raw []byte) (string, bool,
 // the point: the rebuild must arrive at the SAME thread ids as the deliveries
 // it replays, or it is not a rebuild but a second opinion. Two implementations
 // that agree today would drift the first time either is touched.
-func PlacementFor(state threading.Known, guid string, raw []byte) Placement {
+// Lookups is what a placement asks of an account's conversations.
+type Lookups interface {
+	threading.Known
+	// ThreadSize is how many messages the conversation holds.
+	ThreadSize(threadID string) int
+}
+
+// DefaultMaxThread is threading.threading_max_thread unset.
+const DefaultMaxThread = 1000
+
+func PlacementFor(state Lookups, guid string, raw []byte, maxThread int) Placement {
 	msg := parseHeaders(raw)
 	msg.MessageID = firstOf(msg.MessageID)
 
@@ -140,7 +163,24 @@ func PlacementFor(state threading.Known, guid string, raw []byte) Placement {
 		Subject:    msg.Subject,
 	}, state)
 
-	threadID := placed.ThreadID
+	threadID, merged := placed.ThreadID, placed.MergedFrom
+	// A conversation holds at most maxThread messages, as the reference's
+	// conversations do: the next one starts its own, and two that together
+	// would pass the limit stay apart, the message going into the first.
+	// Here, not in delivery, so the rebuild places as delivery does.
+	if threadID != "" && maxThread > 0 {
+		size := state.ThreadSize(threadID)
+		if size >= maxThread {
+			threadID, merged = "", nil
+		} else if len(merged) > 0 {
+			for _, m := range merged {
+				size += state.ThreadSize(m)
+			}
+			if size+1 > maxThread {
+				merged = nil
+			}
+		}
+	}
 	if threadID == "" {
 		// Nothing to join: the conversation is named after this message. See
 		// Record for why it is the guid and not something random.
@@ -151,7 +191,7 @@ func PlacementFor(state threading.Known, guid string, raw []byte) Placement {
 		MessageID:  msg.MessageID,
 		SubjectKey: placed.SubjectKey,
 		ThreadID:   threadID,
-		MergedFrom: placed.MergedFrom,
+		MergedFrom: merged,
 	}
 }
 

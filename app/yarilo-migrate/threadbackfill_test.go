@@ -161,7 +161,7 @@ func TestTheFolderOrderDoesNotDecideTheAnswer(t *testing.T) {
 
 		path := filepath.Join(t.TempDir(), "threads")
 		var st threadStats
-		if _, err := buildSidecar(box, ui, names, path, info.Username, &st); err != nil {
+		if _, err := buildSidecar(box, ui, names, path, info.Username, threads.DefaultMaxThread, &st); err != nil {
 			t.Fatalf("build: %v", err)
 		}
 		body, err := os.ReadFile(path + ".rebuild")
@@ -585,5 +585,66 @@ func TestARerunAddsWhatTheSidecarLacks(t *testing.T) {
 	}
 	if stats.Added != 1 {
 		t.Errorf("added %d, want 1: only the missed message", stats.Added)
+	}
+}
+
+// A rebuild replaces the log; the base merged from the old one goes with it,
+// or the pair the next open finds is broken.
+func TestARebuildRemovesTheOldBase(t *testing.T) {
+	root := t.TempDir()
+	info := seedAccount(t, root, "alice@example.com")
+	path := threads.PathFor(info)
+	if err := runThreadBackfill(backfillOpts(root, false)); err != nil {
+		t.Fatal(err)
+	}
+	if err := threads.MergeStore(path, func(fn func() error) error { return fn() }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + threads.BaseSuffix); err != nil {
+		t.Fatalf("the merge left no base: %v", err)
+	}
+	if err := runThreadBackfill(backfillOpts(root, true)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + threads.BaseSuffix); !os.IsNotExist(err) {
+		t.Errorf("the old base outlived the rebuild: %v", err)
+	}
+	s, err := threads.OpenStore(path)
+	if err != nil {
+		t.Fatalf("the rebuilt pair does not open: %v", err)
+	}
+	s.Close() //nolint:errcheck
+}
+
+// The rebuild places under the configured conversation limit, as delivery
+// does: with 2, the third message of the seeded conversation starts its own.
+func TestARebuildKeepsTheThreadLimit(t *testing.T) {
+	cases := []struct {
+		config  string
+		threads int
+	}{
+		{config: "", threads: 2},
+		{config: "mode: single\nthreading:\n  threading_max_thread: 2\n", threads: 3},
+	}
+	for _, c := range cases {
+		root := t.TempDir()
+		info := seedAccount(t, root, "alice@example.com")
+		o := backfillOpts(root, false)
+		if c.config != "" {
+			o.ConfigPath = filepath.Join(t.TempDir(), "yarilo.yaml")
+			if err := os.WriteFile(o.ConfigPath, []byte(c.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := runThreadBackfill(o); err != nil {
+			t.Fatal(err)
+		}
+		state, err := threads.Load(threads.PathFor(info))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(state.Threads()); got != c.threads {
+			t.Errorf("config %q: %d conversations, want %d", c.config, got, c.threads)
+		}
 	}
 }

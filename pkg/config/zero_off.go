@@ -110,6 +110,7 @@ func requiredKeys(cfg *Config) []intKey {
 	d := &cfg.DirectorService
 	return []intKey{
 		{"general.haproxy.timeout", &cfg.General.HAProxy.Timeout},
+		{"threading.threading_max_thread", &cfg.Threading.ThreadingMaxThread},
 		{"general.startup_dial_retries", &cfg.General.StartupDialRetries},
 		{"sasl_login.haproxy_timeout", &cfg.SASLLogin.HAProxyTimeout},
 		{"managesieve_login_service.haproxy_timeout", &cfg.ManageSieveLoginService.HAProxyTimeout},
@@ -185,6 +186,9 @@ func checkNumbers(cfg *Config) error {
 		if v <= 0 {
 			return fmt.Errorf("config: %s: %g; it must be positive (leave it out for the default)", path, v)
 		}
+	}
+	if n := cfg.Threading.ThreadingMaxThread; n > MaxThreadMembers {
+		return fmt.Errorf("config: threading.threading_max_thread: %d is more than one stored conversation holds (%d)", n, MaxThreadMembers)
 	}
 	if w := cfg.Telemetry.LivenessWatchdog; w.TimeoutSeconds >= w.IntervalSeconds {
 		return fmt.Errorf("config: telemetry.liveness_watchdog: timeout %d must stay below interval %d", w.TimeoutSeconds, w.IntervalSeconds)

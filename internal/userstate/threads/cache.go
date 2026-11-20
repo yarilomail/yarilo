@@ -29,6 +29,9 @@ type Cache struct {
 	// caller that folds once per delivery is paying O(account) per message
 	// again, and the number says so.
 	folds int
+	// limits are the account settings every Recorder built on this cache
+	// places with: a late threading by a reader places as delivery does.
+	limits []RecorderOption
 }
 
 type entry struct {
@@ -43,8 +46,8 @@ const DefaultIdle = 300 * time.Second
 
 // NewCache builds the fold cache. Zero idle disables caching: every Get folds,
 // nothing is retained.
-func NewCache(idle time.Duration) *Cache {
-	return &Cache{entries: map[string]*entry{}, idle: idle}
+func NewCache(idle time.Duration, limits ...RecorderOption) *Cache {
+	return &Cache{entries: map[string]*entry{}, idle: idle, limits: limits}
 }
 
 // Get returns the folded sidecar at path, reusing the cached fold when the file

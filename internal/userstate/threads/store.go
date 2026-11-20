@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -23,9 +25,18 @@ const (
 	secMessage uint32 = 1 + iota
 	secSubject
 	secGUID
+	// secMembers maps a thread to its members: their GUIDs, guidLen bytes
+	// each, in the order they joined.
+	secMembers
 )
 
-var baseSections = []uint32{secMessage, secSubject, secGUID}
+var baseSections = []uint32{secMessage, secSubject, secGUID, secMembers}
+
+// guidLen is a GUID's length in a member list: 16 bytes in hex.
+const guidLen = 32
+
+// maxStoredMembers is the most one member list holds in the format's value.
+const maxStoredMembers = 65535 / guidLen
 
 // Store answers lookups from the base and its tail without folding the
 // account: the tail is read whole, the base searched by key.
@@ -174,15 +185,28 @@ func (s *Store) readTail() error {
 
 // apply folds one record, as Load does.
 func (st *State) apply(typ, key, val string) {
+	st.applyLocked(typ, key, val)
+}
+
+// applyLocked is apply for a caller holding st.mu, or one no reader sees yet.
+func (st *State) applyLocked(typ, key, val string) {
 	switch typ {
 	case recMessage:
 		st.byMessage[key] = val
 	case recSubject:
 		st.bySubject[key] = val
 	case recGUID:
+		if was, ok := st.byGUID[key]; ok && st.size[was] > 0 {
+			st.size[was]--
+		}
 		st.byGUID[key] = val
+		st.size[val]++
 	case recAlias:
 		st.aliasOf[key] = val
+		if n := st.size[key]; n > 0 {
+			st.size[val] += n
+			delete(st.size, key)
+		}
 	case recGen:
 		if g, err := strconv.ParseUint(key, 10, 64); err == nil {
 			st.generation = g
@@ -289,11 +313,11 @@ func MergeStore(path string, hold func(func() error) error) error {
 	}
 	// Only a value an alias names is rewritten: the rest pass as read, with
 	// nothing allocated a base entry.
-	resolve := func(v []byte) []byte {
+	resolve := func(_, v []byte) ([]byte, bool) {
 		if _, aliased := s.tail.aliasOf[string(v)]; !aliased {
-			return v
+			return v, true
 		}
-		return []byte(s.resolve(string(v)))
+		return []byte(s.resolve(string(v))), true
 	}
 	for _, sec := range []struct {
 		id uint32
@@ -307,6 +331,20 @@ func MergeStore(path string, hold func(func() error) error) error {
 			w.Abort()
 			return err
 		}
+	}
+	// Members: what the log touched is read from the base by key beforehand,
+	// so the merge holds those threads (each at most threading_max_thread),
+	// not the base; a thread the log merged away drops on the way.
+	members, dropped, merr := s.membersUpdates()
+	if merr != nil {
+		w.Abort()
+		return merr
+	}
+	if err := sortedfile.MergeSectionMapped(w, s.base, secMembers, members, func(k, v []byte) ([]byte, bool) {
+		return v, !dropped[string(k)]
+	}); err != nil {
+		w.Abort()
+		return err
 	}
 	if err := w.Commit(); err != nil {
 		return err
@@ -490,4 +528,148 @@ func changesSincePair(path string, since int) (Changes, error) {
 	ch.Updated = sortedKeys(updated)
 	ch.Destroyed = sortedKeys(destroyed)
 	return ch, nil
+}
+
+// baseMembers is a thread's member list in the base: guidLen bytes a member.
+func (s *Store) baseMembers(thread string) ([]byte, error) {
+	if s.base == nil {
+		return nil, nil
+	}
+	if !s.noMembers() {
+		v, _, err := s.base.Get(secMembers, []byte(thread))
+		return v, err
+	}
+	// Until its first merge, a base from before the member lists answers from
+	// its GUIDs, reading the section.
+	var out []byte
+	err := s.base.Each(secGUID, func(k, v []byte) error {
+		if string(v) == thread && len(k) == guidLen {
+			out = append(out, k...)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// noMembers is a base written before the member lists.
+func (s *Store) noMembers() bool {
+	return s.base != nil && s.base.Count(secMembers) == 0 && s.base.Count(secGUID) > 0
+}
+
+// baseThreads walks the conversations the base names.
+func (s *Store) baseThreads(fn func(thread string)) error {
+	if s.base == nil {
+		return nil
+	}
+	if s.noMembers() {
+		return s.base.Each(secGUID, func(_, v []byte) error { fn(string(v)); return nil })
+	}
+	return s.base.Each(secMembers, func(k, _ []byte) error { fn(string(k)); return nil })
+}
+
+// absorbed lists the threads the log aliased into thread: their members in
+// the base are thread's now.
+func (s *Store) absorbed(thread string) []string {
+	var out []string
+	for old := range s.tail.aliasOf {
+		if s.tail.resolve(old) == thread {
+			out = append(out, old)
+		}
+	}
+	return out
+}
+
+// ThreadSize is how many messages the conversation holds: its members in the
+// base, those of the threads the log merged into it, and the log's own.
+func (s *Store) ThreadSize(thread string) (int, error) {
+	thread = s.resolve(thread)
+	n := s.tail.size[thread]
+	for _, t := range append(s.absorbed(thread), thread) {
+		v, err := s.baseMembers(t)
+		if err != nil {
+			return 0, err
+		}
+		n += len(v) / guidLen
+	}
+	return n, nil
+}
+
+// Members lists the conversation's messages, by GUID: the base's, then those
+// of the threads the log merged into it, then the log's.
+func (s *Store) Members(thread string) ([]string, error) {
+	thread = s.resolve(thread)
+	var out []string
+	for _, t := range append([]string{thread}, s.absorbed(thread)...) {
+		v, err := s.baseMembers(t)
+		if err != nil {
+			return nil, err
+		}
+		for i := 0; i+guidLen <= len(v); i += guidLen {
+			out = append(out, string(v[i:i+guidLen]))
+		}
+	}
+	for guid, t := range s.tail.byGUID {
+		if s.resolve(t) == thread {
+			out = append(out, guid)
+		}
+	}
+	return out, nil
+}
+
+// membersUpdates is what a merge writes into the members section: every
+// thread the log touched, with its base members, those of the threads merged
+// into it, and the log's; dropped names the merged threads, whose keys go.
+func (s *Store) membersUpdates() (updates []sortedfile.KV, dropped map[string]bool, err error) {
+	touched := map[string][]string{}
+	for guid, t := range s.tail.byGUID {
+		r := s.resolve(t)
+		touched[r] = append(touched[r], guid)
+	}
+	// A base written before the members section has none: it is built once
+	// from the GUID section, holding the account's members this one time.
+	legacy := s.noMembers()
+	if legacy {
+		if err := s.base.Each(secGUID, func(k, v []byte) error {
+			if len(k) != guidLen {
+				return nil
+			}
+			r := s.resolve(string(v))
+			touched[r] = append(touched[r], string(k))
+			return nil
+		}); err != nil {
+			return nil, nil, err
+		}
+	}
+	dropped = map[string]bool{}
+	for old := range s.tail.aliasOf {
+		dropped[old] = true
+		r := s.resolve(old)
+		if _, ok := touched[r]; !ok {
+			touched[r] = nil
+		}
+	}
+	for thread, fromLog := range touched {
+		var v []byte
+		for _, t := range append([]string{thread}, s.absorbed(thread)...) {
+			if legacy {
+				break // the GUID section's members are in fromLog already
+			}
+			b, err := s.baseMembers(t)
+			if err != nil {
+				return nil, nil, err
+			}
+			v = append(v, b...)
+		}
+		sort.Strings(fromLog)
+		for _, g := range fromLog {
+			v = append(v, g...)
+		}
+		if len(v)/guidLen > maxStoredMembers {
+			slog.Warn("threads: a conversation longer than one member list holds keeps its first members",
+				"path", s.path, "thread", thread, "members", len(v)/guidLen, "kept", maxStoredMembers)
+			v = v[:maxStoredMembers*guidLen]
+		}
+		updates = append(updates, sortedfile.KV{Key: []byte(thread), Val: v})
+	}
+	return sortedfile.SortKVs(updates), dropped, nil
 }

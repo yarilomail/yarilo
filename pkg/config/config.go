@@ -1285,7 +1285,15 @@ type ThreadingConfig struct {
 	// its sorted base; unset 128 KiB, "0" never merges (#2641).
 	ThreadingTailSize    int64  `koanf:"-"` // resolved from ThreadingTailSizeRaw at load
 	ThreadingTailSizeRaw string `koanf:"threading_tail_size"`
+	// ThreadingMaxThread is how many messages a conversation holds; the next
+	// one that would join a full conversation starts a new one (#2641). Unset
+	// 1000; at most MaxThreadMembers, what one stored member list holds.
+	ThreadingMaxThread int `koanf:"threading_max_thread"`
 }
+
+// MaxThreadMembers is the most members one thread's stored list holds: 32
+// bytes a member in a value of at most 65535 bytes.
+const MaxThreadMembers = 65535 / 32
 
 // CacheIdle reports the fold cache's idle period.
 func (c ThreadingConfig) CacheIdle() time.Duration {
@@ -3008,6 +3016,7 @@ func Defaults() *Config {
 	c.Threading.Enabled = true
 	c.Threading.ThreadingCacheIdle = 300
 	c.Threading.ThreadingTailSizeRaw = "128k"
+	c.Threading.ThreadingMaxThread = 1000
 	c.Storage.LockStaleTimeout = 180
 	c.Storage.MailCachePurgeDeletePercentage = 20
 	c.Storage.MailCachePurgeContinuedPercentage = 200

@@ -35,7 +35,7 @@ func newHistory(t *testing.T, seed uint64) *history {
 
 func (h *history) place() {
 	h.n++
-	p := Placement{GUID: fmt.Sprintf("guid-%d", h.n), MessageID: fmt.Sprintf("<%d@x>", h.n)}
+	p := Placement{GUID: hexGUID(h.n), MessageID: fmt.Sprintf("<%d@x>", h.n)}
 	if len(h.threads) > 0 && h.rng.IntN(3) > 0 {
 		p.ThreadID = h.threads[h.rng.IntN(len(h.threads))]
 	} else {
