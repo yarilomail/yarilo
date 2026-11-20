@@ -14,7 +14,7 @@ import (
 
 // INDEX-MEMORY.md §7, as the slope between two folders. A marked row that
 // starts passing fails, so the step that fixes it drops its mark.
-var acceptExpectedFail = map[int]bool{7: true}
+var acceptExpectedFail = map[int]bool{}
 
 const (
 	acceptSmall = 2000

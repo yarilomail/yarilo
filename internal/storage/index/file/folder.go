@@ -1031,6 +1031,9 @@ func (fs *folderState) flush() error {
 		}
 		fs.file.Extensions = layout.Extensions
 	}
+	if fs.isGUIDStore() {
+		fs.mergeGUIDLookup(prev, next, fs.logSize)
+	}
 	fs.lineage = next
 	fs.flushes++
 	// Track base mtime+identity so the reload fast path fires after this flush.

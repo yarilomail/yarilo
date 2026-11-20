@@ -175,11 +175,15 @@ var (
 	})
 	metricGUIDImageBuilt = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fileindex_guid_image_built_total",
-		Help: "Times the GUID lookup map was built from the store.",
+		Help: "Times the GUID lookup file was built from the store's base.",
+	})
+	metricGUIDLookupMerged = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fileindex_guid_lookup_merged_total",
+		Help: "Times a fold of the GUID store merged its lookup forward instead of leaving it to be built.",
 	})
 	metricGUIDImageHit = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fileindex_guid_image_hit_total",
-		Help: "Lookups answered from the GUID map already built for this version of the store.",
+		Help: "Lookups answered from the GUID lookup file already open for this base of the store.",
 	})
 )
 

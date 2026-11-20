@@ -967,6 +967,9 @@ func (u *userIndex) Close() error {
 	u.open = nil
 	u.byDir = nil
 	u.mu.Unlock()
+	u.guid.mu.Lock()
+	u.guid.retireLookupLocked()
+	u.guid.mu.Unlock()
 	return nil
 }
 
