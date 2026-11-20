@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/yarilomail/yarilo/v2/internal/sortedfile"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -69,10 +70,10 @@ func decodeGUIDMapRec(b []byte) (guidMapRec, bool) {
 
 // guidStore is the open handle, one per user index.
 type guidStore struct {
-	mu      sync.Mutex
-	id      uint64
-	image   map[[16]byte][]mailbox.GUIDRecord
-	version guidImageVersion
+	mu sync.Mutex
+	id uint64
+	// lookup is the open lookup file (guidlookup.go).
+	lookup *sortedfile.Reader
 	// rebuilding: a rebuild of this process holds the store, and a writer here
 	// would pass that hold as its own; it fails and marks its folder instead.
 	rebuilding atomic.Bool
@@ -80,14 +81,6 @@ type guidStore struct {
 
 // errGUIDRebuilding is a store write refused while this process rebuilds it.
 var errGUIDRebuilding = errors.New("fileindex/guid: the store is being rebuilt")
-
-// guidImageVersion says which image a map was built from: the file's identity,
-// how far its uids have gone, and how many records it holds.
-type guidImageVersion struct {
-	indexID uint32
-	nextUID uint32
-	records int
-}
 
 // GUIDStorePath is where the store lives: the index root the folders use, so
 // INDEX= moves it with them.
@@ -560,26 +553,12 @@ func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) ([]byte, error) {
 	})})
 }
 
-// GUIDCopies answers from the image the store last read: the map is built once
-// per version of the file, so a second lookup in a session costs no I/O.
+// GUIDCopies answers from the store's lookup and its journal: no record is
+// held in memory for it, and an append rebuilds nothing (INDEX-MEMORY.md §5a).
 func (u *userIndex) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
 	if len(guids) == 0 {
 		return nil, nil
 	}
-	byGUID, err := u.guidImage()
-	if err != nil || byGUID == nil {
-		return nil, err
-	}
-	var out []mailbox.GUIDRecord
-	for _, g := range guids {
-		out = append(out, byGUID[g]...)
-	}
-	return out, nil
-}
-
-// guidImage returns the lookup map for the store as it stands, rebuilding it
-// only when the file has moved on.
-func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 	// A lookup never creates the store: reading is not what brings a derived
 	// file into being, and an empty answer sends the caller to the walk.
 	if _, err := os.Stat(u.GUIDStorePath()); err != nil {
@@ -592,40 +571,42 @@ func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	var version guidImageVersion
-	if err := u.withFolderROUnlocked(id, func(fs *folderState) error {
-		version = guidImageVersion{
-			indexID: fs.file.Header.IndexID,
-			nextUID: fs.file.Header.NextUID,
-			records: fs.recordCount(),
+	for attempt := 0; ; attempt++ {
+		var out []mailbox.GUIDRecord
+		err := u.withFolderHeaderUnlocked(id, func(fs *folderState) error {
+			var ferr error
+			out, ferr = u.guidCopiesFrom(fs, guids)
+			return ferr
+		})
+		switch {
+		case err == nil:
+			return out, nil
+		case errors.Is(err, errGUIDNoChunks), errors.Is(err, errGUIDBaseMoved) && attempt >= baseReadAttempts:
+			return u.guidCopiesByScan(guids)
+		case errors.Is(err, errGUIDBaseMoved):
+			continue
+		default:
+			return nil, err
 		}
-		return nil
-	}); err != nil {
-		return nil, err
 	}
+}
 
-	u.guid.mu.Lock()
-	if u.guid.image != nil && u.guid.version == version {
-		m := u.guid.image
-		u.guid.mu.Unlock()
-		metricGUIDImageHit.Inc()
-		return m, nil
-	}
-	u.guid.mu.Unlock()
-
+// guidCopiesByScan reads every copy: a view without chunks, or a base that
+// kept moving under the lookup.
+func (u *userIndex) guidCopiesByScan(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
 	recs, err := u.GUIDRecords()
 	if err != nil {
 		return nil, err
 	}
-	m := make(map[[16]byte][]mailbox.GUIDRecord, len(recs))
-	for _, r := range recs {
-		m[r.GUID] = append(m[r.GUID], r)
+	var out []mailbox.GUIDRecord
+	for _, g := range guids {
+		for _, r := range recs {
+			if r.GUID == g {
+				out = append(out, r)
+			}
+		}
 	}
-	u.guid.mu.Lock()
-	u.guid.image, u.guid.version = m, version
-	u.guid.mu.Unlock()
-	metricGUIDImageBuilt.Inc()
-	return m, nil
+	return out, nil
 }
 
 // replaceGUIDStore writes the store from scratch: the file is derived, so this
@@ -645,6 +626,11 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 		Name: extNameGUIDMap, RecordSize: guidMapRecSize, RecordAlign: 8, ResetID: 1,
 	}, mailindex.Extension{
 		Name: extNameGUIDComplete, HdrSize: guidCompleteHdrSize, HdrData: complete, RecordAlign: 8, ResetID: 1,
+	}, mailindex.Extension{
+		// Written in uid order and saying so, as a flush does: a base without
+		// the mark is read whole to be ordered in memory (#2632).
+		Name: extNameLineage, HdrSize: lineageHdrSize, RecordAlign: lineageRecordAlign,
+		HdrData: encodeLineageHdr(lineageHdr{Lineage: legacyLogLineage + 1, Flags: lineageInUIDOrder}),
 	})
 	layout, err := mailindex.ComputeRecordLayout(exts)
 	if err != nil {
@@ -691,7 +677,10 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	// keeps them answers from a store nobody has any more (#1986).
 	id := u.guid.id
 	u.guid.id = 0
-	u.guid.image, u.guid.version = nil, guidImageVersion{}
+	if u.guid.lookup != nil {
+		u.guid.lookup.Close() //nolint:errcheck
+		u.guid.lookup = nil
+	}
 	if id != 0 {
 		u.mu.Lock()
 		if fs := u.open[id]; fs != nil {
