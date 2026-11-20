@@ -42,6 +42,7 @@ package threads
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,6 +51,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yarilomail/yarilo/v2/internal/sortedfile"
 )
 
 // FileName is the sidecar's name in the user's control directory.
@@ -126,6 +129,17 @@ func Load(path string) (*State, error) {
 	if _, err := os.Stat(path + BaseSuffix); err != nil {
 		return loadLog(path)
 	}
+	// A base moved under the fold (ESTALE, a short read on NFS) is the pair
+	// opened again, as a lookup does (THREADS-STORE.md §6).
+	for attempt := 1; ; attempt++ {
+		st, err := loadPair(path)
+		if !errors.Is(err, sortedfile.ErrMoved) || attempt >= pairAttempts {
+			return st, err
+		}
+	}
+}
+
+func loadPair(path string) (*State, error) {
 	store, err := OpenStore(path)
 	if err != nil {
 		return nil, err
@@ -590,6 +604,14 @@ func (s *State) Head() int {
 // streams: a client asking "what changed since a moment ago" reads the tail,
 // not the account.
 func ChangesSince(path string, since int) (Changes, error) {
+	if _, err := os.Stat(path + BaseSuffix); err == nil {
+		return changesSincePair(path, since)
+	}
+	return changesSinceLog(path, since)
+}
+
+// changesSinceLog is ChangesSince over a log that is the whole history.
+func changesSinceLog(path string, since int) (Changes, error) {
 	ch := Changes{Head: since}
 	f, err := os.Open(path)
 	if err != nil {

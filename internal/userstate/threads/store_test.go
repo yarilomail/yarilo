@@ -347,3 +347,46 @@ func TestADeliveryThreadsWithoutReadingTheAccount(t *testing.T) {
 		t.Errorf("RecordNew allocates %d B at 2000, %d B at 10000: %.1f B a message", small, large, grow)
 	}
 }
+
+// Load, the fold the JMAP readers take, opens the pair again when the base
+// moved under it, as a lookup does.
+func TestALoadOnAMovedBaseOpensThePairAgain(t *testing.T) {
+	h := newHistory(t, 6)
+	for i := 0; i < 30; i++ {
+		h.place()
+	}
+	if err := MergeStore(h.store, direct); err != nil {
+		t.Fatal(err)
+	}
+	fails := 1
+	sortedfile.SetReadSeam(func(_ string, next io.ReaderAt) io.ReaderAt {
+		if fails > 0 {
+			fails--
+			return badRead{next: next}
+		}
+		return next
+	})
+	defer sortedfile.SetReadSeam(nil)
+	st, err := Load(h.store)
+	if err != nil {
+		t.Fatalf("a fold over a moved base: %v", err)
+	}
+	want, _ := h.oracleSt.ThreadOfGUID(h.guid[5])
+	if got, ok := st.ThreadOfGUID(h.guid[5]); !ok || got != want {
+		t.Errorf("after a moved base: %q %v, want %q", got, ok, want)
+	}
+}
+
+// A position before the base's records names history a merge folded away.
+func TestChangesFromBeforeTheBaseAreRefused(t *testing.T) {
+	h := newHistory(t, 7)
+	for i := 0; i < 30; i++ {
+		h.place()
+	}
+	if err := MergeStore(h.store, direct); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ChangesSince(h.store, 5); !errors.Is(err, ErrBeforeBase) {
+		t.Errorf("changes since 5 answered %v, want ErrBeforeBase", err)
+	}
+}
