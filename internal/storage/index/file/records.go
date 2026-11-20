@@ -2,6 +2,7 @@ package file
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
@@ -190,14 +191,16 @@ func openWriterBase(fs *folderState) (*mailindex.File, *mailindex.Records, error
 	return cloneIndexFile(img.file), img.recs.Fork(), nil
 }
 
-// mustDecode gives an operation that still writes decoded records those
-// records, until step 3b-2b moves it onto chunks. The writer's chunks are all
-// loaded, so decoding cannot fail but on a broken layout.
-func (fs *folderState) mustDecode() {
+// decodeForRewrite gives an operation that still writes decoded records
+// those records, until step 3b-2b moves it onto chunks. A layout that does not
+// decode is a damaged index: an error for the caller, not the process's end.
+func (fs *folderState) decodeForRewrite() error {
 	if fs.recs == nil {
-		return
+		return nil
 	}
 	if err := fs.decodeRecords(); err != nil {
-		panic(fmt.Sprintf("fileindex: decode the writer's loaded records: %v", err))
+		slog.Error("fileindex: the writer's records do not decode", "folder", fs.folder, "err", err)
+		return err
 	}
+	return nil
 }

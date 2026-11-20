@@ -299,3 +299,38 @@ func TestTheRecordsDigestIsTheOneOnDisk(t *testing.T) {
 		t.Errorf("digest from chunks %x, develop's %x", fromChunks, want)
 	}
 }
+
+// A handle that opened the folder and read no record takes the hold after
+// another process rewrote the base over an empty journal: it reads the new
+// base, it does not prove it against chunks it never loaded (#2630 review).
+func TestAWriterWithChunksUnloadedTakesARewrittenBase(t *testing.T) {
+	home := movedFolder(t, 3*mailindex.ChunkRecords)
+	// The journal paired with the base, as after any fold: the next rewrite
+	// then names this base as the one it continues.
+	o, of := acceptOpen(t, home)
+	if err := o.OptimizeIndex(of.ID); err != nil {
+		t.Fatal(err)
+	}
+	o.Close() //nolint:errcheck
+	a, af := acceptOpen(t, home)
+	defer a.Close() //nolint:errcheck
+	// Another process: its own image of the base, not the one a forked.
+	baseImages.Delete(indexPathFor(home))
+	b, bf := acceptOpen(t, home)
+	// A rewrite that journals nothing first: the new base folds exactly the
+	// empty journal the reader opened on.
+	if err := b.(*userHandle).RecomputeVSize(bf.ID); err != nil {
+		t.Fatal(err)
+	}
+	b.Close() //nolint:errcheck
+	if err := a.UpdateFlags(af.ID, 8, []string{`\Flagged`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := a.GetMessages(af.ID, mailbox.SeqSet{{From: 7, To: 8}})
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("read back %d: %v", len(msgs), err)
+	}
+	if len(msgs[1].Flags) == 0 || msgs[1].Flags[0] != `\Flagged` {
+		t.Errorf("uid 8 flags %v after the write", msgs[1].Flags)
+	}
+}

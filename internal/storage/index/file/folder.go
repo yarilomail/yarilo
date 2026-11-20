@@ -765,7 +765,10 @@ func (fs *folderState) flush() error {
 		if layout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions); lerr == nil && sameLayout(layout, fs.recs.Layout()) {
 			ri.Records, ri.RecordBytes = nil, fs.recs.Bytes()
 		} else {
-			fs.mustDecode()
+			// Chunks in another layout than the base will have: encoded anew.
+			if err := fs.decodeForRewrite(); err != nil {
+				return err
+			}
 			ri = fs.file.ToRecreateInput(fs.indexPath)
 		}
 	}
@@ -991,7 +994,9 @@ func (fs *folderState) reloadLocked() error {
 		// A rewritten base often holds exactly what this handle holds -- a
 		// compaction folding in the applied log. The digest proves it: several
 		// paths fold the same log, so offsets agreeing is not enough (#1228).
-		if fs.file != nil && !logReplaced && !fs.recordsLeft {
+		// Only a writer holding every record can prove the new base holds the
+		// same: chunks it never loaded belong to a base that is gone.
+		if fs.file != nil && !logReplaced && !fs.recordsLeft && (fs.recs == nil || fs.recs.AllLoaded()) {
 			if h, perr := peekLineage(fs.indexPath); perr == nil && h.Lineage != lineageUnknown &&
 				h.FoldedLineage == fs.lineage.Lineage && uint64(fs.logSize) >= h.FoldedOffset &&
 				h.RecordsDigest == fs.digestRecords() {
@@ -1098,7 +1103,9 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 		return fmt.Errorf("fileindex/adopt: uid validity 0")
 	}
 	return u.withFolderSite(folderID, lockSiteAdoptUidSpace, func(fs *folderState) error {
-		fs.mustDecode() // decoded until step 3b-2b
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		if len(fs.file.Records) > 0 {
 			return fmt.Errorf("fileindex/adopt: folder %q holds %d messages: %w",
 				fs.folder, len(fs.file.Records), mailbox.ErrUIDSpaceInUse)
@@ -1185,7 +1192,9 @@ func (u *userIndex) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error {
 			guidRecSize, 1, fs.file.Header.UIDValidity); err != nil {
 			return err
 		}
-		fs.mustDecode() // decoded until step 3b-2b
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		for _, rec := range fs.file.Records {
 			g, ok := guids[rec.UID]
 			if !ok || g == zero {
@@ -1851,7 +1860,9 @@ func (u *userIndex) AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 			current = was
 			return fs.flush()
 		}
-		fs.mustDecode() // decoded until step 3b-2b
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		if was != uidValidity && len(fs.file.Records) > 0 {
 			dropped := len(fs.file.Records)
 			if _, err := u.resetFolderLocked(fs, nil); err != nil {
@@ -1890,7 +1901,9 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 		}
 		// What the folder held before the reset, with each record's identity:
 		// a dropped one is retracted from the search index by it (#1986).
-		fs.mustDecode() // decoded until step 3b-2b
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		before := make(map[uint32][16]byte, len(fs.file.Records))
 		for _, rec := range fs.file.Records {
 			before[rec.UID] = decodeGUIDRec(rec.Ext[extNameGUID])
@@ -2023,7 +2036,9 @@ func (u *userIndex) SetAltTier(folderID uint64, filenames []string, altTier bool
 	}
 	return u.withFolderSite(folderID, lockSiteSetAltTier, func(fs *folderState) error {
 		changed := false
-		fs.mustDecode() // decoded until step 3b-2b
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		for _, rec := range fs.file.Records {
 			mapUID, _ := decodeMdboxRec(rec.Ext[extNameMdbox])
 			if _, ok := set[strconv.FormatUint(uint64(mapUID), 10)]; !ok {
@@ -3050,7 +3065,9 @@ func (u *userIndex) SetCacheOffsets(folderID uint64, stamps map[uint32]mailbox.C
 			cacheCRCRecSize, 4, fs.file.Header.UIDValidity); err != nil {
 			return err
 		}
-		fs.mustDecode() // decoded until step 3b-2b
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		for _, rec := range fs.file.Records {
 			stamp, ok := stamps[rec.UID]
 			if !ok || stamp.Offset == 0 {
@@ -3122,7 +3139,9 @@ func (u *userIndex) PurgeCache(folderID uint64) (carried int, reclaimed int64, e
 			return nil
 		}
 
-		fs.mustDecode() // decoded until step 3b-2b
+		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+			return err
+		}
 		live := make(map[uint32]uint32, len(fs.file.Records))
 		for _, rec := range fs.file.Records {
 			if off := decodeCacheRec(rec.Ext[extNameCache]); off != 0 {
@@ -3186,7 +3205,9 @@ func abandonCacheGeneration(fs *folderState) (uint32, error) {
 		return 0, nil
 	}
 	ext.ResetID = newCacheGeneration(ext.ResetID)
-	fs.mustDecode() // decoded until step 3b-2b
+	if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+		return 0, err
+	}
 	for _, rec := range fs.file.Records {
 		delete(rec.Ext, extNameCache)
 	}

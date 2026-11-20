@@ -396,7 +396,9 @@ func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 	var copies []mailbox.GUIDRecord
 	for _, fid := range folderIDs {
 		err := u.withFolderSite(fid, lockSiteGUIDRebuild, func(fs *folderState) error {
-			fs.mustDecode() // decoded until step 3b-2b
+			if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
+				return err
+			}
 			for _, rec := range fs.file.Records {
 				g := decodeGUIDRec(rec.Ext[extNameGUID])
 				if g == ([16]byte{}) {
