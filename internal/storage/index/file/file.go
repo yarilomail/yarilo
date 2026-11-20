@@ -204,6 +204,13 @@ func WithCachePurgeContinuedPercentage(p int) Option {
 	return func(b *Backend) { b.cachePurgeContinuedPct = p }
 }
 
+// WithIndexIdleCacheSize sets what base images no folder state references
+// may hold together; the cache is the process's, so the last Backend built
+// sets it.
+func WithIndexIdleCacheSize(n int64) Option {
+	return func(*Backend) { imageIdleBudget.Store(n) }
+}
+
 // WithCachePurgeMinSize sets the cache file size below which nothing purges it;
 // zero purges at any size.
 func WithCachePurgeMinSize(n int64) Option {
@@ -570,6 +577,8 @@ type folderState struct {
 	mapMu   sync.Mutex
 	foldMu  sync.Mutex
 	current *indexMap
+	// pinned is the base image this state references (imagecache.go).
+	pinned *baseImage
 
 	// gone marks a folder deleted under this state; guarded by userIndex.mu.
 	gone bool
@@ -953,6 +962,7 @@ func (u *userIndex) Close() error {
 	u.mu.Lock()
 	for _, fs := range u.open {
 		fs.closeFDs()
+		fs.unpinImage()
 	}
 	u.open = nil
 	u.byDir = nil
@@ -980,6 +990,7 @@ func (u *userIndex) RenameFolder(oldName, newName string) error {
 		for id, fs := range u.open {
 			if fs.folder == oldName {
 				fs.closeFDs()
+				fs.unpinImage()
 				delete(u.open, id)
 			}
 		}

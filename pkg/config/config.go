@@ -2507,6 +2507,10 @@ type StorageConfig struct {
 	// it; unset keeps 32 KiB, "0" purges at any size.
 	MailCachePurgeMinSize    int64  `koanf:"-"` // resolved from MailCachePurgeMinSizeRaw at load
 	MailCachePurgeMinSizeRaw string `koanf:"mail_cache_purge_min_size"`
+	// MailIndexIdleCacheSize is what folder index images no session uses may
+	// hold together, kept for the next open; unset 64 MiB, "0" frees at once.
+	MailIndexIdleCacheSize    int64  `koanf:"-"` // resolved from MailIndexIdleCacheSizeRaw at load
+	MailIndexIdleCacheSizeRaw string `koanf:"mail_index_idle_cache_size"`
 	// MailFsync is what reaches the disk before a delivery is acknowledged:
 	// never, optimized (default, the body) or always (#1847).
 	MailFsync string `koanf:"mail_fsync"`
@@ -2845,14 +2849,15 @@ func Defaults() *Config {
 			// What the code takes for an empty value, written here so the
 			// defaults read as the binary behaves; the code keeps its own
 			// fallback for a StorageConfig built without Defaults.
-			MailDriver:               "maildir",
-			MaildirRoot:              "/var/mail/vhosts",
-			MailHome:                 "%d/%u",
-			MailFsync:                "optimized",
-			LockMethod:               "flock",
-			MdboxMapFormat:           "v2",
-			MailCachePurgeMinSizeRaw: "32k",
-			MaildirSyncOnSelect:      true,
+			MailDriver:                "maildir",
+			MaildirRoot:               "/var/mail/vhosts",
+			MailHome:                  "%d/%u",
+			MailFsync:                 "optimized",
+			LockMethod:                "flock",
+			MdboxMapFormat:            "v2",
+			MailCachePurgeMinSizeRaw:  "32k",
+			MailIndexIdleCacheSizeRaw: "64M",
+			MaildirSyncOnSelect:       true,
 			// Both are documented as defaulting to true and neither was
 			// defaulted, so ByDriver passed false and every folder name went
 			// to disk as modified-UTF-7 with no NFC normalisation -- the
@@ -3363,6 +3368,7 @@ func (cfg *Config) validate() error {
 	resolve("storage.mail_index_log_rotate_max_size", cfg.Storage.MailIndexLogRotateMaxSizeRaw, &cfg.Storage.MailIndexLogRotateMaxSize)
 	resolve("storage.mail_cache_purge_min_size", cfg.Storage.MailCachePurgeMinSizeRaw, &cfg.Storage.MailCachePurgeMinSize)
 	resolve("threading.threading_tail_size", cfg.Threading.ThreadingTailSizeRaw, &cfg.Threading.ThreadingTailSize)
+	resolve("storage.mail_index_idle_cache_size", cfg.Storage.MailIndexIdleCacheSizeRaw, &cfg.Storage.MailIndexIdleCacheSize)
 	resolve("protocol.jmap.jmap_max_size_upload", cfg.Protocol.JMAP.MaxSizeUploadRaw, &cfg.Protocol.JMAP.MaxSizeUpload)
 	resolve("protocol.jmap.jmap_max_size_request", cfg.Protocol.JMAP.MaxSizeRequestRaw, &cfg.Protocol.JMAP.MaxSizeRequest)
 	resolve("protocol.jmap.jmap_max_body_value_bytes", cfg.Protocol.JMAP.MaxBodyValueBytesRaw, &cfg.Protocol.JMAP.MaxBodyValueBytes)

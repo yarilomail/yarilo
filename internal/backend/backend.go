@@ -1033,6 +1033,7 @@ func IndexOptions(cfg config.StorageConfig, locker locks.Locker) []file.Option {
 	if strings.TrimSpace(cfg.MailCachePurgeMinSizeRaw) != "" {
 		opts = append(opts, file.WithCachePurgeMinSize(cfg.MailCachePurgeMinSize))
 	}
+	opts = append(opts, file.WithIndexIdleCacheSize(cfg.MailIndexIdleCacheSize))
 	opts = append(opts, file.WithLogCompaction(
 		cfg.MailIndexLogRotateMinSize,
 		cfg.MailIndexLogRotateMaxSize,

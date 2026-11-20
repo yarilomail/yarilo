@@ -33,6 +33,12 @@ type indexMap struct {
 	logSeen      int64
 	committedEnd int64 // log offset folded into view
 	refs         int   // live views; guarded by folderState.mapMu
+	// imgRef says the map holds a reference to img: from its publication
+	// until it is neither current nor read.
+	imgRef bool
+	// prev is the map this one was extended from, unpublished by the fold:
+	// retired once this one is published, so its image reference goes.
+	prev *indexMap
 
 	// w writes the map's chunks for the next version; view.recs is its
 	// snapshot, released once the map is neither current nor read. Nil for
@@ -71,10 +77,9 @@ func MapCopies() int { return mapCopies.load() }
 // DropBaseImages forgets every cached parse of a base, as a process that has
 // just started holds none: for a measurement of a cold open.
 func DropBaseImages() {
-	baseImages.Range(func(k, _ any) bool {
-		baseImages.Delete(k)
-		return true
-	})
+	baseImages.mu.Lock()
+	defer baseImages.mu.Unlock()
+	clear(baseImages.m)
 }
 
 // ResetMapCounters zeroes both, for a row that counts one folder's work.
@@ -117,6 +122,16 @@ func (fs *folderState) openView() (*folderState, func(), error) {
 	old := fs.current
 	fs.current = m
 	m.refs++
+	if m.img != nil && !m.imgRef {
+		m.imgRef = true
+		baseImages.ref(m.img)
+	}
+	if p := m.prev; p != nil {
+		m.prev = nil
+		if p != m {
+			fs.retireLocked(p)
+		}
+	}
 	if old != nil && old != m {
 		fs.retireLocked(old)
 	}
@@ -248,7 +263,14 @@ func (fs *folderState) retire(m *indexMap) {
 }
 
 func (fs *folderState) retireLocked(m *indexMap) {
-	if m.w == nil || m.released || m.refs > 0 || fs.current == m {
+	if m.refs > 0 || fs.current == m {
+		return
+	}
+	if m.imgRef {
+		m.imgRef = false
+		baseImages.unref(m.img)
+	}
+	if m.w == nil || m.released {
 		return
 	}
 	m.view.recs.Release()
@@ -293,7 +315,7 @@ func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*ind
 		return nil, err
 	}
 	m := &indexMap{view: view, img: used, logIdent: logSt, logSeen: sizeOfLog(logSt), committedEnd: end,
-		ownsFile: used.file != view.file}
+		ownsFile: used.file != view.file, prev: from}
 	m.publishRecords()
 	return m, nil
 }
@@ -357,7 +379,7 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 		target.vsize = fromHeader
 	}
 	m := &indexMap{view: target, img: from.img, logIdent: from.logIdent, logSeen: lg.size,
-		committedEnd: end, ownsFile: true}
+		committedEnd: end, ownsFile: true, prev: from}
 	m.publishRecords()
 	return m, nil
 }

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
@@ -20,11 +19,15 @@ type baseImage struct {
 	ident    os.FileInfo
 	size     int64
 	mod      time.Time
+	// path, refs and idleAt are the cache's, under baseImages.mu.
+	path   string
+	refs   int
+	idleAt time.Time
 }
 
 // baseImages keeps one parse per base version, shared between readers. Keyed
 // by path; the identity check says whether it still describes the file.
-var baseImages sync.Map // indexPath -> *baseImage
+var baseImages = newImageCache()
 
 // baseReadAttempts bounds the re-reads a base that keeps moving costs.
 const baseReadAttempts = 3
@@ -51,11 +54,10 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cached, ok := baseImages.Load(fs.indexPath); ok {
-		img, _ := cached.(*baseImage)
-		if img != nil && img.ident != nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
-			return img, nil
-		}
+	if img := baseImages.load(fs.indexPath); img != nil && img.ident != nil && os.SameFile(img.ident, st) &&
+		img.size == st.Size() && img.mod.Equal(st.ModTime()) {
+		fs.pinImage(img)
+		return img, nil
 	}
 	// The label has to describe what was read: a base replaced mid-read would
 	// otherwise cache old content under the new file's identity (#2056).
@@ -100,7 +102,8 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if err := orderImage(img, fs.indexPath); err != nil {
 		return nil, err
 	}
-	baseImages.Store(fs.indexPath, img)
+	baseImages.store(fs.indexPath, img)
+	fs.pinImage(img)
 	return img, nil
 }
 
