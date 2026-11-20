@@ -33,6 +33,13 @@ const baseReadAttempts = 3
 // read and the stat that labels it. Nil everywhere else.
 var afterBaseRead func()
 
+// replaySeam and buildViewSeam are test seams: a replay that stops before a
+// record, a rebuild that fails. Nil everywhere else.
+var (
+	replaySeam    func() error
+	buildViewSeam func() error
+)
+
 // decodedImages is a test seam: images decoded whole, as before the lazy
 // form, so a row can compare the two. False everywhere else.
 var decodedImages bool
@@ -109,6 +116,11 @@ func imageFor(fs *folderState) (*baseImage, error) {
 // offset the view stands at -- a base that already holds the whole log stands
 // at the log's end, not at zero, and the next fold continues from there.
 func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
+	if buildViewSeam != nil {
+		if err := buildViewSeam(); err != nil {
+			return nil, 0, nil, err
+		}
+	}
 	img, lg, err := fs.imageAndItsLog()
 	if err != nil {
 		return nil, 0, nil, err

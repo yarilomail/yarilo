@@ -146,6 +146,10 @@ func TestTheReplayGivesTheSameRecordsInBothForms(t *testing.T) {
 		case inChunks && sawDecoded:
 			sawChunksAgain = true
 		}
+		ch, dh := viewHeader(t, chunked, cf.ID), viewHeader(t, decoded, df.ID)
+		if ch != dh {
+			t.Fatalf("seed %d step %d after %s: the chunked view's header %+v, the decoded one's %+v", seed, step, what, ch, dh)
+		}
 		if !reflect.DeepEqual(cm, dm) {
 			t.Fatalf("seed %d step %d after %s: the chunked view answers %d messages, the decoded one %d, and they differ",
 				seed, step, what, len(cm), len(dm))
@@ -192,4 +196,14 @@ func withoutExtension(t *testing.T, home, name string) {
 	if _, err := mailindex.Recreate(mailindex.RecreateInput{Path: path, Header: hdr, Extensions: layout.Extensions, Records: f.Records}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// viewHeader is the counters a reader's view answers STATUS with.
+func viewHeader(t *testing.T, h mailbox.UserIndex, id uint64) [5]uint32 {
+	t.Helper()
+	f, err := h.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return [5]uint32{f.Messages, f.Unseen, f.NextUID, f.Recent, f.UIDValidity}
 }

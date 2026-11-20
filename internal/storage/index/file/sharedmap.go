@@ -39,6 +39,9 @@ type indexMap struct {
 	// decoded records and for a view on the shared image.
 	w        *mailindex.Records
 	released bool
+	// broken says a fold onto w stopped part way: w holds some of a tail, so
+	// this map is never extended again, only rebuilt from the base.
+	broken bool
 
 	// ownsFile says the records are this map's own. A view built from a base
 	// with nothing in the log shares the cached base image, and extending it
@@ -214,7 +217,7 @@ func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*ind
 	var from *indexMap
 	if ierr == nil && img != nil {
 		fs.mapMu.Lock()
-		if m := fs.current; m != nil && sameImage(m.img, img) && sameLog(m.logIdent, logSt) &&
+		if m := fs.current; m != nil && !m.broken && sameImage(m.img, img) && sameLog(m.logIdent, logSt) &&
 			sizeOfLog(logSt) >= m.committedEnd {
 			from = m
 			// Unpublished for the duration: a map being extended in place
@@ -264,6 +267,7 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	fs.mapMu.Lock()
 	shared := from.refs > 0 || !from.ownsFile || fs.current == from
 	fs.mapMu.Unlock()
+	onWriter := false
 	switch {
 	case from.w != nil || from.view.recs != nil:
 		// Chunked: the next version writes through the map's writer, which
@@ -272,6 +276,7 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 		if from.w != nil {
 			fs.retire(from)
 			target.file, target.recs = cloneIndexFile(from.view.file), from.w
+			onWriter = true
 		} else if err := target.forkRecords(); err != nil {
 			return nil, err
 		}
@@ -286,13 +291,20 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	}
 
 	end, aerr := target.applyLogFrom(lg, from.committedEnd)
+	if aerr == nil {
+		aerr = target.refreshExtState()
+	}
 	if aerr != nil {
+		// Even once the replay turned to decoded records, what it wrote
+		// before stays in the writer.
+		if onWriter {
+			fs.mapMu.Lock()
+			from.broken = true
+			fs.mapMu.Unlock()
+		}
 		return nil, aerr
 	}
 	target.logSize = end
-	if rerr := target.refreshExtState(); rerr != nil {
-		return nil, rerr
-	}
 	fromHeader := target.vsize
 	target.ensureVsizeLocked()
 	if target.vsize.Vsize == 0 && fromHeader.Vsize > 0 {

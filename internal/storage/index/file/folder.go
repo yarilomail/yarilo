@@ -2568,6 +2568,11 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 			continue
 		}
 
+		if replaySeam != nil {
+			if err := replaySeam(); err != nil {
+				return committedEnd, err
+			}
+		}
 		switch {
 		case kind == mailindex.TxTypeModseqUpdate:
 			for i := 0; i+12 <= len(payload); i += 12 {
