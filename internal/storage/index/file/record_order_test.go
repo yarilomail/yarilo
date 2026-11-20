@@ -115,18 +115,35 @@ func mustLineage(t *testing.T, home string) lineageHdr {
 	return h
 }
 
-// A writer on decoded records, as a new or converted folder's is, writes its
-// base in uid order too.
-func TestADecodedWriterWritesItsBaseInOrder(t *testing.T) {
+// A writer whose chunks are out of uid order, however they came to be, writes
+// its base in order, marked.
+func TestAWriterWritesItsBaseInOrder(t *testing.T) {
 	const n = 2*mailindex.ChunkRecords + 3
 	home := movedFolder(t, n)
-	asUnorderedBase(t, home)
-	writerDecoded = true
-	defer func() { writerDecoded = false }()
 	h, f := acceptOpen(t, home)
 	defer h.Close() //nolint:errcheck
-	if err := h.OptimizeIndex(f.ID); err != nil {
+	fs, err := h.(*userHandle).ui.state(f.ID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	if err := fs.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.loadWriterRecords(); err != nil {
+		t.Fatal(err)
+	}
+	var raws [][]byte
+	for seq := fs.recordCount() - 1; seq >= 0; seq-- {
+		raws = append(raws, fs.recs.RecordBytes(seq))
+	}
+	if err := fs.replaceRecords(raws); err != nil {
+		t.Fatal(err)
+	}
+	ferr := fs.foldLocked()
+	fs.mu.Unlock()
+	if ferr != nil {
+		t.Fatal(ferr)
 	}
 	disk, err := mailindex.Open(indexPathFor(home))
 	if err != nil {

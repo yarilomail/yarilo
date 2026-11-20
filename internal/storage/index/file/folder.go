@@ -419,6 +419,9 @@ func (fs *folderState) createFresh(uidValidity uint32, guid [16]byte) error {
 	mf.Header.UIDValidity = uidValidity
 	mf.Header.NextUID = 1
 	fs.file = mf
+	if err := fs.replaceRecords(nil); err != nil {
+		return err
+	}
 	fs.hdr = dboxHdr{MailboxGUID: guid}
 	fs.keywords = keywordsHdr{}
 	if err := fs.flush(); err != nil {
@@ -766,15 +769,11 @@ func (fs *folderState) flush() error {
 	fs.reconcileHeaderLocked()
 	ri := fs.file.ToRecreateInput(fs.indexPath)
 	if fs.recs != nil {
-		if layout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions); lerr == nil && sameLayout(layout, fs.recs.Layout()) {
-			ri.Records, ri.RecordBytes = nil, fs.recs.Bytes()
-		} else {
-			// Chunks in another layout than the base will have: encoded anew.
-			if err := fs.decodeForRewrite(); err != nil {
-				return err
-			}
-			ri = fs.file.ToRecreateInput(fs.indexPath)
+		// Chunks in another layout than the base will have go to it first.
+		if err := fs.reencodeRecords(); err != nil {
+			return err
 		}
+		ri.Records, ri.RecordBytes = nil, fs.recs.Bytes()
 	}
 	if fs.volatileDir != "" {
 		if err := os.MkdirAll(fs.volatileDir, 0o700); err != nil {
@@ -1107,12 +1106,9 @@ func (u *userIndex) AdoptUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 		return fmt.Errorf("fileindex/adopt: uid validity 0")
 	}
 	return u.withFolderSite(folderID, lockSiteAdoptUidSpace, func(fs *folderState) error {
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		if len(fs.file.Records) > 0 {
+		if n := fs.recordCount(); n > 0 {
 			return fmt.Errorf("fileindex/adopt: folder %q holds %d messages: %w",
-				fs.folder, len(fs.file.Records), mailbox.ErrUIDSpaceInUse)
+				fs.folder, n, mailbox.ErrUIDSpaceInUse)
 		}
 		slog.Info("fileindex: adopting a recorded uid space", "user", u.username,
 			"folder", fs.folder, "uid_validity", uidValidity, "next_uid", nextUID,
@@ -1296,7 +1292,7 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 
 // appendLockedWith appends m with extra record extensions set, and returns the
 // record as journalled. The record reaches memory through the one replay.
-func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string][]byte) (*mailindex.Record, error) {
+func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string][]byte) ([]byte, error) {
 	if m.UID == 0 {
 		return nil, fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
 	}
@@ -1338,31 +1334,32 @@ func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string
 	if m.AltTier {
 		flags |= mailindex.FlagBackend
 	}
-	rec := &mailindex.Record{
-		UID:   m.UID,
-		Flags: flags,
-		Ext: map[string][]byte{
-			extNameModSeq:       encodeModseqRec(modseq),
-			extNameKeywords:     encodeKeywordsRec(kwBits),
-			extNameInternalDate: encodeIdateRec(m.InternalDate),
-			extNameVsize:        encodeVsizeRec(m.RFC822Size()),
-			extNameGUID:         encodeGUIDRec(m.GUID),
-		},
-	}
+	// The extensions first, then the record in the layout they leave.
 	if m.MapUID != 0 {
-		rec.Ext[extNameMdbox] = encodeMdboxRec(m.MapUID, m.SaveDate)
 		fs.ensureMdboxExtLocked()
-	}
-	if m.VirtualBacking != 0 {
-		rec.Ext[extNameVirtual] = encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID)
 	}
 	if err := fs.ensureVsizeExtLocked(); err != nil {
 		slog.Warn("fileindex: vsize extension not declared", "folder", fs.folder, "err", err)
 	}
-	for name, v := range extra {
-		rec.Ext[name] = v
+	rec, err := fs.newRecord(m.UID, flags)
+	if err != nil {
+		return nil, err
 	}
-	recs, err := fs.appendRecords(rec)
+	rec.set(extNameModSeq, encodeModseqRec(modseq))
+	rec.set(extNameKeywords, encodeKeywordsRec(kwBits))
+	rec.set(extNameInternalDate, encodeIdateRec(m.InternalDate))
+	rec.set(extNameVsize, encodeVsizeRec(m.RFC822Size()))
+	rec.set(extNameGUID, encodeGUIDRec(m.GUID))
+	if m.MapUID != 0 {
+		rec.set(extNameMdbox, encodeMdboxRec(m.MapUID, m.SaveDate))
+	}
+	if m.VirtualBacking != 0 {
+		rec.set(extNameVirtual, encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID))
+	}
+	for name, v := range extra {
+		rec.set(name, v)
+	}
+	recs, err := fs.appendRecords(rec.raw)
 	if err != nil {
 		return nil, err
 	}
@@ -1375,7 +1372,7 @@ func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string
 		fs.vsize.HighestUID = m.UID
 	}
 	m.ModSeq = modseq
-	return rec, nil
+	return rec.raw, nil
 }
 
 // UpdateFlags replaces the flag set + keyword set for one UID.
@@ -1492,10 +1489,8 @@ func (fs *folderState) applyChecked(recs [][]byte, checked bool) error {
 	if err != nil {
 		return fmt.Errorf("fileindex/apply: record layout: %w", err)
 	}
-	if fs.recs != nil && !sameLayout(fs.recs.Layout(), layout) {
-		if err := fs.decodeRecords(); err != nil {
-			return err
-		}
+	if err := fs.reencodeRecords(); err != nil {
+		return err
 	}
 	st := replayState{layout: layout, checked: checked}
 	for _, rec := range recs {
@@ -1868,11 +1863,8 @@ func (u *userIndex) AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) 
 			current = was
 			return fs.flush()
 		}
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		if was != uidValidity && len(fs.file.Records) > 0 {
-			dropped := len(fs.file.Records)
+		if was != uidValidity && fs.recordCount() > 0 {
+			dropped := fs.recordCount()
 			if _, err := u.resetFolderLocked(fs, nil); err != nil {
 				return err
 			}
@@ -1909,15 +1901,13 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 		}
 		// What the folder held before the reset, with each record's identity:
 		// a dropped one is retracted from the search index by it (#1986).
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		before := make(map[uint32][16]byte, len(fs.file.Records))
-		for _, rec := range fs.file.Records {
-			before[rec.UID] = decodeGUIDRec(rec.Ext[extNameGUID])
+		before := make(map[uint32][16]byte, fs.recordCount())
+		for seq := range fs.recordCount() {
+			g, _ := fs.recExt(seq, extNameGUID)
+			before[fs.recUID(seq)] = decodeGUIDRec(g)
 		}
 
-		fs.file.Records = fs.file.Records[:0]
+		var raws [][]byte
 		fs.file.Header.MessagesCount = 0
 		fs.file.Header.SeenMessagesCount = 0
 		fs.file.Header.DeletedMessagesCount = 0
@@ -1943,38 +1933,40 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 			if modseq > maxModseq {
 				maxModseq = modseq
 			}
-			rec := &mailindex.Record{
-				UID:   m.UID,
-				Flags: mailindex.MailFlag(imapFlagsToIndex(m.Flags)),
-				Ext: map[string][]byte{
-					extNameModSeq:   encodeModseqRec(modseq),
-					extNameKeywords: encodeKeywordsRec(kwBits),
-					extNameVsize:    encodeVsizeRec(m.RFC822Size()),
-					extNameGUID:     encodeGUIDRec(m.GUID),
-				},
+			flags := mailindex.MailFlag(imapFlagsToIndex(m.Flags))
+			rec, err := fs.newRecord(m.UID, flags)
+			if err != nil {
+				return err
 			}
+			rec.set(extNameModSeq, encodeModseqRec(modseq))
+			rec.set(extNameKeywords, encodeKeywordsRec(kwBits))
+			rec.set(extNameVsize, encodeVsizeRec(m.RFC822Size()))
+			rec.set(extNameGUID, encodeGUIDRec(m.GUID))
 			if m.MapUID != 0 {
 				// The storage key travels with the record, or a rebuilt folder
 				// would hold messages that name no storage (#1700).
-				rec.Ext[extNameMdbox] = encodeMdboxRec(m.MapUID, m.SaveDate)
+				rec.set(extNameMdbox, encodeMdboxRec(m.MapUID, m.SaveDate))
 			}
 			if m.VirtualBacking != 0 {
 				// Likewise the copy a virtual record names: without it the
 				// next sync cannot tell which message this uid was.
-				rec.Ext[extNameVirtual] = encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID)
+				rec.set(extNameVirtual, encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID))
 			}
-			fs.file.Records = append(fs.file.Records, rec)
+			raws = append(raws, rec.raw)
 			kept[m.UID] = struct{}{}
 			fs.file.Header.MessagesCount++
-			if rec.Flags&mailindex.FlagSeen != 0 {
+			if flags&mailindex.FlagSeen != 0 {
 				fs.file.Header.SeenMessagesCount++
 			}
-			if rec.Flags&mailindex.FlagDeleted != 0 {
+			if flags&mailindex.FlagDeleted != 0 {
 				fs.file.Header.DeletedMessagesCount++
 			}
 			if m.UID > maxUID {
 				maxUID = m.UID
 			}
+		}
+		if err := fs.replaceRecords(raws); err != nil {
+			return err
 		}
 		if err := fs.advanceModSeqAtLeast(maxModseq); err != nil {
 			return err
@@ -2190,19 +2182,29 @@ func (fs *folderState) adoptLegacy(snap legacySnapshot) error {
 	mf.Header.UIDValidity = snap.UIDValidity
 	mf.Header.NextUID = snap.NextUID
 	mf.Header.MessagesCount = uint32(len(snap.Records))
-	for _, rec := range snap.Records {
-		if rec.Flags&mailindex.FlagSeen != 0 {
+	fs.file = mf
+	raws := make([][]byte, 0, len(snap.Records))
+	for _, lr := range snap.Records {
+		if lr.flags&mailindex.FlagSeen != 0 {
 			mf.Header.SeenMessagesCount++
 		}
-		if rec.Flags&mailindex.FlagDeleted != 0 {
+		if lr.flags&mailindex.FlagDeleted != 0 {
 			mf.Header.DeletedMessagesCount++
 		}
-		mf.Records = append(mf.Records, rec)
+		rec, rerr := fs.newRecord(lr.uid, lr.flags)
+		if rerr != nil {
+			return rerr
+		}
+		rec.set(extNameModSeq, encodeModseqRec(lr.modseq))
+		rec.set(extNameKeywords, encodeKeywordsRec(lr.kwBits))
+		raws = append(raws, rec.raw)
 	}
 	if modseqExt := findExt(mf.Extensions, extNameModSeq); modseqExt != nil {
 		modseqExt.HdrData = encodeModseqHdr(modseqHdr{HighestModSeq: snap.HighestModSeq})
 	}
-	fs.file = mf
+	if err := fs.replaceRecords(raws); err != nil {
+		return err
+	}
 	fs.hdr = dboxHdr{MailboxGUID: snap.MailboxGUID}
 	fs.keywords = snap.Keywords
 	if err := fs.persistKeywordRegistry(); err != nil {
@@ -2556,10 +2558,8 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 	if err != nil {
 		return fromOffset, fmt.Errorf("fileindex/applylog: record layout: %w", err)
 	}
-	if fs.recs != nil && !sameLayout(fs.recs.Layout(), layout) {
-		if err := fs.decodeRecords(); err != nil {
-			return fromOffset, err
-		}
+	if err := fs.reencodeRecords(); err != nil {
+		return fromOffset, err
 	}
 
 	st := replayState{layout: layout}
@@ -2793,15 +2793,13 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 				recStart, len(payload))
 		}
 		// The header's bytes arrive in the EXT_HDR_UPDATE that follows. A
-		// new record width is decoded records' to take (INDEX-MEMORY.md §4).
-		if intro.RecordSize != 0 && fs.recs != nil {
-			if derr := fs.decodeRecords(); derr != nil {
-				return derr
-			}
-		}
+		// new record width re-encodes the chunks, once (INDEX-MEMORY.md §4).
 		if aerr := fs.file.AddRecordExtension(intro.Name, make([]byte, intro.HdrSize),
 			intro.RecordSize, intro.RecordAlign, intro.ResetID); aerr != nil {
 			return fmt.Errorf("fileindex/applylog: declare %q: %w", intro.Name, aerr)
+		}
+		if rerr := fs.reencodeRecords(); rerr != nil {
+			return rerr
 		}
 		newLayout, lerr := mailindex.ComputeRecordLayout(fs.file.Extensions)
 		if lerr != nil {
@@ -2877,48 +2875,31 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 		if stride == 0 {
 			return nil
 		}
-		// The writer's own appends were found absent before they were built.
-		// Otherwise decoded records keep no uid order to search, so a set,
-		// built once for the payload. The header's next uid is no proof: a
-		// stale header is what a replay may be healing.
-		var existing map[uint32]struct{}
+		// The writer's own appends were found absent before they were built;
+		// any other is searched for in the chunks' uid order. The header's
+		// next uid is no proof: a stale header is what a replay may be healing.
 		for i := 0; i+stride <= len(payload); i += stride {
-			rec, recErr := mailindex.DecodeRecord(payload[i:i+stride], st.layout)
-			if recErr != nil {
+			raw := payload[i : i+stride]
+			uid, flags := le.Uint32(raw), mailindex.MailFlag(raw[4])
+			if uid == 0 {
 				break
 			}
-			dup := false
-			switch {
-			case st.checked:
-			case fs.recs != nil:
-				_, dup = fs.recSeqOfUID(rec.UID)
-			default:
-				if existing == nil {
-					existing = make(map[uint32]struct{}, len(fs.file.Records))
-					for _, r := range fs.file.Records {
-						existing[r.UID] = struct{}{}
-					}
+			if !st.checked {
+				if _, dup := fs.recSeqOfUID(uid); dup {
+					continue // already present from base file or earlier log replay
 				}
-				_, dup = existing[rec.UID]
 			}
-			if existing != nil {
-				existing[rec.UID] = struct{}{}
-			}
-			if dup {
-				continue // already present from base file or earlier log replay
-			}
-			rp := rec
-			fs.recAppend(&rp, payload[i:i+stride])
+			fs.recAppend(uid, raw)
 			// The append moves next_uid itself, as the reference's replay
 			// does, not only a header update (#1831).
-			if rp.UID >= fs.file.Header.NextUID {
-				fs.file.Header.NextUID = rp.UID + 1
+			if uid >= fs.file.Header.NextUID {
+				fs.file.Header.NextUID = uid + 1
 			}
 			fs.file.Header.MessagesCount++
-			if rp.Flags&mailindex.FlagSeen != 0 {
+			if flags&mailindex.FlagSeen != 0 {
 				fs.file.Header.SeenMessagesCount++
 			}
-			if rp.Flags&mailindex.FlagDeleted != 0 {
+			if flags&mailindex.FlagDeleted != 0 {
 				fs.file.Header.DeletedMessagesCount++
 			}
 		}
@@ -3015,9 +2996,9 @@ func (fs *folderState) truncateLog(logPath string, committedEnd, readEnd int64) 
 }
 
 // flushAppend persists a newly appended record and updates the names sidecar;
-// rec must be the last element of fs.file.Records. Caller holds fs.mu.
-func (fs *folderState) flushAppend(rec *mailindex.Record) error {
-	records, err := fs.appendLogRecords(rec)
+// raw is the record as journalled. Caller holds fs.mu.
+func (fs *folderState) flushAppend(raw []byte) error {
+	records, err := fs.appendLogRecords(raw)
 	if err != nil {
 		return err
 	}
@@ -3029,43 +3010,48 @@ func (fs *folderState) flushAppend(rec *mailindex.Record) error {
 // appendRecords is the journal of appending rec: the header it carries is the
 // one the append leaves, so the replay that applies it and the header updates
 // agree.
-func (fs *folderState) appendRecords(rec *mailindex.Record) ([][]byte, error) {
+func (fs *folderState) appendRecords(raw []byte) ([][]byte, error) {
+	uid, flags := binary.LittleEndian.Uint32(raw), mailindex.MailFlag(raw[4])
 	h := fs.file.Header
 	h.MessagesCount++
-	if rec.Flags&mailindex.FlagSeen != 0 {
+	if flags&mailindex.FlagSeen != 0 {
 		h.SeenMessagesCount++
 	}
-	if rec.Flags&mailindex.FlagDeleted != 0 {
+	if flags&mailindex.FlagDeleted != 0 {
 		h.DeletedMessagesCount++
 	}
-	if rec.UID >= h.NextUID {
-		h.NextUID = rec.UID + 1
+	if uid >= h.NextUID {
+		h.NextUID = uid + 1
 	}
-	return fs.appendLogRecordsWith(rec, h)
+	return fs.appendLogRecordsWith(raw, h)
 }
 
-func (fs *folderState) appendLogRecords(rec *mailindex.Record) ([][]byte, error) {
-	return fs.appendLogRecordsWith(rec, fs.file.Header)
+func (fs *folderState) appendLogRecords(raw []byte) ([][]byte, error) {
+	return fs.appendLogRecordsWith(raw, fs.file.Header)
 }
 
-func (fs *folderState) appendLogRecordsWith(rec *mailindex.Record, h mailindex.Header) ([][]byte, error) {
+func (fs *folderState) appendLogRecordsWith(raw []byte, h mailindex.Header) ([][]byte, error) {
 	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
 	if err != nil {
 		return nil, fmt.Errorf("fileindex/append: layout: %w", err)
 	}
-	appendPayload, err := mailindex.EncodeTxAppendPayload(layout, []*mailindex.Record{rec})
-	if err != nil {
-		return nil, fmt.Errorf("fileindex/append: encode: %w", err)
+	if len(raw) != int(layout.RecordSize) {
+		return nil, fmt.Errorf("fileindex/append: a %d-byte record in a %d-byte layout", len(raw), layout.RecordSize)
 	}
+	uid := binary.LittleEndian.Uint32(raw)
 	// Emit a TxModseqUpdate alongside the append, or a cross-process reader's
 	// applyLog never advances HighestModSeq from it -- only TxModseqUpdate
 	// feeds the header, not the append's own record-level modseq -- leaving it
 	// stale for other sessions and breaking CONDSTORE HIGHESTMODSEQ.
-	modseq := decodeModseqRec(rec.Ext[extNameModSeq])
+	var modseq uint64
+	if id, ok := layout.ExtID(extNameModSeq); ok {
+		e := layout.Extensions[id]
+		modseq = decodeModseqRec(raw[e.RecordOffset : e.RecordOffset+e.RecordSize])
+	}
 	return [][]byte{
-		encLogRec(mailindex.TxTypeAppend, 0, appendPayload),
+		encLogRec(mailindex.TxTypeAppend, 0, append([]byte(nil), raw...)),
 		encLogRec(mailindex.TxTypeModseqUpdate, 0, mailindex.EncodeTxModseqUpdatePayload([]mailindex.TxModseqUpdate{{
-			UID: rec.UID, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
+			UID: uid, ModSeqLow32: uint32(modseq), ModSeqHigh32: uint32(modseq >> 32),
 		}})),
 		encU32Update(28, h.NextUID),
 		encU32Update(32, h.MessagesCount),

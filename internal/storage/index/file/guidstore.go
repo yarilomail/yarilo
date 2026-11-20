@@ -395,16 +395,14 @@ func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 	var copies []mailbox.GUIDRecord
 	for _, fid := range folderIDs {
 		err := u.withFolderSite(fid, lockSiteGUIDRebuild, func(fs *folderState) error {
-			if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-				return err
-			}
-			for _, rec := range fs.file.Records {
-				g := decodeGUIDRec(rec.Ext[extNameGUID])
+			for seq := range fs.recordCount() {
+				gb, _ := fs.recExt(seq, extNameGUID)
+				g := decodeGUIDRec(gb)
 				if g == ([16]byte{}) {
 					continue // a record with no GUID names no id
 				}
-				r := mailbox.GUIDRecord{GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: rec.UID}
-				if data, ok := rec.Ext[extNameInternalDate]; ok {
+				r := mailbox.GUIDRecord{GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: fs.recUID(seq)}
+				if data, ok := fs.recExt(seq, extNameInternalDate); ok {
 					r.InternalDate = decodeIdateRec(data).Unix()
 				}
 				copies = append(copies, r)
@@ -543,7 +541,7 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 	})
 }
 
-func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) (*mailindex.Record, error) {
+func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) ([]byte, error) {
 	uid := fs.file.Header.NextUID
 	if uid == 0 {
 		uid = 1
@@ -655,22 +653,25 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	hdr.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	hdr.NextUID = uint32(len(copies)) + 1
 
-	records := make([]*mailindex.Record, 0, len(copies))
+	// The records as bytes of the layout, as a base goes to disk.
+	mapID, _ := layout.ExtID(extNameGUIDMap)
+	at := layout.Extensions[mapID].RecordOffset
+	size := int(layout.RecordSize)
+	raw := make([]byte, len(copies)*size)
 	for i, c := range copies {
-		records = append(records, &mailindex.Record{
-			UID: uint32(i + 1),
-			Ext: map[string][]byte{extNameGUIDMap: encodeGUIDMapRec(guidMapRec{
-				GUID: c.GUID, FolderGUID: c.FolderGUID, UID: c.UID,
-				Flags: c.Flags, InternalDate: c.InternalDate, CID: c.CID,
-			})},
-		})
+		rec := raw[i*size : (i+1)*size]
+		binary.LittleEndian.PutUint32(rec, uint32(i+1))
+		copy(rec[at:], encodeGUIDMapRec(guidMapRec{
+			GUID: c.GUID, FolderGUID: c.FolderGUID, UID: c.UID,
+			Flags: c.Flags, InternalDate: c.InternalDate, CID: c.CID,
+		}))
 	}
 
 	u.guid.mu.Lock()
 	defer u.guid.mu.Unlock()
 	if _, err := mailindex.Recreate(mailindex.RecreateInput{
 		Path: u.GUIDStorePath(), Header: hdr, Extensions: layout.Extensions,
-		Records: records,
+		RecordBytes: raw,
 	}); err != nil {
 		return fmt.Errorf("fileindex/guid-rebuild: write: %w", err)
 	}

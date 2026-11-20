@@ -132,9 +132,6 @@ func TestEnsureCacheExtensionOnAnIndexThatPredatesIt(t *testing.T) {
 				kept = append(kept, ext)
 			}
 		}
-		for _, rec := range fs.file.Records {
-			delete(rec.Ext, extNameCache)
-		}
 		// Recompute the layout the way addExtension does, so the header's
 		// record size matches the shortened set.
 		layout, lerr := mailindex.ComputeRecordLayout(kept)
@@ -149,6 +146,10 @@ func TestEnsureCacheExtensionOnAnIndexThatPredatesIt(t *testing.T) {
 		fs.file.Layout = layout
 		fs.file.Header.RecordSize = layout.RecordSize
 		fs.file.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
+		// The records lose the cache's bytes with the layout.
+		if err := fs.reencodeRecords(); err != nil {
+			return err
+		}
 		return fs.flush()
 	}); err != nil {
 		t.Fatal(err)

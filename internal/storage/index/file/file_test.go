@@ -616,7 +616,7 @@ func TestSize_RoundtripAndReopen(t *testing.T) {
 // TestSaveFolderDoesNotCorruptMessagesCount covers the bug where SaveFolder
 // was writing a stale session counter into the on-disk header, causing
 // MessagesCount to drift from the actual record count. After the fix, flush
-// always recounts from fs.file.Records so any drift is healed on the next write.
+// always recounts from the records so any drift is healed on the next write.
 func TestSaveFolderDoesNotCorruptMessagesCount(t *testing.T) {
 	dir := t.TempDir()
 	b := openIdx(dir, testUser)

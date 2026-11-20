@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
@@ -43,12 +44,12 @@ func TestAReplayReadsTheTailInOneCall(t *testing.T) {
 		user: fs.user, folder: fs.folder, indexDir: fs.indexDir, indexPath: fs.indexPath,
 		file: cloneIndexFile(fs.file), lineage: fs.lineage,
 	}
-	view.file.Records = nil
+	view.recs = emptyRecords(t, view.file)
 	view.file.Header.MessagesCount = 0
 	if _, aerr := view.applyLogFrom(lg, int64(0)); aerr != nil {
 		t.Fatal(aerr)
 	}
-	if got := len(view.file.Records); got != 40 {
+	if got := view.recordCount(); got != 40 {
 		t.Fatalf("the replay produced %d records, want 40", got)
 	}
 	// Two reads per record would be 80 for this journal; the whole tail is one.
@@ -108,7 +109,7 @@ func TestAGroupWrittenAfterTheStatIsStillApplied(t *testing.T) {
 		user: fs.user, folder: fs.folder, indexDir: fs.indexDir, indexPath: fs.indexPath,
 		file: cloneIndexFile(fs.file), lineage: fs.lineage,
 	}
-	view.file.Records = nil
+	view.recs = emptyRecords(t, view.file)
 	view.file.Header.MessagesCount = 0
 	end, aerr := view.applyLogFrom(lg, int64(0))
 	if aerr != nil {
@@ -117,7 +118,22 @@ func TestAGroupWrittenAfterTheStatIsStillApplied(t *testing.T) {
 	if end <= lg.size {
 		t.Fatalf("the pass confirmed %d bytes, no further than the boundary it saw (%d)", end, lg.size)
 	}
-	if got := len(view.file.Records); got != 2 {
+	if got := view.recordCount(); got != 2 {
 		t.Errorf("the replay applied %d records, want 2: a group the probe called whole was left behind", got)
 	}
+}
+
+// emptyRecords is a records set with none in it, in f's layout: a view the
+// replay fills from the journal alone.
+func emptyRecords(t *testing.T, f *mailindex.File) *mailindex.Records {
+	t.Helper()
+	layout, err := mailindex.ComputeRecordLayout(f.Extensions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := mailindex.ChunksFromBytes(nil, layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

@@ -22,13 +22,20 @@ const (
 
 // legacySnapshot is the in-memory representation a successful
 // legacy decode produces. adoptLegacy in folder.go consumes it.
+// legacyRecord is what a legacy record carries.
+type legacyRecord struct {
+	uid, kwBits uint32
+	flags       mailindex.MailFlag
+	modseq      uint64
+}
+
 type legacySnapshot struct {
 	IndexID       uint32
 	UIDValidity   uint32
 	NextUID       uint32
 	HighestModSeq uint64
 	MailboxGUID   [16]byte
-	Records       []*mailindex.Record
+	Records       []legacyRecord
 	Keywords      keywordsHdr
 	Filenames     map[uint32]string
 }
@@ -95,15 +102,7 @@ func detectAndDecodeLegacy(path string) (legacySnapshot, bool, error) {
 		flags := recBuf[4]
 		modseq := le.Uint64(recBuf[5:])
 		kwBits := le.Uint32(recBuf[13:])
-		rec := &mailindex.Record{
-			UID:   uid,
-			Flags: mailindex.MailFlag(flags),
-			Ext: map[string][]byte{
-				extNameModSeq:   encodeModseqRec(modseq),
-				extNameKeywords: encodeKeywordsRec(kwBits),
-			},
-		}
-		snap.Records = append(snap.Records, rec)
+		snap.Records = append(snap.Records, legacyRecord{uid: uid, flags: mailindex.MailFlag(flags), modseq: modseq, kwBits: kwBits})
 	}
 	return snap, true, nil
 }

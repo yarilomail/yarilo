@@ -252,3 +252,36 @@ func (r *Records) SortedByUID() *Records {
 	}
 	return out
 }
+
+// Reencode is the records in another layout, as a writer of its own: uid and
+// flags, and every extension both layouts carry, moved to its new place; an
+// extension new to the layout is zeros. Every chunk is loaded.
+func (r *Records) Reencode(to RecordLayout) *Records {
+	from := r.layout
+	size := int(to.RecordSize)
+	raw := make([]byte, r.n*size)
+	type move struct{ src, dst, n int }
+	var moves []move
+	for _, e := range to.Extensions {
+		if e.RecordSize == 0 {
+			continue
+		}
+		for _, o := range from.Extensions {
+			if o.Name == e.Name && o.RecordSize != 0 {
+				moves = append(moves, move{int(o.RecordOffset), int(e.RecordOffset), int(min(o.RecordSize, e.RecordSize))})
+			}
+		}
+	}
+	for seq := range r.n {
+		src, dst := r.rec(seq), raw[seq*size:(seq+1)*size]
+		copy(dst[:5], src[:5])
+		for _, m := range moves {
+			copy(dst[m.dst:m.dst+m.n], src[m.src:m.src+m.n])
+		}
+	}
+	out, err := ChunksFromBytes(raw, to)
+	if err != nil {
+		panic(fmt.Sprintf("mailindex: re-chunk records in a new layout: %v", err))
+	}
+	return out
+}

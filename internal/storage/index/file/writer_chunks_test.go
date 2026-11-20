@@ -13,14 +13,11 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
-// writerFolder builds the same folder twice, once with the writer on chunks
-// and once on decoded records, by one sequence of writes; it returns the two
-// homes.
-func writerFolder(t *testing.T, kind string) (chunked, decoded string) {
+// writerFolder builds a folder of the given make-up by a sequence of writes,
+// the last of them by a writer holding chunks, and folds it.
+func writerFolder(t *testing.T, kind string) string {
 	t.Helper()
-	build := func(asDecoded bool) string {
-		writerDecoded = asDecoded
-		defer func() { writerDecoded = false }()
+	build := func() string {
 		home := t.TempDir()
 		h := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home})
 		defer h.Close() //nolint:errcheck
@@ -45,8 +42,7 @@ func writerFolder(t *testing.T, kind string) (chunked, decoded string) {
 		if err := h.OptimizeIndex(f.ID); err != nil {
 			t.Fatal(err)
 		}
-		// A fresh folder's writer holds what it created; a reopen loads the base
-		// the way every later writer does, as chunks unless decoded is asked.
+		// A reopen loads the base the way every later writer does.
 		h.Close() //nolint:errcheck
 		h = New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home})
 		if f, err = h.OpenFolder("INBOX", 0); err != nil {
@@ -60,8 +56,8 @@ func writerFolder(t *testing.T, kind string) (chunked, decoded string) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if held := fs.recs != nil; held == asDecoded {
-				t.Fatalf("decoded %v, yet the writer holds chunks: %v", asDecoded, held)
+			if fs.recs == nil {
+				t.Fatal("the writer holds no chunks")
 			}
 		}
 		switch kind {
@@ -88,7 +84,7 @@ func writerFolder(t *testing.T, kind string) (chunked, decoded string) {
 		}
 		return home
 	}
-	return build(false), build(true)
+	return build()
 }
 
 // recordsSection is a base's records as they lie on disk, and its header
@@ -107,65 +103,91 @@ func recordsSection(t *testing.T, home string) ([]byte, [4]uint32, uint64) {
 	return raw[h.HeaderSize:], [4]uint32{h.NextUID, h.MessagesCount, h.SeenMessagesCount, h.DeletedMessagesCount}, readLineage(f).RecordsDigest
 }
 
-// A base the writer writes from chunks is the base it writes from decoded
-// records, byte for byte in its records, with the same counters and the same
-// records digest, for folders of every make-up.
+// encodedByMailindex is the records section mailindex's own encoder writes
+// for the records of the base at home, decoded from the same file: the
+// encoder the decoded writer wrote with.
+func encodedByMailindex(t *testing.T, home string) []byte {
+	t.Helper()
+	f, err := mailindex.Open(indexPathFor(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := mailindex.ChunksFromRecords(f.Records, f.Layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r.Bytes()
+}
+
+// A base the writer writes from chunks holds the records mailindex's encoder
+// writes for them, byte for byte, with counters that match them and the
+// digest develop computed, for folders of every make-up. The decoded writer it
+// was compared with is gone; the golden bases hold its bytes.
 func TestTheWriterWritesTheSameBaseFromChunks(t *testing.T) {
 	for _, kind := range []string{"plain", "keywords", "expunged", "mdbox", "empty"} {
 		t.Run(kind, func(t *testing.T) {
-			chunked, decoded := writerFolder(t, kind)
-			cr, ch, cd := recordsSection(t, chunked)
-			dr, dh, dd := recordsSection(t, decoded)
-			if !bytes.Equal(cr, dr) {
-				t.Errorf("the records differ: %d bytes from chunks, %d decoded", len(cr), len(dr))
+			home := writerFolder(t, kind)
+			raw, counters, digest := recordsSection(t, home)
+			if want := encodedByMailindex(t, home); !bytes.Equal(raw, want) {
+				t.Errorf("the records on disk (%d bytes) are not mailindex's encoding of them (%d)", len(raw), len(want))
 			}
-			if ch != dh {
-				t.Errorf("header counters %v from chunks, %v decoded", ch, dh)
+			f, err := mailindex.Open(indexPathFor(home))
+			if err != nil {
+				t.Fatal(err)
 			}
-			if cd != dd || cd == 0 && len(cr) > 0 {
-				t.Errorf("records digest %x from chunks, %x decoded", cd, dd)
+			var seen, deleted uint32
+			for _, rec := range f.Records {
+				if rec.Flags&mailindex.FlagSeen != 0 {
+					seen++
+				}
+				if rec.Flags&mailindex.FlagDeleted != 0 {
+					deleted++
+				}
+			}
+			if counters[1] != uint32(len(f.Records)) || counters[2] != seen || counters[3] != deleted {
+				t.Errorf("header counters %v for %d records, %d seen, %d deleted", counters, len(f.Records), seen, deleted)
+			}
+			if want := developDigest(f); digest != want {
+				t.Errorf("records digest %x, develop's %x", digest, want)
 			}
 		})
 	}
 }
 
 // An old folder without the GUID extension gains it through SetGUIDs: no
-// record lost, every GUID in place, and the base as the decoded path writes it.
+// record lost, every GUID in place, and the base on disk mailindex's encoding
+// of its records.
 func TestAnOldFolderGainsGUIDsWithoutLosingARecord(t *testing.T) {
-	stamp := func(asDecoded bool) (string, []*mailbox.MessageMeta) {
-		home := movedFolder(t, 2*mailindex.ChunkRecords+3)
-		withoutExtension(t, home, extNameGUID)
-		writerDecoded = asDecoded
-		defer func() { writerDecoded = false }()
-		h, f := acceptOpen(t, home)
-		defer h.Close() //nolint:errcheck
-		guids := map[uint32][16]byte{}
-		for uid := uint32(1); uid <= uint32(2*mailindex.ChunkRecords+3); uid++ {
-			guids[uid] = [16]byte{0xa0, byte(uid), byte(uid >> 8)}
-		}
-		if err := h.(*userHandle).ui.SetGUIDs(f.ID, guids); err != nil {
-			t.Fatal(err)
-		}
-		msgs, err := h.GetMessages(f.ID, mailbox.SeqSet{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range msgs {
-			if m.GUID != guids[m.UID] {
-				t.Fatalf("decoded %v: uid %d has guid %x, want %x", asDecoded, m.UID, m.GUID, guids[m.UID])
-			}
-		}
-		return home, msgs
+	const n = 2*mailindex.ChunkRecords + 3
+	home := movedFolder(t, n)
+	withoutExtension(t, home, extNameGUID)
+	h, f := acceptOpen(t, home)
+	defer h.Close() //nolint:errcheck
+	guids := map[uint32][16]byte{}
+	for uid := uint32(1); uid <= n; uid++ {
+		guids[uid] = [16]byte{0xa0, byte(uid), byte(uid >> 8)}
 	}
-	chunked, cm := stamp(false)
-	decoded, dm := stamp(true)
-	if len(cm) != 2*mailindex.ChunkRecords+3 || len(cm) != len(dm) {
-		t.Fatalf("%d and %d messages after the stamp, want %d", len(cm), len(dm), 2*mailindex.ChunkRecords+3)
+	if err := h.(*userHandle).ui.SetGUIDs(f.ID, guids); err != nil {
+		t.Fatal(err)
 	}
-	cr, _, _ := recordsSection(t, chunked)
-	dr, _, _ := recordsSection(t, decoded)
-	if !bytes.Equal(cr, dr) {
-		t.Errorf("the stamped bases differ: %d and %d record bytes", len(cr), len(dr))
+	msgs, err := h.GetMessages(f.ID, mailbox.SeqSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != n {
+		t.Fatalf("%d messages after the stamp, want %d", len(msgs), n)
+	}
+	for _, m := range msgs {
+		if m.GUID != guids[m.UID] {
+			t.Fatalf("uid %d has guid %x, want %x", m.UID, m.GUID, guids[m.UID])
+		}
+	}
+	if err := h.OptimizeIndex(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw, _, _ := recordsSection(t, home)
+	if want := encodedByMailindex(t, home); !bytes.Equal(raw, want) {
+		t.Errorf("the stamped base's records (%d bytes) are not mailindex's encoding of them (%d)", len(raw), len(want))
 	}
 }
 
@@ -282,7 +304,7 @@ func developDigest(f *mailindex.File) uint64 {
 // The digest from chunks is the one develop wrote into every base, so a base
 // written before this change is still adopted.
 func TestTheRecordsDigestIsTheOneOnDisk(t *testing.T) {
-	chunked, _ := writerFolder(t, "keywords")
+	chunked := writerFolder(t, "keywords")
 	f, err := mailindex.Open(indexPathFor(chunked))
 	if err != nil {
 		t.Fatal(err)

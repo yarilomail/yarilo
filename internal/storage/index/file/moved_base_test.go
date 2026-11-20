@@ -233,8 +233,9 @@ func TestAHandleWithoutRecordsCannotWriteItsBase(t *testing.T) {
 	}
 }
 
-// Every read of the index answers the same through a lazy view as through
-// the records decoded whole, until step 6 leaves one form (#2625 review).
+// Every read of the index answers the same through a lazy view as through the
+// writer's records on the locked path (#2625 review; the decoded form it was
+// compared with is gone).
 func TestEveryReadAnswersTheSameThroughALazyView(t *testing.T) {
 	home := movedFolder(t, 2*mailindex.ChunkRecords+40)
 	w, wf := acceptOpen(t, home)
@@ -253,17 +254,17 @@ func TestEveryReadAnswersTheSameThroughALazyView(t *testing.T) {
 	}
 	w.Close() //nolint:errcheck
 
-	answers := func(decoded bool) map[string]any {
-		decodedImages = decoded
-		defer func() { decodedImages = false }()
+	answers := func(locked bool) map[string]any {
+		lockedReadsSeam = locked
+		defer func() { lockedReadsSeam = false }()
 		baseImages.Delete(indexPathFor(home))
 		h, f := acceptOpen(t, home)
 		defer h.Close() //nolint:errcheck
 		hu, u := h.(*userHandle), h.(*userHandle).ui
 		opens := mailindex.LazyOpens()
 		defer func() {
-			if lazyRead := mailindex.LazyOpens() > opens; lazyRead == decoded {
-				t.Errorf("decoded=%v, yet the reads loaded lazy chunks: %v", decoded, lazyRead)
+			if !locked && mailindex.LazyOpens() == opens {
+				t.Error("the reads through views loaded no lazy chunk")
 			}
 		}()
 		out := map[string]any{"folder": *f}
@@ -301,10 +302,10 @@ func TestEveryReadAnswersTheSameThroughALazyView(t *testing.T) {
 		must("reopened folder", *reopened, err)
 		return out
 	}
-	lazy, decoded := answers(false), answers(true)
-	for name, want := range decoded {
+	lazy, locked := answers(false), answers(true)
+	for name, want := range locked {
 		if !reflect.DeepEqual(lazy[name], want) {
-			t.Errorf("%s through a lazy view differs from the decoded records:\n lazy    %v\n decoded %v", name, lazy[name], want)
+			t.Errorf("%s through a lazy view differs from the locked path:\n lazy   %v\n locked %v", name, lazy[name], want)
 		}
 	}
 	if msgs, _ := lazy["messages"].([]*mailbox.MessageMeta); len(msgs) != 2*mailindex.ChunkRecords+39 {
