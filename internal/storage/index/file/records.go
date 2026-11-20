@@ -1,6 +1,7 @@
 package file
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -312,3 +313,51 @@ func (fs *folderState) orderRecords() {
 // nowUnix is the clock the index stamps its files with; a test of their bytes
 // fixes it.
 var nowUnix = func() int64 { return time.Now().Unix() }
+
+// recordBuilder writes one record's fields straight into its bytes in the
+// folder's layout: what a base is built from, without a decoded record.
+type recordBuilder struct {
+	layout mailindex.RecordLayout
+	raw    []byte
+}
+
+func (fs *folderState) newRecord(uid uint32, flags mailindex.MailFlag) (recordBuilder, error) {
+	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
+	if err != nil {
+		return recordBuilder{}, fmt.Errorf("fileindex/records: layout: %w", err)
+	}
+	b := recordBuilder{layout: layout, raw: make([]byte, layout.RecordSize)}
+	binary.LittleEndian.PutUint32(b.raw, uid)
+	b.raw[4] = byte(flags)
+	return b, nil
+}
+
+// set writes an extension's bytes; one the layout does not carry is dropped,
+// as the encoder of decoded records dropped it.
+func (b recordBuilder) set(name string, v []byte) {
+	id, ok := b.layout.ExtID(name)
+	if !ok {
+		return
+	}
+	e := b.layout.Extensions[id]
+	copy(b.raw[e.RecordOffset:e.RecordOffset+e.RecordSize], v)
+}
+
+// replaceRecords makes raws, each a record in the folder's layout, the
+// state's records: a base being built.
+func (fs *folderState) replaceRecords(raws [][]byte) error {
+	layout, err := mailindex.ComputeRecordLayout(fs.file.Extensions)
+	if err != nil {
+		return fmt.Errorf("fileindex/records: layout: %w", err)
+	}
+	all := make([]byte, 0, len(raws)*int(layout.RecordSize))
+	for _, r := range raws {
+		all = append(all, r...)
+	}
+	recs, err := mailindex.ChunksFromBytes(all, layout)
+	if err != nil {
+		return fmt.Errorf("fileindex/records: %w", err)
+	}
+	fs.file.Records, fs.recs = nil, recs
+	return nil
+}

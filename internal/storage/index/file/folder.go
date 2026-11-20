@@ -419,6 +419,9 @@ func (fs *folderState) createFresh(uidValidity uint32, guid [16]byte) error {
 	mf.Header.UIDValidity = uidValidity
 	mf.Header.NextUID = 1
 	fs.file = mf
+	if err := fs.replaceRecords(nil); err != nil {
+		return err
+	}
 	fs.hdr = dboxHdr{MailboxGUID: guid}
 	fs.keywords = keywordsHdr{}
 	if err := fs.flush(); err != nil {
@@ -1909,15 +1912,13 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 		}
 		// What the folder held before the reset, with each record's identity:
 		// a dropped one is retracted from the search index by it (#1986).
-		if err := fs.decodeForRewrite(); err != nil { // decoded until step 3b-2b
-			return err
-		}
-		before := make(map[uint32][16]byte, len(fs.file.Records))
-		for _, rec := range fs.file.Records {
-			before[rec.UID] = decodeGUIDRec(rec.Ext[extNameGUID])
+		before := make(map[uint32][16]byte, fs.recordCount())
+		for seq := range fs.recordCount() {
+			g, _ := fs.recExt(seq, extNameGUID)
+			before[fs.recUID(seq)] = decodeGUIDRec(g)
 		}
 
-		fs.file.Records = fs.file.Records[:0]
+		var raws [][]byte
 		fs.file.Header.MessagesCount = 0
 		fs.file.Header.SeenMessagesCount = 0
 		fs.file.Header.DeletedMessagesCount = 0
@@ -1943,38 +1944,40 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 			if modseq > maxModseq {
 				maxModseq = modseq
 			}
-			rec := &mailindex.Record{
-				UID:   m.UID,
-				Flags: mailindex.MailFlag(imapFlagsToIndex(m.Flags)),
-				Ext: map[string][]byte{
-					extNameModSeq:   encodeModseqRec(modseq),
-					extNameKeywords: encodeKeywordsRec(kwBits),
-					extNameVsize:    encodeVsizeRec(m.RFC822Size()),
-					extNameGUID:     encodeGUIDRec(m.GUID),
-				},
+			flags := mailindex.MailFlag(imapFlagsToIndex(m.Flags))
+			rec, err := fs.newRecord(m.UID, flags)
+			if err != nil {
+				return err
 			}
+			rec.set(extNameModSeq, encodeModseqRec(modseq))
+			rec.set(extNameKeywords, encodeKeywordsRec(kwBits))
+			rec.set(extNameVsize, encodeVsizeRec(m.RFC822Size()))
+			rec.set(extNameGUID, encodeGUIDRec(m.GUID))
 			if m.MapUID != 0 {
 				// The storage key travels with the record, or a rebuilt folder
 				// would hold messages that name no storage (#1700).
-				rec.Ext[extNameMdbox] = encodeMdboxRec(m.MapUID, m.SaveDate)
+				rec.set(extNameMdbox, encodeMdboxRec(m.MapUID, m.SaveDate))
 			}
 			if m.VirtualBacking != 0 {
 				// Likewise the copy a virtual record names: without it the
 				// next sync cannot tell which message this uid was.
-				rec.Ext[extNameVirtual] = encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID)
+				rec.set(extNameVirtual, encodeVirtualRec(m.VirtualBacking, m.VirtualRealUID))
 			}
-			fs.file.Records = append(fs.file.Records, rec)
+			raws = append(raws, rec.raw)
 			kept[m.UID] = struct{}{}
 			fs.file.Header.MessagesCount++
-			if rec.Flags&mailindex.FlagSeen != 0 {
+			if flags&mailindex.FlagSeen != 0 {
 				fs.file.Header.SeenMessagesCount++
 			}
-			if rec.Flags&mailindex.FlagDeleted != 0 {
+			if flags&mailindex.FlagDeleted != 0 {
 				fs.file.Header.DeletedMessagesCount++
 			}
 			if m.UID > maxUID {
 				maxUID = m.UID
 			}
+		}
+		if err := fs.replaceRecords(raws); err != nil {
+			return err
 		}
 		if err := fs.advanceModSeqAtLeast(maxModseq); err != nil {
 			return err
