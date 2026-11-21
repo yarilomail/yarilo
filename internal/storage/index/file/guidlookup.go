@@ -72,6 +72,12 @@ func (u *userIndex) guidLookup(tag uint64) (r *sortedfile.Reader, release func()
 	u.guid.mu.Unlock()
 	path := u.GUIDStorePath() + guidLookupSuffix
 	r, oerr := sortedfile.Open(path)
+	if oerr == nil && r.Generation != tag && r.Generation == u.guidStoreTagOnDisk() {
+		// The lookup is the base's on disk and this reader's view is older: it
+		// reads again, and nothing is built for a base already gone.
+		r.Close() //nolint:errcheck
+		return nil, nil, errGUIDBaseMoved
+	}
 	if oerr != nil || r.Generation != tag {
 		if r != nil {
 			r.Close() //nolint:errcheck
@@ -435,4 +441,14 @@ func (fs *folderState) foldedGUIDChanges(prev lineageHdr, foldedEnd int64) (map[
 		}
 	}
 	return added, gone, nil
+}
+
+// guidStoreTagOnDisk names the store's base as the file is now, from its
+// header alone; 0 when it does not read.
+func (u *userIndex) guidStoreTagOnDisk() uint64 {
+	parsed, _, err := mailindex.OpenLazy(u.GUIDStorePath())
+	if err != nil {
+		return 0
+	}
+	return guidBaseTag(parsed.Header.IndexID, readLineage(parsed).Lineage)
 }
