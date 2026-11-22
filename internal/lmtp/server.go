@@ -803,7 +803,11 @@ func (s *session) Reset() {
 	s.orcpt = nil
 }
 
+// sessionEnded is a test seam: it runs when the session is torn down.
+var sessionEnded = func() {}
+
 func (s *session) Logout() error {
+	defer sessionEnded()
 	slog.Debug("lmtp: command", "conn_id", s.connID, "cmd", "QUIT")
 	return nil
 }
