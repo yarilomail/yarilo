@@ -2609,6 +2609,12 @@ type StorageConfig struct {
 	// folded as .log.2: the expunge history JMAP and QRESYNC answer from.
 	// Default 2 days; 0 keeps none.
 	MailIndexLog2MaxAge int `koanf:"mail_index_log2_max_age"`
+	// MailSyncWalkMemory is the memory the whole-folder walks of one process
+	// may hold together: a walk weighs its folder's messages times a measured
+	// cost per file, waits for room, and a folder larger than the whole budget
+	// walks alone. "0" leaves walks unbounded.
+	MailSyncWalkMemory    int64  `koanf:"-"` // resolved from MailSyncWalkMemoryRaw at load
+	MailSyncWalkMemoryRaw string `koanf:"mail_sync_walk_memory"`
 
 	// Pre-beta spellings of the triple above, accepted as aliases and removed
 	// after beta. Setting both spellings of one knob to different values is
@@ -3031,6 +3037,7 @@ func Defaults() *Config {
 	c.Storage.MailCachePurgeContinuedPercentage = 200
 	c.Storage.MailIndexLogRotateMinAge = 60
 	c.Storage.MailIndexLog2MaxAge = 2 * 24 * 3600
+	c.Storage.MailSyncWalkMemoryRaw = "64M"
 	c.AuthService.StartupWaitSeconds = 30
 	c.LocksClient.StartupWaitSeconds = 30
 	c.AuthClient.PoolSize = 4
@@ -3371,6 +3378,7 @@ func (cfg *Config) validate() error {
 	resolve("fts.fts_prefetch_max_bytes", cfg.FTS.PrefetchMaxBytesRaw, &cfg.FTS.PrefetchMaxBytes)
 	resolve("storage.mail_index_log_rotate_min_size", cfg.Storage.MailIndexLogRotateMinSizeRaw, &cfg.Storage.MailIndexLogRotateMinSize)
 	resolve("storage.mail_index_log_rotate_max_size", cfg.Storage.MailIndexLogRotateMaxSizeRaw, &cfg.Storage.MailIndexLogRotateMaxSize)
+	resolve("storage.mail_sync_walk_memory", cfg.Storage.MailSyncWalkMemoryRaw, &cfg.Storage.MailSyncWalkMemory)
 	resolve("storage.mail_cache_purge_min_size", cfg.Storage.MailCachePurgeMinSizeRaw, &cfg.Storage.MailCachePurgeMinSize)
 	resolve("threading.threading_tail_size", cfg.Threading.ThreadingTailSizeRaw, &cfg.Threading.ThreadingTailSize)
 	resolve("storage.mail_index_idle_cache_size", cfg.Storage.MailIndexIdleCacheSizeRaw, &cfg.Storage.MailIndexIdleCacheSize)

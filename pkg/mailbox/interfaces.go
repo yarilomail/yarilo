@@ -167,11 +167,59 @@ type MaildirStamp struct {
 	UIDListSize                           uint32
 }
 
+// SameList says whether two stamps describe the same uid list, whatever they
+// say of the directories.
+func (s MaildirStamp) SameList(o MaildirStamp) bool {
+	return s.UIDListMtime == o.UIDListMtime && s.UIDListMtimeNsecs == o.UIDListMtimeNsecs && s.UIDListSize == o.UIDListSize
+}
+
+// HasDirs says whether the stamp records the directories at all: a stamp with
+// the list alone leaves what was recorded of them in place.
+func (s MaildirStamp) HasDirs() bool {
+	return s.NewMtime != 0 || s.CurMtime != 0 || s.NewCheckTime != 0 || s.CurCheckTime != 0
+}
+
 // MaildirStamped is an index that keeps that stamp, so opening a folder can ask
 // one stat whether the uid list is the one the index was built from.
 type MaildirStamped interface {
 	MaildirStamp(folderID uint64) (MaildirStamp, bool)
 	SetMaildirStamp(folderID uint64, s MaildirStamp) error
+}
+
+// DirTimes is when a maildir folder's new/ and cur/ last changed, to the
+// nanosecond; a directory not there reads as zero.
+type DirTimes struct {
+	NewSec, NewNsec, CurSec, CurNsec uint32
+}
+
+// DirTimer is a store that reports a folder's DirTimes.
+type DirTimer interface {
+	DirTimes(folder string) DirTimes
+}
+
+// DirCarrier is an index that moves its recorded directory times from pre to
+// post, for each directory that still reads pre: a write of ours carries the
+// stamp, and one that finds another time there leaves it for a walk.
+type DirCarrier interface {
+	CarryDirTimes(folderID uint64, pre, post DirTimes) error
+}
+
+// DirCarryTx is a transaction that carries the stamp in its own commit.
+type DirCarryTx interface {
+	CarryDirTimes(pre, post DirTimes)
+}
+
+// SyncClock is the time folder syncs decide and stamp by. Test seam: a row
+// moves it past the dirty window instead of sleeping.
+var SyncClock = time.Now
+
+// IndexSyncChecker is a store that answers, from the index's stamp and one
+// stat per directory, whether a folder needs no walk: the stamp is shared by
+// every process, so one walk serves them all (#2661).
+type IndexSyncChecker interface {
+	// dirty says the folder is settled now but changed within its check's
+	// tick, so it is walked again once the window has passed.
+	SyncedPerIndex(idx UserIndex, folderID uint64, folder string, now time.Time) (synced, dirty bool)
 }
 
 // VirtualBacking is one folder a virtual mailbox draws from. Keyed by GUID, so
@@ -389,6 +437,17 @@ type StampingAppender interface {
 	AllocateAndAppendStamped(folderID uint64, m *MessageMeta, name func(uid uint32) (string, *MaildirStamp, error)) error
 }
 
+// DirCarry is a write's directory times either side of it: the stamp moves
+// from Pre to Post where it still reads Pre (see DirCarrier).
+type DirCarry struct{ Pre, Post DirTimes }
+
+// CarryingAppender is a StampingAppender whose naming also reports the
+// directory times its save moved, carried in the append's own journal write:
+// a hold of its own would load a large folder's records for one delivery.
+type CarryingAppender interface {
+	AllocateAndAppendCarried(folderID uint64, m *MessageMeta, name func(uid uint32) (string, *MaildirStamp, *DirCarry, error)) error
+}
+
 // AppendedListStamper is a driver that knows the stamp of its uid list after
 // the row it just appended, when that row is all that changed since the list
 // last agreed with the index.
@@ -565,12 +624,15 @@ type MessageMeta struct {
 
 // Folder holds index-level folder metadata.
 type Folder struct {
-	ID            uint64
-	Name          string
-	UIDValidity   uint32
-	NextUID       uint32
-	Messages      uint32
-	Unseen        uint32
+	ID          uint64
+	Name        string
+	UIDValidity uint32
+	NextUID     uint32
+	Messages    uint32
+	Unseen      uint32
+	// Deleted counts the messages flagged \Deleted, from the header as the
+	// other two: STATUS answers without reading the records (#2661).
+	Deleted       uint32
 	HighestModSeq uint64
 	// FirstRecentUID is the lowest UID no session has claimed as \Recent; an
 	// index that never recorded one reads 1 (RFC 3501 §2.3.2).

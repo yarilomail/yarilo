@@ -42,6 +42,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.warden.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-warden"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}

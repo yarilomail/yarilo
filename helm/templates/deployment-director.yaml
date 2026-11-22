@@ -30,6 +30,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.director.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-director"
             - name: LOG_LEVEL

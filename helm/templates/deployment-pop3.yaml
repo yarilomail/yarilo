@@ -32,6 +32,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.pop3.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-pop3"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}

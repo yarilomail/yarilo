@@ -62,6 +62,13 @@ func (t *boxTx) MarkDirty(uid uint32, dirty bool)  { t.tx.MarkDirty(uid, dirty) 
 func (t *boxTx) Commit() (mailbox.TxResult, error) { return t.tx.Commit() }
 func (t *boxTx) Rollback()                         { t.tx.Rollback() }
 
+// CarryDirTimes passes the stamp's carry to an index transaction that takes it.
+func (t *boxTx) CarryDirTimes(pre, post mailbox.DirTimes) {
+	if c, ok := t.tx.(mailbox.DirCarryTx); ok {
+		c.CarryDirTimes(pre, post)
+	}
+}
+
 // unlockedReader is an index whose files prove their own freshness, so a read
 // that only answers a client skips the cross-process lock (#1249).
 type unlockedReader interface {

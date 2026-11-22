@@ -119,6 +119,7 @@ spec:
           image: {{ include "yarilo.image" $root }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" ((index $root.Values.components $p.vkey).resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: {{ $p.component | quote }}
             {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
@@ -197,6 +198,7 @@ spec:
           image: {{ include "yarilo.image" $root }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" ($root.Values.components.fts.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-fts"
             {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
@@ -232,6 +234,7 @@ spec:
           image: {{ include "yarilo.image" $root }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" ($root.Values.components.backendAPI.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-backend-api"
             {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
@@ -278,6 +281,7 @@ spec:
           image: {{ include "yarilo.image" $root }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" ($root.Values.components.backend.regResources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-backend-reg"
             - name: LOG_LEVEL

@@ -36,6 +36,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.backendAPI.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-backend-api"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}

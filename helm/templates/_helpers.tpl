@@ -858,3 +858,20 @@ container that runs it: yarilo-lmtp and yarilo-imap.
     defaultMode: 0400
 {{- end }}
 {{- end -}}
+
+{{/*
+yarilo.goMemLimitEnv sets GOMEMLIMIT to 90 % of the container's memory limit,
+so the runtime collects before the kernel kills (#2661). Takes the resources.
+*/}}
+{{- define "yarilo.goMemLimitEnv" -}}
+{{- $mem := "" -}}
+{{- with .limits }}{{ $mem = toString (.memory | default "") }}{{ end -}}
+{{- if $mem -}}
+{{- $n := regexFind "^[0-9]+" $mem -}}
+{{- $unit := trimPrefix $n $mem -}}
+{{- $mul := dict "" 1 "Ki" 1024 "Mi" 1048576 "Gi" 1073741824 "K" 1000 "M" 1000000 "G" 1000000000 -}}
+{{- if not (hasKey $mul $unit) }}{{ fail (printf "goMemLimitEnv: memory limit %q has a unit this chart does not read" $mem) }}{{ end -}}
+- name: GOMEMLIMIT
+  value: {{ mul (div (mul (int64 $n) (get $mul $unit)) 10) 9 | quote }}
+{{- end -}}
+{{- end -}}

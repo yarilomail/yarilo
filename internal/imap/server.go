@@ -2128,33 +2128,24 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	if refreshed != nil {
 		f = refreshed
 	}
-	msgs, err := readMessages(h.mailbox(), f.ID)
-	if err != nil {
-		return nil, fmt.Errorf("imap: status getmsgs %s: %w", rel, err)
-	}
-	var (
-		unseen    uint32
-		deleted   uint32
-		totalSize int64
-	)
-	for _, m := range msgs {
-		if !hasFlag(m.Flags, `\Seen`) {
-			unseen++
-		}
-		if hasFlag(m.Flags, `\Deleted`) {
-			deleted++
-		}
-	}
-	// From the records MESSAGES answers from, with the store asked for what a
-	// record does not carry: the reference fills those too (#1726, #1959).
+	// The counts from the folder's header, as the reference answers them: a
+	// read of every record per STATUS was a third of the memory behind the
+	// imap OOM (#2661). SIZE alone needs the records, and the store for what
+	// a record does not carry, as the reference fills it too (#1726, #1959).
+	unseen, deleted := f.Unseen, f.Deleted
+	var totalSize int64
 	if opts.Size {
+		msgs, err := readMessages(h.mailbox(), f.ID)
+		if err != nil {
+			return nil, fmt.Errorf("imap: status getmsgs %s: %w", rel, err)
+		}
 		for _, m := range msgs {
 			totalSize += int64(h.mailbox().RFC822Size(rel, m))
 		}
 	}
 	d := &imaplib.StatusData{Mailbox: name}
 	if opts.NumMessages {
-		n := uint32(len(msgs))
+		n := f.Messages
 		d.NumMessages = &n
 	}
 	if opts.UIDNext {
@@ -2176,7 +2167,7 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 		d.HighestModSeq = f.HighestModSeq
 	}
 	if opts.NumRecent {
-		n := recentInFolder(f, msgs)
+		n := f.Recent
 		d.NumRecent = &n
 	}
 	if opts.MailboxID {

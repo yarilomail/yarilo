@@ -127,6 +127,53 @@ disk_messages() {
 
 # aged_account finds an account of the domain whose INBOX holds at least 20
 # message files modified over a day ago: the class #2172's sweep judged by mtime.
+# The imaptest accounts of each type, wiped and filled at the start: runs that
+# start from whatever the last one left are not comparable (#2661).
+IMAPTEST_RANGES="d00001.test:3:20 d00002.test:53:70 d00003.test:103:120"
+ACCEPT_FILL="${ACCEPT_FILL:-200}"
+
+# store_sizes prints "<domain> files=<n> du_kb=<k>" for each type's domain: the
+# size the run's numbers belong to, at its start and at its end.
+store_sizes() {
+  local spec dom
+  for spec in $IMAPTEST_RANGES; do
+    dom=${spec%%:*}
+    kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
+      "d=/var/mail/vhosts/$dom; echo \"$dom files=\$(find \$d -type f 2>/dev/null | wc -l) du_kb=\$(du -sk \$d 2>/dev/null | cut -f1)\"" 2>/dev/null ||
+      echo "$dom unreadable"
+  done
+}
+
+# fill_start empties the imaptest accounts and delivers ACCEPT_FILL messages to
+# each, as an arm starts: the smoketest and aged accounts are outside them.
+fill_start() {
+  local spec dom from to pod
+  for spec in $IMAPTEST_RANGES; do
+    IFS=: read -r dom from to <<< "$spec"
+    for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+      kube exec "$pod" -c yarilo-imap -- sh -c \
+        "for n in \$(seq $from $to); do rm -rf \"/var/mail/vhosts/$dom/u\${n}@$dom\"; done" > /dev/null
+    done
+    # As an arm checks its wipe: a start from more than nothing is not the fill.
+    left=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
+      "f=0; for n in \$(seq $from $to); do f=\$((f+\$(find \"/var/mail/vhosts/$dom/u\${n}@$dom\" -type f 2>/dev/null | wc -l))); done; echo \$f" 2>/dev/null)
+    [ "$left" = 0 ] || { echo "accept: the wipe of $dom $from-$to left ${left:-an unreadable count of} files" >&2; exit 1; }
+    YARILO_NS="$NS" YARILO_FILL_DOMAIN="$dom" \
+      bash "$REPO/hack/stand/fill-mailboxes.sh" "$from" "$to" "$ACCEPT_FILL" >> "$OUT/fill.txt" 2>&1 ||
+      { echo "accept: the fill of $dom did not take ($OUT/fill.txt)" >&2; exit 1; }
+  done
+}
+
+# terminations prints, for every container that restarted, why its last run
+# ended: an OOM kill and a crash read the same in a restart count (#2661).
+terminations() {
+  local pod
+  for pod in $(kube get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+    kube get pod "$pod" -o jsonpath='{range .status.containerStatuses[?(@.restartCount>0)]}{.name}{" restarts="}{.restartCount}{" reason="}{.lastState.terminated.reason}{" exit="}{.lastState.terminated.exitCode}{" at="}{.lastState.terminated.finishedAt}{"\n"}{end}' 2>/dev/null |
+      sed "s|^|pod=$pod container=|"
+  done
+}
+
 aged_account() {
   local dom="$1" sub="$2" pattern="$3"
   kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
@@ -381,6 +428,10 @@ watch_stopped_naming &
 WATCHER=$!
 trap 'kill "$WATCHER" 2>/dev/null || true' EXIT
 
+echo "== the imaptest accounts from a fixed fill of $ACCEPT_FILL"
+fill_start
+store_sizes | tee "$OUT/store-start.txt"
+
 echo "== aged mailboxes before"
 SDBOX_AGED=$(aged_account d00003.test sdbox/mailboxes/INBOX/dbox-Mails 'u.*')
 MAILDIR_AGED=$(aged_account d00002.test Maildir/cur '*')
@@ -618,9 +669,12 @@ for pod in $(kube get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{
   done
 done
 
+terminations > "$OUT/terminations.txt"
+echo "== store at the end"
+store_sizes | tee "$OUT/store-end.txt"
 changed=$(diff "$OUT/pods-start.txt" "$OUT/pods-end.txt" | grep '^[<>]' || true)
 [ -z "$changed" ] && verdict "no pod restarted or replaced" ok "$(wc -l < "$OUT/pods-end.txt" | tr -d ' ') pods" ||
-  verdict "no pod restarted or replaced" fail "$(echo "$changed" | tr '\n' ' ' | cut -c1-400)"
+  verdict "no pod restarted or replaced" fail "$(echo "$changed" | tr '\n' ' ' | cut -c1-300); $(tr '\n' ' ' < "$OUT/terminations.txt" | cut -c1-300)"
 
 for spec in \
   "panic|panic: |fatal error: " \

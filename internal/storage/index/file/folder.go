@@ -800,6 +800,7 @@ func (fs *folderState) snapshot(id uint64) (*mailbox.Folder, error) {
 		NextUID:        fs.file.Header.NextUID,
 		Messages:       fs.file.Header.MessagesCount,
 		Unseen:         unseen,
+		Deleted:        fs.file.Header.DeletedMessagesCount,
 		HighestModSeq:  highest,
 		FirstRecentUID: first,
 		Recent:         recent,
@@ -1522,6 +1523,19 @@ func (u *userIndex) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMe
 // AllocateAndAppendStamped is AllocateAndAppendNamed recording the uid list
 // stamp the naming answered with, in the same hold (#2643).
 func (u *userIndex) AllocateAndAppendStamped(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, *mailbox.MaildirStamp, error)) error {
+	var carried func(uint32) (string, *mailbox.MaildirStamp, *mailbox.DirCarry, error)
+	if name != nil {
+		carried = func(uid uint32) (string, *mailbox.MaildirStamp, *mailbox.DirCarry, error) {
+			n, s, err := name(uid)
+			return n, s, nil, err
+		}
+	}
+	return u.AllocateAndAppendCarried(folderID, m, carried)
+}
+
+// AllocateAndAppendCarried is AllocateAndAppendStamped with the directory
+// times the save moved carried in the same journal write (#2661).
+func (u *userIndex) AllocateAndAppendCarried(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, *mailbox.MaildirStamp, *mailbox.DirCarry, error)) error {
 	if err := u.withFolderSite(folderID, lockSiteAppend, func(fs *folderState) error {
 		next := fs.file.Header.NextUID
 		if next == 0 {
@@ -1534,11 +1548,21 @@ func (u *userIndex) AllocateAndAppendStamped(folderID uint64, m *mailbox.Message
 		m.UID = next
 		var stamp *mailbox.MaildirStamp
 		if name != nil {
-			_, s, nerr := name(m.UID)
+			_, s, carry, nerr := name(m.UID)
 			if nerr != nil {
 				return nerr
 			}
 			stamp = s
+			if carry != nil {
+				if was, ok := fs.maildirStampLocked(); ok && was.HasDirs() {
+					base := was
+					if s != nil {
+						base = fs.keepDirsOf(*s)
+					}
+					c := carriedStamp(base, carry.Pre, carry.Post)
+					stamp = &c
+				}
+			}
 		}
 		rec, err := fs.appendLockedWith(m, nil)
 		if err != nil {

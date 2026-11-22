@@ -124,21 +124,6 @@ func (s *session) recentMeta(m *mailbox.MessageMeta) *mailbox.MessageMeta {
 	return &c
 }
 
-// recentInFolder is STATUS RECENT: the messages at or above the folder's mark.
-func recentInFolder(f *mailbox.Folder, msgs []*mailbox.MessageMeta) uint32 {
-	first := f.FirstRecentUID
-	if first == 0 {
-		first = 1
-	}
-	var n uint32
-	for _, m := range msgs {
-		if m.UID >= first {
-			n++
-		}
-	}
-	return n
-}
-
 // recentArrived settles \Recent for messages a poll found: a SELECT takes
 // them, an EXAMINE reads the folder's mark.
 func (s *session) recentArrived(f *mailbox.Folder, arrived []*mailbox.MessageMeta) {

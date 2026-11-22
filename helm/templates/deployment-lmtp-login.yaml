@@ -31,6 +31,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.lmtpLogin.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-lmtp-login"
             - name: LOG_LEVEL

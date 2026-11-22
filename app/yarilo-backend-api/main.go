@@ -326,6 +326,7 @@ func runTelemetry(cfg config.TelemetryConfig) {
 // buildIndex takes the index options every other binary takes: the admin API
 // writes the same folders, under the same locks, durability and thresholds.
 func buildIndex(sc config.StorageConfig, locker locks.Locker) *file.Backend {
+	backend.SetWalkBudget(sc)
 	return file.New(backend.IndexOptions(sc, locker)...)
 }
 
