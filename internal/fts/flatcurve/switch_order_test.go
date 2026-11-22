@@ -5,6 +5,7 @@ package flatcurve
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -25,6 +26,21 @@ func TestAnInterruptedSwitchLosesNoDocument(t *testing.T) {
 				}
 				return os.RemoveAll(p)
 			}
+			return func() { removeShard = os.RemoveAll }
+		}},
+		{"a retired shard is left with some of its files gone", func() func() {
+			removeShard = func(p string) error {
+				// All but one of its files, as a removal stopped near its end.
+				files, _ := filepath.Glob(filepath.Join(p, "*"))
+				for _, f := range files[min(1, len(files)):] {
+					_ = os.Remove(f)
+				}
+				return stopped
+			}
+			return func() { removeShard = os.RemoveAll }
+		}},
+		{"a retired shard is left whole", func() func() {
+			removeShard = func(string) error { return stopped }
 			return func() { removeShard = os.RemoveAll }
 		}},
 		{"the process stops between the removals and the rename", func() func() {
@@ -67,6 +83,9 @@ func TestAnInterruptedSwitchLosesNoDocument(t *testing.T) {
 			}
 			if paths, err := shardPaths(st.dir); err != nil || len(paths) != 1 {
 				t.Fatalf("the next optimize left %d shards (err %v), want one", len(paths), err)
+			}
+			if left, _ := filepath.Glob(filepath.Join(st.dir, removingPrefix+"*")); len(left) != 0 {
+				t.Fatalf("the next optimize left %v behind", left)
 			}
 			found("after the next optimize")
 		})
