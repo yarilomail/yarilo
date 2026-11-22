@@ -334,7 +334,9 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 		}
 		pos += int64(8 + payloadLen)
 		if txHdr.Type.Kind() == mailindex.TxTypeExtAtomicInc {
-			m.applyRefcountDeltasLocked(payload)
+			if err := m.applyRefcountDeltasLocked(payload); err != nil {
+				return fromOffset, err
+			}
 			continue
 		}
 		if txHdr.Type.Kind() != mailindex.TxTypeAppend {
@@ -345,14 +347,20 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 			if rderr != nil {
 				break
 			}
-			if _, dup := m.st.find(rec.UID); dup {
+			_, dup, gerr := m.st.get(rec.UID)
+			if gerr != nil {
+				return fromOffset, fmt.Errorf("mdboxmap/log: %w", gerr)
+			}
+			if dup {
 				continue
 			}
 			e, cerr := logRecordToEntry(rec)
 			if cerr != nil {
 				break
 			}
-			m.st.insert(e)
+			if err := m.st.put(e); err != nil {
+				return fromOffset, fmt.Errorf("mdboxmap/log: %w", err)
+			}
 			if e.UID >= m.nextMapUID {
 				m.nextMapUID = e.UID + 1
 			}
@@ -366,16 +374,21 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 
 // applyRefcountDeltasLocked folds one increment payload in. An unknown uid is
 // skipped, safe only while a record is durable before any delta against it.
-func (m *Map) applyRefcountDeltasLocked(payload []byte) {
+func (m *Map) applyRefcountDeltasLocked(payload []byte) error {
 	for _, d := range mailindex.DecodeTxExtAtomicIncPayload(payload) {
-		i, ok := m.st.find(d.UID)
+		e, ok, err := m.st.get(d.UID)
+		if err != nil {
+			return fmt.Errorf("mdboxmap/log: %w", err)
+		}
 		if !ok {
 			continue
 		}
-		e := m.st.at(i)
 		e.RefCount = clampRef(int32(e.RefCount) + d.Diff)
-		m.st.setAt(i, e)
+		if err := m.st.put(e); err != nil {
+			return fmt.Errorf("mdboxmap/log: %w", err)
+		}
 	}
+	return nil
 }
 
 // clampRef keeps a refcount inside the 16 bits a record carries. The floor is

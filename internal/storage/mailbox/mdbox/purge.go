@@ -53,7 +53,10 @@ func (u *userMailbox) Purge() (PurgeStats, error) {
 func (u *userMailbox) purgeFile(p *mdboxmap.Placement, fileID uint32, stats *PurgeStats) error {
 	var live []mdboxmap.MapEntry
 	var dead []uint32
-	recs := p.RecordsInFile(fileID)
+	recs, err := p.RecordsInFile(fileID)
+	if err != nil {
+		return fmt.Errorf("mdbox/purge: %w", err)
+	}
 	if afterRecordsRead != nil {
 		afterRecordsRead()
 	}

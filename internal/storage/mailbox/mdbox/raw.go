@@ -95,23 +95,21 @@ func (u *userMailbox) RawUnreferenced(fn func(mapUID uint32, b mailbox.RawBody) 
 	if err != nil {
 		return err
 	}
-	recs, err := mp.RecordsReloaded()
-	if err != nil {
-		return fmt.Errorf("mdbox/raw: records: %w", err)
-	}
-	for _, e := range recs {
+	var fnErr error
+	err = mp.EachRecordReloaded(func(e mdboxmap.MapEntry) error {
 		if e.RefCount != 0 {
-			continue
+			return nil
 		}
 		b, err := u.rawEntry(e, false)
 		if err != nil {
 			return fmt.Errorf("mdbox/raw: map_uid %d: %w", e.UID, err)
 		}
-		err = fn(e.UID, b)
+		fnErr = fn(e.UID, b)
 		_ = b.Close()
-		if err != nil {
-			return err
-		}
+		return fnErr
+	})
+	if err != nil && fnErr == nil {
+		return fmt.Errorf("mdbox/raw: records: %w", err)
 	}
-	return nil
+	return err
 }

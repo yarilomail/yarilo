@@ -27,11 +27,9 @@ const (
 )
 
 // costExpectedFail marks the drivers whose delivery still reads something
-// whole: mdbox's map (#2642). A marked driver that starts passing fails, so
-// the fix that frees it drops its mark.
-var costExpectedFail = map[string]string{
-	"mdbox": "#2642",
-}
+// whole, by issue. A marked driver that starts passing fails, so the fix that
+// frees it drops its mark.
+var costExpectedFail = map[string]string{}
 
 type costDriver struct {
 	name string

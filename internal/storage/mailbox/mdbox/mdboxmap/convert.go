@@ -45,11 +45,11 @@ func (m *Map) convertToConfiguredLocked() error {
 	m.logLineage = seq
 	m.logSize = applied
 
-	if err := m.writeBaseLocked(); err != nil {
+	if err := m.writeBaseLocked(nil); err != nil {
 		return err
 	}
 	slog.Warn("mdbox: map index converted between base formats",
 		"user", m.username, "path", m.path, "from", string(from), "to", string(to),
-		"records", m.st.count(), "next_map_uid", m.nextMapUID)
+		"records", m.st.count, "next_map_uid", m.nextMapUID)
 	return nil
 }

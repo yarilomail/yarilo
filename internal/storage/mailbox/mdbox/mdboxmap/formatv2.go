@@ -135,18 +135,3 @@ func getRecord(b []byte) MapEntry {
 // recordUID reads only the map_uid of the record at b - the single field the
 // binary search compares, so the search never materialises a record.
 func recordUID(b []byte) uint32 { return binary.LittleEndian.Uint32(b[0:4]) }
-
-// digestRecords hashes the record area. FNV-1a: this is a change detector for a
-// file we just read, not a defence against a forged one.
-func digestRecords(recs []byte) uint64 {
-	const (
-		offset64 = 14695981039346656037
-		prime64  = 1099511628211
-	)
-	h := uint64(offset64)
-	for _, c := range recs {
-		h ^= uint64(c)
-		h *= prime64
-	}
-	return h
-}

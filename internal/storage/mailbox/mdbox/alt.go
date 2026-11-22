@@ -98,7 +98,10 @@ func (u *userMailbox) AltMove(q AltMoveQuery) (AltMoveStats, error) {
 }
 
 func (u *userMailbox) altMoveFile(p *mdboxmap.Placement, srcFileID uint32, eligibleUIDs []uint32, srcTier, dstTier string, stats *AltMoveStats) error {
-	allInFile := p.RecordsInFile(srcFileID)
+	allInFile, err := p.RecordsInFile(srcFileID)
+	if err != nil {
+		return fmt.Errorf("mdbox/alt: %w", err)
+	}
 	if afterRecordsRead != nil {
 		afterRecordsRead()
 	}

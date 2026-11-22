@@ -41,10 +41,8 @@ func (m *Map) readBaseV1Locked() error {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].UID < entries[j].UID })
 
-	m.st = store{recs: make([]byte, len(entries)*baseRecordLen)}
-	for i, e := range entries {
-		m.st.setAt(i, e)
-	}
+	m.st.base.release()
+	m.st = store{base: memBase(entries, ^uint32(0)), count: len(entries)}
 	m.loaded = true
 	m.onDisk = FormatV1
 
@@ -71,12 +69,19 @@ func (m *Map) readBaseV1Locked() error {
 
 // writeBaseV1Locked rewrites the whole base in v1. mailindex.Recreate is
 // atomic (.tmp + rename), the same guarantee the v2 writer gives.
-func (m *Map) writeBaseV1Locked() error {
+func (m *Map) writeBaseV1Locked(keep func(*MapEntry) bool) error {
 	f, err := mailindex.NewFile(m.indexID, defaultExtensions(m.highestFileID))
 	if err != nil {
 		return fmt.Errorf("mdboxmap/write v1: NewFile: %w", err)
 	}
-	m.st.each(func(e MapEntry) {
+	sn := m.st.snapshot()
+	defer sn.release()
+	var kept []MapEntry
+	if err := sn.each(func(e MapEntry) error {
+		if keep != nil && !keep(&e) {
+			return nil
+		}
+		kept = append(kept, e)
 		f.Records = append(f.Records, &mailindex.Record{
 			UID: e.UID,
 			Ext: map[string][]byte{
@@ -85,7 +90,10 @@ func (m *Map) writeBaseV1Locked() error {
 				extGUID: encodeGUIDExt(e.GUID),
 			},
 		})
-	})
+		return nil
+	}); err != nil {
+		return fmt.Errorf("mdboxmap/write v1: %w", err)
+	}
 	ext := findExt(f.Extensions, extMap)
 	if ext == nil {
 		return fmt.Errorf("mdboxmap/write v1: missing %q extension", extMap)
@@ -105,11 +113,13 @@ func (m *Map) writeBaseV1Locked() error {
 	f.Header.RecordSize = layout.RecordSize
 	f.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	f.Header.NextUID = m.nextMapUID
-	f.Header.MessagesCount = uint32(m.st.count())
+	f.Header.MessagesCount = uint32(len(f.Records))
 	if _, err := mailindex.Recreate(f.ToRecreateInput(m.path)); err != nil {
 		return fmt.Errorf("mdboxmap/write v1: %w", err)
 	}
 	m.onDisk = FormatV1
+	m.st.base.release()
+	m.st = store{base: memBase(kept, ^uint32(0)), count: len(kept)}
 	return nil
 }
 

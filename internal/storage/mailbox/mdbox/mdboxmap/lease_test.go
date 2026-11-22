@@ -107,7 +107,7 @@ func TestPlacementPastALapsedLeaseIsRefused(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("lookup 1: %v %v", ok, err)
 	}
-	if n := check.st.count(); n != 1 || e.GUID != [16]byte{2} {
+	if n := check.st.count; n != 1 || e.GUID != [16]byte{2} {
 		t.Fatalf("%d records, map_uid 1 GUID %x: want only the peer's record", n, e.GUID)
 	}
 }
