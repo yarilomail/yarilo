@@ -26,7 +26,7 @@ type indexMap struct {
 
 	// log identity, not only its length: a flush replaces the log, and the
 	// tail of the new one is not a continuation of the old one's offset.
-	logIdent os.FileInfo
+	logIdent *logID
 	// logSeen is how long the log was when this map was folded; committedEnd
 	// is how far the fold got. They differ when the tail ends mid-group, and
 	// the map is still current for that log (#1833).
@@ -139,7 +139,7 @@ func (fs *folderState) openView() (*folderState, func(), error) {
 
 // viewIfCurrent takes a reference to the published map when it already holds
 // this base and this much of the log.
-func (fs *folderState) viewIfCurrent(img *baseImage, logSt os.FileInfo, ierr error) (*folderState, func(), bool) {
+func (fs *folderState) viewIfCurrent(img *baseImage, logSt *logID, ierr error) (*folderState, func(), bool) {
 	if ierr != nil || img == nil {
 		return nil, nil, false
 	}
@@ -279,7 +279,7 @@ func (fs *folderState) retireLocked(m *indexMap) {
 // base, log only longer -- and rebuilds from the base otherwise. The extension
 // copies the records only when a view still holds them; with no holder the
 // records are extended in place, which is the whole point of counting.
-func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*indexMap, error) {
+func (fs *folderState) fold(img *baseImage, logSt *logID, ierr error) (*indexMap, error) {
 	folds.add()
 
 	var from *indexMap
@@ -298,6 +298,9 @@ func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*ind
 	}
 
 	if from != nil {
+		if extendSeam != nil {
+			extendSeam()
+		}
 		m, err := fs.extend(from)
 		if err == nil {
 			return m, nil
@@ -318,6 +321,9 @@ func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*ind
 	return m, nil
 }
 
+// extendSeam is a test seam run before a map is extended. Nil elsewhere.
+var extendSeam func()
+
 // extend folds [committedEnd, end) onto the map we already have.
 func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	lg, err := openLogRead(fs.indexPath)
@@ -325,7 +331,8 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 		return nil, err
 	}
 	defer lg.close()
-	if lg.f == nil || !lg.ok || lg.size < from.committedEnd {
+	if lg.f == nil || !lg.ok || lg.size < from.committedEnd ||
+		from.logIdent == nil || lg.hdr.FileSeq != from.logIdent.seq {
 		return nil, errFoldNotPossible
 	}
 
@@ -375,27 +382,44 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	if target.vsize.Vsize == 0 && fromHeader.Vsize > 0 {
 		target.vsize = fromHeader
 	}
-	m := &indexMap{view: target, img: from.img, logIdent: from.logIdent, logSeen: lg.size,
+	m := &indexMap{view: target, img: from.img, logIdent: &logID{st: lg.stat, seq: lg.hdr.FileSeq}, logSeen: lg.size,
 		committedEnd: end, ownsFile: true, prev: from}
 	m.publishRecords()
 	return m, nil
 }
 
+// logID is a log as a map last saw it: the file and the lineage its header
+// names, read through one descriptor. A file's identity alone is reused by the
+// filesystem once the old log is gone; a lineage is renewed by every fold (#2663).
+type logID struct {
+	st  os.FileInfo
+	seq uint32
+}
+
 // logStatOf answers with nil for an absent log: no log is a state a map can be
 // built on, and it is told apart from a log that is there.
-func logStatOf(indexPath string) os.FileInfo {
-	st, err := os.Stat(indexPath + ".log")
+func logStatOf(indexPath string) *logID {
+	f, err := os.Open(indexPath + ".log")
 	if err != nil {
 		return nil
 	}
-	return st
+	defer f.Close() //nolint:errcheck
+	st, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	id := &logID{st: st}
+	if hdr, herr := mailindex.DecodeLogHeader(f); herr == nil {
+		id.seq = hdr.FileSeq
+	}
+	return id
 }
 
-func sizeOfLog(st os.FileInfo) int64 {
-	if st == nil {
+func sizeOfLog(id *logID) int64 {
+	if id == nil {
 		return 0
 	}
-	return st.Size()
+	return id.st.Size()
 }
 
 // sameImage compares two parses of the base. Pointer first, then the file
@@ -416,9 +440,9 @@ func sameImage(a, b *baseImage) bool {
 // same length: a longer log is what a fold extends from. A replaced log is a
 // different file, and a log truncated in place is shorter than what the map
 // already folded, which is the other half of the test.
-func sameLog(a, b os.FileInfo) bool {
+func sameLog(a, b *logID) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return os.SameFile(a, b)
+	return a.seq == b.seq && os.SameFile(a.st, b.st)
 }
