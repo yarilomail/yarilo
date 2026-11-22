@@ -85,12 +85,6 @@ type Map struct {
 	// the records came from, and how far into the log it has replayed.
 	baseInfo os.FileInfo
 	logSize  int64
-	// logInfo is the log file logSize counts in: a fold replaces the file, and
-	// a new one as long as the old reads as unchanged by size alone (#2660).
-	logInfo os.FileInfo
-	// replayed is the log the last replay read, by its descriptor: a path
-	// stat'd after it can already name the next fold's file.
-	replayed os.FileInfo
 	// inReload is true while a freshness check is running, so its parts are
 	// timed against a whole that exists. Guarded by m.mu like the rest.
 	inReload bool
@@ -275,7 +269,7 @@ func (m *Map) loadOrInit() error {
 	} else if rerr != nil {
 		return rerr
 	}
-	m.noteLogLocked(applied)
+	m.logSize = applied
 	return nil
 }
 
@@ -445,32 +439,18 @@ func (m *Map) applyLogTailLocked() error {
 	if errors.Is(err, errLogIndexMismatch) {
 		// Log left over from a previous map at this path - discard it.
 		_ = os.Remove(m.logPath())
-		m.logSize, m.logInfo = 0, nil
+		m.logSize = 0
 		return nil
 	} else if err != nil {
 		return err
 	}
-	m.noteLogLocked(applied)
+	m.logSize = applied
 	return nil
 }
 
 // sameBaseLocked reports whether st is the file the records came from: identity
 // first, since every rewrite renames, then size and mtime for a writer that
 // updates in place. At coarse granularity a rewrite shares a tick with the read.
-// sameLogLocked reports whether st is the log the applied offset counts in;
-// no log either side is the same.
-func (m *Map) sameLogLocked(st os.FileInfo) bool {
-	if m.logInfo == nil || st == nil {
-		return m.logInfo == nil && st == nil
-	}
-	return os.SameFile(m.logInfo, st)
-}
-
-// noteLogLocked records how far into the log on disk this handle has applied.
-func (m *Map) noteLogLocked(applied int64) {
-	m.logSize, m.logInfo = applied, m.replayed
-}
-
 func (m *Map) sameBaseLocked(st os.FileInfo) bool {
 	if m.baseInfo == nil || st == nil {
 		return false
@@ -585,7 +565,6 @@ func timed(h prometheus.Observer, fn func() error) error {
 func (m *Map) invalidateLocked() {
 	m.baseInfo = nil
 	m.logSize = -1
-	m.logInfo = nil
 }
 
 // removeLog drops a folded log. Test seam: a fold whose base landed but whose
@@ -627,7 +606,7 @@ func (m *Map) foldLocked(keep func(*MapEntry) bool) (err error) {
 		return fmt.Errorf("mdboxmap/flush: remove log: %w", err)
 	}
 	m.logLineage = m.lineage
-	m.logSize, m.logInfo = 0, nil
+	m.logSize = 0
 	if st, err := os.Stat(m.path); err == nil {
 		m.baseInfo = st
 	}
@@ -727,6 +706,9 @@ func (m *Map) BumpRebuildCount() error {
 	})
 }
 
+// reloadStatSeam is a test seam run after a reload's checks. Nil elsewhere.
+var reloadStatSeam func()
+
 // reloadLocked refreshes incrementally: the base only when changed, else the log
 // tail. Caller holds m.mu; readers need no cross-process lock, a torn tail stops.
 func (m *Map) reloadLocked() error {
@@ -739,14 +721,18 @@ func (m *Map) reloadLocked() error {
 
 	statStart := time.Now()
 	baseStat, baseErr := os.Stat(m.path)
-	var logSize int64
-	logStat, _ := os.Stat(m.logPath())
-	if logStat != nil {
-		logSize = logStat.Size()
+	// The log by its lineage, which every fold renews: a size, or a file's
+	// identity the filesystem reuses, cannot tell a new log from the old (#2660).
+	logSeq, logSize, lerr := m.logIdentityLocked()
+	if lerr != nil {
+		return fmt.Errorf("mdboxmap/reload: %w", lerr)
 	}
 	m.observePart("stat", time.Since(statStart))
+	if reloadStatSeam != nil {
+		reloadStatSeam()
+	}
 
-	sameBase := m.loaded && m.sameBaseLocked(baseStat) && m.sameLogLocked(logStat)
+	sameBase := m.loaded && m.sameBaseLocked(baseStat) && (logSeq == 0 || logSeq == m.logLineage)
 	// A log shrinks only by being folded, so it signals change without a clock --
 	// a rewrite inside one timestamp tick leaves the mtime where it was.
 	logShrank := logSize < m.logSize
@@ -783,6 +769,11 @@ func (m *Map) reloadLocked() error {
 	if logSize > m.logSize {
 		metricMapReload.WithLabelValues("replay").Inc()
 		applied, err := m.replayLogLocked(m.logSize)
+		if errors.Is(err, errLogMoved) {
+			// A fold between the check and the open: taken as one is.
+			m.invalidateLocked()
+			return m.reloadLocked()
+		}
 		if err != nil && !errors.Is(err, errLogIndexMismatch) {
 			return err
 		}
@@ -792,7 +783,7 @@ func (m *Map) reloadLocked() error {
 		if delta := applied - m.logSize; delta > 0 {
 			metricMapReplayBytes.Add(float64(delta))
 		}
-		m.noteLogLocked(applied)
+		m.logSize = applied
 	}
 	return nil
 }

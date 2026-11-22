@@ -96,7 +96,6 @@ func (m *Map) openLogLocked() (*os.File, error) {
 	}
 	m.logLineage = seq
 	m.logSize = mailindex.LogHeaderSize
-	m.logInfo, _ = f.Stat()
 	return f, nil
 }
 
@@ -208,7 +207,7 @@ func (m *Map) writeLogTxLocked(txType mailindex.TxType, payload []byte) error {
 		return fmt.Errorf("mdboxmap/log: write: %w", err)
 	}
 	if st, err := os.Stat(m.logPath()); err == nil {
-		m.logSize, m.logInfo = st.Size(), st
+		m.logSize = st.Size()
 	}
 	return nil
 }
@@ -256,7 +255,7 @@ func encMapLogRec(txType mailindex.TxType, payload []byte) ([]byte, error) {
 func (m *Map) replayFromPersistedLocked() (int64, error) {
 	start := time.Now()
 	defer func() { m.observePart("replay", time.Since(start)) }()
-	return m.replayLogFromLocked(0, func(lh mailindex.LogHeader, _ os.FileInfo) (int64, error) {
+	return m.replayLogFromLocked(0, func(lh mailindex.LogHeader) (int64, error) {
 		if m.onDisk == FormatV1 {
 			// No lineage to compare against: v1 replays whole (see formatv1.go).
 			m.logLineage = lh.FileSeq
@@ -276,11 +275,20 @@ func (m *Map) replayFromPersistedLocked() (int64, error) {
 	})
 }
 
-// replayLogLocked replays the log past fromOffset.
+// errLogMoved is a log of another lineage than the one the offset counts in.
+var errLogMoved = errors.New("mdboxmap: log replaced")
+
+// replayLogLocked replays the log this handle applied, past fromOffset; a log of
+// another lineage at the path is errLogMoved.
 func (m *Map) replayLogLocked(fromOffset int64) (off int64, err error) {
 	start := time.Now()
 	defer func() { m.observePart("replay", time.Since(start)) }()
-	return m.replayLogFromLocked(fromOffset, nil)
+	return m.replayLogFromLocked(fromOffset, func(lh mailindex.LogHeader) (int64, error) {
+		if lh.FileSeq != m.logLineage {
+			return 0, errLogMoved
+		}
+		return fromOffset, nil
+	})
 }
 
 // replayLogInnerLocked replays the log on disk from fromOffset, whatever file it is.
@@ -292,8 +300,7 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 // choose picks for the log it opened (fromOffset when nil), and returns the new
 // applied offset. A torn tail stops replay cleanly without consuming the
 // partial record. Caller holds m.mu.
-func (m *Map) replayLogFromLocked(fromOffset int64, choose func(mailindex.LogHeader, os.FileInfo) (int64, error)) (int64, error) {
-	m.replayed = nil
+func (m *Map) replayLogFromLocked(fromOffset int64, choose func(mailindex.LogHeader) (int64, error)) (int64, error) {
 	f, err := os.Open(m.logPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return fromOffset, nil
@@ -302,7 +309,6 @@ func (m *Map) replayLogFromLocked(fromOffset int64, choose func(mailindex.LogHea
 		return fromOffset, fmt.Errorf("mdboxmap/log: open: %w", err)
 	}
 	defer f.Close()
-	st, _ := f.Stat()
 
 	lh, err := mailindex.DecodeLogHeader(f)
 	if err != nil {
@@ -312,11 +318,10 @@ func (m *Map) replayLogFromLocked(fromOffset int64, choose func(mailindex.LogHea
 		return fromOffset, errLogIndexMismatch
 	}
 	if choose != nil {
-		if fromOffset, err = choose(lh, st); err != nil {
+		if fromOffset, err = choose(lh); err != nil {
 			return 0, err
 		}
 	}
-	m.replayed = st
 	pos := int64(mailindex.LogHeaderSize)
 	if fromOffset > pos {
 		if _, err := f.Seek(fromOffset, io.SeekStart); err != nil {

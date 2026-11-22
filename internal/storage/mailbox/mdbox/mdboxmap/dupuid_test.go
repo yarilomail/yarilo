@@ -191,3 +191,42 @@ func TestAReloadInsideAFoldDoesNotSkipTheNewLog(t *testing.T) {
 		})
 	}
 }
+
+// A fold lands between a reload's checks and its replay: the log it then opens
+// is of another lineage than its offset counts in, and that reload already
+// takes the fold whole rather than leaving it to the next one.
+func TestALogReplacedAfterTheCheckIsTakenByThatReload(t *testing.T) {
+	w, dir := openTestMap(t)
+	r, err := Open(dir, "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close() //nolint:errcheck
+	if _, err := w.AppendRecord(1, 0, 100, [16]byte{1, 6}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Lookup(1); err != nil { // r now counts in w's log
+		t.Fatal(err)
+	}
+	if _, err := w.AppendRecord(1, 100, 100, [16]byte{2, 6}); err != nil {
+		t.Fatal(err)
+	}
+	var last uint32
+	reloadStatSeam = func() {
+		reloadStatSeam = nil
+		if _, err := w.AllocFileID(); err != nil {
+			t.Error(err)
+		}
+		// One append: the new log ends where r's offset points.
+		if last, err = w.AppendRecord(2, 0, 100, [16]byte{0, 7}); err != nil {
+			t.Error(err)
+		}
+	}
+	defer func() { reloadStatSeam = nil }()
+	if _, _, err := r.Lookup(9999); err != nil { // a miss reloads, with no lock
+		t.Fatal(err)
+	}
+	if got := r.NextMapUID(); got != last+1 {
+		t.Fatalf("after the reload the reader would hand out map_uid %d, the writer's last is %d", got, last)
+	}
+}
