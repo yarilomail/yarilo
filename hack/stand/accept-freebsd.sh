@@ -138,11 +138,18 @@ restore() {
 trap restore EXIT
 
 echo "== clock"
-off=$(ntpq -pn 2>/dev/null | awk '/^\*/{print $9}')
-if [ -n "$off" ] && awk -v o="$off" -v m="$CLOCK_MAX_MS" 'BEGIN{exit !(o < m && o > -m)}'; then
-  verdict "clock in sync" ok "ntpd offset ${off} ms"
+# chronyd when it runs (the host steps a paused VM's clock with it), else ntpd.
+if command -v chronyc > /dev/null 2>&1 && chronyc -c tracking > /dev/null 2>&1; then
+  src=chronyd
+  off=$(chronyc -c tracking | awk -F, '$14 == "Normal" {printf "%.3f", $5 * 1000}')
 else
-  verdict "clock in sync" fail "ntpd offset '${off:-none}' ms, date $(date -u +%FT%TZ)"
+  src=ntpd
+  off=$(ntpq -pn 2>/dev/null | awk '/^\*/{print $9}')
+fi
+if [ -n "$off" ] && awk -v o="$off" -v m="$CLOCK_MAX_MS" 'BEGIN{exit !(o < m && o > -m)}'; then
+  verdict "clock in sync" ok "$src offset ${off} ms"
+else
+  verdict "clock in sync" fail "$src offset '${off:-none}' ms, date $(date -u +%FT%TZ)"
 fi
 
 echo "== port"

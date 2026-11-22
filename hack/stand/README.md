@@ -61,6 +61,20 @@ git -C ~/stand worktree add ~/stand-v2.4.4 v2.4.4
 YARILO_ARM_CHART=~/stand-v2.4.4 bash hack/stand/ab-arm.sh A1 2.4.4 <out-dir>
 ```
 
+### The release window
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/release-window.sh <cut-tag> <last-release> <out-dir>
+```
+
+A1 (the last release, its own chart from a `stand-v<last-release>` worktree
+beside the checkout) / B (the cut image) / A2 (the last release, same slot as
+B), `store-parallel.sh` after each; then the rollback: Bw writes on the cut,
+A2c runs the last release on Bw's store and is judged with that release's
+smoketest and disk = index, and the stand goes back to the cut through
+`stand_deploy`. `progress.txt` holds a line a step; a failed arm leaves
+`snap-<arm>/` and stops the window.
+
 ### Overlays
 
 `YARILO_ARM_OVERLAY=<name>` lays `helm_values/values-sandbox-<name>.yaml` over the
@@ -215,7 +229,7 @@ failure; recorded in docs-internal `stand-runs.md` and on the issue.
 
 | Criterion | How |
 |:---|:---|
-| clock in sync | ntpd offset under `ACCEPT_CLOCK_MAX_MS` (1000) |
+| clock in sync | chronyd offset (ntpd when chronyd does not run) under `ACCEPT_CLOCK_MAX_MS` (1000) |
 | port builds, check-plist clean, only the libxapian stage-qa note, port installs | `make BATCH=yes clean makesum build stage check-plist stage-qa`, then `deinstall install`, with `DISTVERSION` set and the module fetched from the Go proxy |
 | installed version | `pkg info` names the module version |
 | processes running | `service yarilo status` after a restart on the installed binaries: `ACCEPT_PROCS` (17) |
