@@ -17,6 +17,7 @@ awk '
 }' tail="${YARILO_THREAD_TAIL:-131072}" "$D/phases.txt"
 echo "--- memory"
 cat "$D/mem.txt" 2>/dev/null
-# A count of none is the answer here, not a failure: grep -c exits 1 on it.
-echo "--- deliveries not 250: $(cat "$D/fill.txt" "$D/phases.txt" 2>/dev/null | grep 'phase:' | grep -vc 'data=250' || true)"
-exit 0
+# grep -c exits 1 on a count of none: the count decides the exit, not grep.
+bad=$(cat "$D/fill.txt" "$D/phases.txt" 2>/dev/null | grep 'phase:' | grep -vc 'data=250' || true)
+echo "--- deliveries not 250: ${bad:-0}"
+[ "${bad:-0}" -eq 0 ]

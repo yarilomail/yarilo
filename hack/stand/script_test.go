@@ -677,3 +677,24 @@ func TestTheMergeSummaryReadsARun(t *testing.T) {
 		}
 	}
 }
+
+// A run with a delivery not answered 250 exits non-zero, as the README says.
+func TestTheMergeSummaryFailsARunWithAFailedDelivery(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"run.log":    "",
+		"phases.txt": "== u60@x merge-1\nphase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=70 rcpt=250 data=451 log_before=1 log_after=2\n",
+		"fill.txt":   "phase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=60 rcpt=250 data=250\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := exec.CommandContext(t.Context(), "bash", "thread-merge-summary.sh", dir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("a run with a 451 exited 0:\n%s", out)
+	}
+	if !strings.Contains(string(out), "deliveries not 250: 1") {
+		t.Errorf("the summary does not count it:\n%s", out)
+	}
+}

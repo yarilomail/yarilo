@@ -319,7 +319,7 @@ with the log's size after each, until one crosses and 30 more after it.
   watchers did (d2621f, d2621g).
 - `thread-merge-summary.sh <out-dir>` prints per merge its time, the delivery
   that triggered it and the 30 after it, the memory, and the deliveries not
-  answered 250. It exits 0 when that count is none.
+  answered 250. It exits 0 when that count is none, 1 otherwise.
 
 ## The same start
 

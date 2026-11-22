@@ -1,6 +1,7 @@
 package file
 
 import (
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -334,4 +335,42 @@ func TestAReplacedGUIDLookupStaysOpenForItsReads(t *testing.T) {
 		t.Errorf("the replaced lookup's read: %v %v", ok, err)
 	}
 	release()
+}
+
+// A reader whose view is older than the store's base on disk, finding the
+// lookup of that newer base, reads again: nothing is built for a base gone.
+func TestAStaleReaderDoesNotBuildTheGUIDLookup(t *testing.T) {
+	ui, home := guidUser(t)
+	if err := ui.AppendGUIDRecord(mailbox.GUIDRecord{GUID: [16]byte{1}, FolderGUID: [16]byte{7}, UID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := ui.openGUIDStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.OptimizeIndex(id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ui.GUIDCopies([][16]byte{{1}}); err != nil {
+		t.Fatal(err)
+	}
+	stale := storeTag(t, ui, id)
+	if err := ui.AppendGUIDRecord(mailbox.GUIDRecord{GUID: [16]byte{2}, FolderGUID: [16]byte{7}, UID: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ui.OptimizeIndex(id); err != nil {
+		t.Fatal(err)
+	}
+	builds := lookupBuilds(t)
+	other := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
+	defer other.Close() //nolint:errcheck
+	if _, _, err := other.guidLookup(stale); !errors.Is(err, errGUIDBaseMoved) {
+		t.Errorf("a stale view's lookup answered %v, want errGUIDBaseMoved", err)
+	}
+	if got, err := other.GUIDCopies([][16]byte{{1}, {2}}); err != nil || len(got) != 2 {
+		t.Errorf("the read again: %v %v", got, err)
+	}
+	if *builds != 0 {
+		t.Errorf("a stale reader built the lookup %d times, want none", *builds)
+	}
 }
