@@ -20,15 +20,20 @@ func (s *Server) registerMdboxRoutes() {
 type mdboxPurgeRequest struct {
 	User      string `json:"user"`
 	Namespace string `json:"namespace"`
+	// SkipOthers answers a store other than mdbox with skipped instead of the
+	// refusal: a purge over many users counts it apart from the failures.
+	SkipOthers bool `json:"skip_other_drivers"`
 }
 
 type mdboxPurgeResponse struct {
-	FilesScanned    int   `json:"files_scanned"`
-	FilesRewritten  int   `json:"files_rewritten"`
-	FilesUnlinked   int   `json:"files_unlinked"`
-	RecordsKept     int   `json:"records_kept"`
-	RecordsExpunged int   `json:"records_expunged"`
-	BytesReclaimed  int64 `json:"bytes_reclaimed"`
+	// Skipped names why nothing ran, asked for with skip_other_drivers.
+	Skipped         string `json:"skipped,omitempty"`
+	FilesScanned    int    `json:"files_scanned"`
+	FilesRewritten  int    `json:"files_rewritten"`
+	FilesUnlinked   int    `json:"files_unlinked"`
+	RecordsKept     int    `json:"records_kept"`
+	RecordsExpunged int    `json:"records_expunged"`
+	BytesReclaimed  int64  `json:"bytes_reclaimed"`
 }
 
 // handleMdboxPurge runs mdbox Purge(): compacts m.<N> files with
@@ -56,11 +61,12 @@ func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type purger interface {
-		Purge() (mdboxdriver.PurgeStats, error)
-	}
 	p, ok := mailbox.Driver(bundle.box).(purger)
 	if !ok {
+		if req.SkipOthers {
+			apiJSON(w, mdboxPurgeResponse{Skipped: "not an mdbox store"})
+			return
+		}
 		apiError(w, "purge: storage driver does not implement mdbox purge (only mdbox does)", http.StatusBadRequest)
 		return
 	}
@@ -70,14 +76,22 @@ func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "purge: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	apiJSON(w, mdboxPurgeResponse{
+	apiJSON(w, purgeResponse(stats))
+}
+
+type purger interface {
+	Purge() (mdboxdriver.PurgeStats, error)
+}
+
+func purgeResponse(stats mdboxdriver.PurgeStats) mdboxPurgeResponse {
+	return mdboxPurgeResponse{
 		FilesScanned:    stats.FilesScanned,
 		FilesRewritten:  stats.FilesRewritten,
 		FilesUnlinked:   stats.FilesUnlinked,
 		RecordsKept:     stats.RecordsKept,
 		RecordsExpunged: stats.RecordsExpunged,
 		BytesReclaimed:  stats.BytesReclaimed,
-	})
+	}
 }
 
 type mdboxAltMoveRequest struct {
@@ -95,6 +109,8 @@ type mdboxAltMoveResponse struct {
 	FilesCreated  int   `json:"files_created"`
 	FilesUnlinked int   `json:"files_unlinked"`
 	BytesMoved    int64 `json:"bytes_moved"`
+	// Purge is the purge that follows the move, as the reference runs one.
+	Purge *mdboxPurgeResponse `json:"purge,omitempty"`
 }
 
 // handleMdboxAltMove moves messages between primary and alt storage
@@ -161,13 +177,25 @@ func (s *Server) handleMdboxAltMove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	apiJSON(w, mdboxAltMoveResponse{
+	resp := mdboxAltMoveResponse{
 		Candidates:    stats.Candidates,
 		Moved:         stats.Moved,
 		FilesCreated:  stats.FilesCreated,
 		FilesUnlinked: stats.FilesUnlinked,
 		BytesMoved:    stats.BytesMoved,
-	})
+	}
+	// A move rewrites the records that stay with the dead ones among them; the
+	// purge after it gives that space back.
+	if p, ok := mailbox.Driver(bundle.box).(purger); ok {
+		ps, err := p.Purge()
+		if err != nil {
+			apiError(w, fmt.Sprintf("altmove: moved %d, then purge: %v", stats.Moved, err), http.StatusInternalServerError)
+			return
+		}
+		pr := purgeResponse(ps)
+		resp.Purge = &pr
+	}
+	apiJSON(w, resp)
 }
 
 // setAltTierAllFolders calls SetAltTier on every selectable folder
