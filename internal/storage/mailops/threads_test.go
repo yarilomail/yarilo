@@ -74,6 +74,10 @@ func TestASaveDoesNotWaitForTheMerge(t *testing.T) {
 	release, finished := make(chan struct{}), make(chan struct{}, 4)
 	mergeSeam = func(done bool) {
 		if done {
+			// "Finished" is the state a save after it sees: no merge running.
+			if merging.Load() {
+				t.Error("the merge said it finished while still marked as running")
+			}
 			finished <- struct{}{}
 			return
 		}
