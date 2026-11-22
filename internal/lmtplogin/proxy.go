@@ -354,7 +354,11 @@ func (s *session) Reset() {
 	s.from = ""
 }
 
+// sessionEnded is a test seam: it runs when the MTA session is torn down.
+var sessionEnded = func() {}
+
 func (s *session) Logout() error {
+	defer sessionEnded()
 	s.Reset()
 	s.wardenMu.Lock()
 	if s.wardenConn != nil {
