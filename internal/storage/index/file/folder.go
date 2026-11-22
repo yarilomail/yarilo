@@ -121,6 +121,7 @@ func (u *userIndex) openFolder(folder string, uidValidity uint32, traceID string
 		intent:      intent,
 		lockMethod:  u.b.lockMethod,
 		fsync:       u.b.fsync,
+		log2MaxAge:  u.b.log2MaxAge,
 	}
 	if err := u.loadOrInit(fs, uidValidity); err != nil {
 		return nil, err
@@ -198,7 +199,7 @@ func (u *userIndex) stampLineage(fs *folderState) error {
 			// No floor stamp: this log is a header and nothing else, so raising
 			// the floor would cost a resync for a truncate that lost nothing.
 			if headerOnly && stale {
-				if err := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); err != nil {
+				if err := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq()); err != nil {
 					return fmt.Errorf("fileindex/stamp: reissue empty log: %w", err)
 				}
 				fs.logSize = 0
@@ -310,7 +311,7 @@ func (u *userIndex) loadExisting(fs *folderState) error {
 			if err := fs.flush(); err != nil {
 				return fmt.Errorf("fileindex/openfolder: write migrated: %w", err)
 			}
-			return ensureLogStub(fs.indexPath, fs.volatileDir, fs.file.Header.IndexID, fs.lineage.Lineage)
+			return ensureLogStub(fs.indexPath, fs.volatileDir, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq())
 		})
 	}
 	return u.loadModern(fs)
@@ -345,7 +346,7 @@ func (u *userIndex) readBase(fs *folderState) error {
 				fs.closeFDs()
 				// A zero lineage is intended, not a gap: a base may predate the
 				// extension, and an unpaired log sends readers back to the lock.
-				if truncErr := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); truncErr != nil {
+				if truncErr := rotateLog(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq(), false); truncErr != nil {
 					return fmt.Errorf("fileindex/openfolder: truncate after indexid mismatch: %w", truncErr)
 				}
 				fs.logSize = 0
@@ -391,7 +392,7 @@ func (u *userIndex) loadModern(fs *folderState) error {
 		return err
 	}
 	fs.ensureVsizeLocked()
-	return ensureLogStub(fs.indexPath, fs.volatileDir, fs.file.Header.IndexID, fs.lineage.Lineage)
+	return ensureLogStub(fs.indexPath, fs.volatileDir, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq())
 }
 
 // createFresh initialises a brand-new folder state, used for first-ever
@@ -428,7 +429,7 @@ func (fs *folderState) createFresh(uidValidity uint32, guid [16]byte) error {
 	if err := fs.flush(); err != nil {
 		return err
 	}
-	return ensureLogStub(fs.indexPath, fs.volatileDir, indexID, fs.lineage.Lineage)
+	return ensureLogStub(fs.indexPath, fs.volatileDir, indexID, fs.lineage.Lineage, fs.logStartModSeq())
 }
 
 // refreshExtStateFromDisk re-reads the base's extension HEADERS, never its
@@ -1322,7 +1323,7 @@ func (fs *folderState) applyLogTail(lg *logReader) error {
 			if flushErr := fs.flush(); flushErr != nil {
 				return fmt.Errorf("fileindex/reload: flush after indexid mismatch: %w", flushErr)
 			}
-			if truncErr := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); truncErr != nil {
+			if truncErr := rotateLog(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq(), false); truncErr != nil {
 				return fmt.Errorf("fileindex/reload: truncate after indexid mismatch: %w", truncErr)
 			}
 			fs.logSize = 0
@@ -2073,28 +2074,17 @@ func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbo
 }
 
 // Vanished returns every UID expunged with modseq above sinceModSeq, driving
-// the QRESYNC VANISHED response (RFC 7162).
-func (u *userIndex) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	return u.vanished(folderID, sinceModSeq)
-}
-
-// VanishedUnlocked is Vanished for a caller whose answer goes to the client and
-// decides nothing on disk - QRESYNC on SELECT, CHANGEDSINCE on FETCH (#1249).
-func (u *userIndex) VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	return u.vanished(folderID, sinceModSeq)
-}
-
-func (u *userIndex) vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	var out []uint32
-	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
-		uids, err := scanExpungesSince(fs.indexPath, sinceModSeq)
-		if err != nil {
-			return err
-		}
-		out = uids
-		return nil
+// the QRESYNC VANISHED response (RFC 7162); reaches is false when the history
+// no longer goes back that far, and the list is then not the whole answer.
+func (u *userIndex) Vanished(folderID uint64, sinceModSeq uint64) (uids []uint32, reaches bool, err error) {
+	err = u.withFolderSite(folderID, lockSiteVanishedGuids, func(fs *folderState) error {
+		var herr error
+		reaches, herr = fs.historyLocked(sinceModSeq, func(uid uint32, _ [16]byte) {
+			uids = append(uids, uid)
+		})
+		return herr
 	})
-	return out, err
+	return uids, reaches, err
 }
 
 // Keywords returns the current keyword registry.
@@ -2288,7 +2278,7 @@ func (u *userIndex) resetFolderLocked(fs *folderState, records []*mailbox.Messag
 		// Truncate the log so stale TxAppend records don't resurface
 		// when another process replays the log after ResetFolder.
 		fs.closeFDs()
-		if err := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); err != nil {
+		if err := rotateLog(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq(), false); err != nil {
 			return err
 		}
 		fs.logSize = 0
@@ -2373,13 +2363,17 @@ func (u *userIndex) OptimizeIndex(folderID uint64) error {
 func (u *userIndex) VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []mailbox.ExpungedCopy, complete bool, err error) {
 	complete = true
 	err = u.withFolderSite(folderID, lockSiteVanishedGuids, func(fs *folderState) error {
-		return scanExpungeRecords(fs.indexPath, sinceModSeq, func(uid uint32, g [16]byte) {
+		reaches, herr := fs.historyLocked(sinceModSeq, func(uid uint32, g [16]byte) {
 			if g == fs.hdr.MailboxGUID || g == ([16]byte{}) {
 				complete = false
 				return
 			}
 			copies = append(copies, mailbox.ExpungedCopy{UID: uid, GUID: g})
 		})
+		if !reaches {
+			complete = false
+		}
+		return herr
 	})
 	return copies, complete, err
 }
@@ -2407,6 +2401,7 @@ func (u *userIndex) FolderStamp(folder string) (mailbox.FolderStamp, error) {
 func (u *userIndex) ExpungeFloor(folderID uint64) (uint64, error) {
 	var floor uint64
 	err := u.withFolderSite(folderID, lockSiteExpungeFloor, func(fs *folderState) error {
+		fs.pruneKeptLogLocked(fs.log2MaxAge)
 		floor = fs.expungeFloorLocked()
 		return nil
 	})
@@ -2560,6 +2555,40 @@ func scanExpungeRecords(indexPath string, sinceModSeq uint64, fn func(uint32, [1
 		return fmt.Errorf("fileindex/log scan: open: %w", err)
 	}
 	defer lg.close()
+	return scanLogExpunges(lg, sinceModSeq, fn)
+}
+
+// historyLocked decides and reads under the one hold its caller has: the floor
+// and the expunges come from the same kept log, which no fold or ageing can
+// replace in between. reaches false says the floor is above sinceModSeq, and
+// nothing is scanned.
+func (fs *folderState) historyLocked(sinceModSeq uint64, fn func(uint32, [16]byte)) (bool, error) {
+	fs.pruneKeptLogLocked(fs.log2MaxAge)
+	kept, keptOK := fs.keptLog(fs.log2MaxAge)
+	if keptOK {
+		defer kept.close()
+	}
+	floor := fs.stampedFloorLocked()
+	if keptOK && kept.hdr.InitialModSeq != 0 && kept.hdr.InitialModSeq < floor {
+		floor = kept.hdr.InitialModSeq
+	}
+	if floor > sinceModSeq {
+		return false, nil
+	}
+	lg, err := openLogRead(fs.indexPath)
+	if err != nil {
+		return false, fmt.Errorf("fileindex/log scan: open: %w", err)
+	}
+	defer lg.close()
+	if keptOK && (!lg.ok || lg.hdr.InitialModSeq == 0 || sinceModSeq < lg.hdr.InitialModSeq) {
+		if err := scanLogExpunges(kept, sinceModSeq, fn); err != nil {
+			return false, err
+		}
+	}
+	return true, scanLogExpunges(lg, sinceModSeq, fn)
+}
+
+func scanLogExpunges(lg *logReader, sinceModSeq uint64, fn func(uint32, [16]byte)) error {
 	if lg.f == nil || !lg.ok {
 		return nil // absent, empty or unreadable log
 	}
@@ -2743,6 +2772,7 @@ func (fs *folderState) appendMutLog(records ...[]byte) error {
 			// FileSeq carries the base's lineage, so a reader can tell whether
 			// this log belongs to the base it holds.
 			hdr := mailindex.NewLogHeader(fs.file.Header.IndexID, fs.lineage.Lineage, uint32(nowUnix()))
+			hdr.InitialModSeq = fs.logStartModSeq()
 			if err := hdr.Encode(f); err != nil {
 				_ = f.Close()
 				return fmt.Errorf("fileindex/mutlog: write header: %w", err)
@@ -3379,7 +3409,7 @@ func (fs *folderState) appendLogRecordsWith(raw []byte, h mailindex.Header) ([][
 // truncateSeam is a test seam run before a fold replaces the log. Nil elsewhere.
 var truncateSeam func()
 
-func truncateLogLineage(indexPath string, indexID, lineage uint32) error {
+func truncateLogLineage(indexPath string, indexID, lineage uint32, initial uint64) error {
 	if truncateSeam != nil {
 		truncateSeam()
 	}
@@ -3390,6 +3420,7 @@ func truncateLogLineage(indexPath string, indexID, lineage uint32) error {
 		return fmt.Errorf("fileindex/log truncate: open: %w", err)
 	}
 	hdr := mailindex.NewLogHeader(indexID, lineage, uint32(nowUnix()))
+	hdr.InitialModSeq = initial
 	if err := hdr.Encode(f); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
@@ -3705,6 +3736,19 @@ func (fs *folderState) stampExpungeFloorLocked() error {
 // expungeFloorLocked reads the folder's floor. Zero means nothing has ever been
 // folded away, so the log is the whole history.
 func (fs *folderState) expungeFloorLocked() uint64 {
+	floor := fs.stampedFloorLocked()
+	if floor == 0 {
+		return 0
+	}
+	// The kept log holds the history from its start to the last fold.
+	if kept := fs.keptFloorLocked(fs.log2MaxAge); kept != 0 && kept < floor {
+		return kept
+	}
+	return floor
+}
+
+// stampedFloorLocked is the floor the last fold stamped, before the kept log.
+func (fs *folderState) stampedFloorLocked() uint64 {
 	ext := findExt(fs.file.Extensions, extNameExpungeFloor)
 	if ext == nil {
 		return 0
@@ -3796,7 +3840,7 @@ func (fs *folderState) foldLocked() error {
 		return err
 	}
 	fs.closeFDs()
-	if err := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); err != nil {
+	if err := rotateLog(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq(), fs.log2MaxAge > 0); err != nil {
 		return err
 	}
 	// Log is now an empty header; next reload fast-paths the base and

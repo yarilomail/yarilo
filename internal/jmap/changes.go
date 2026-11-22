@@ -91,18 +91,6 @@ func (s *Server) emailChanges(_ context.Context, h *userHandle, accountID string
 		if prevModSeq == f.folder.HighestModSeq {
 			continue // nothing happened here
 		}
-		// The gate: expunges older than the floor were folded away, so this
-		// folder cannot answer "what vanished since". One such folder refuses
-		// the WHOLE call -- a partial answer carrying a fresh state would tell
-		// the client it is current, which is the same silence with a newer
-		// label.
-		floor, err := h.mbox.ExpungeFloor(f.folder.ID)
-		if err != nil {
-			return nil, storeFailure("Email/changes floor", accountID, err)
-		}
-		if floor > prevModSeq {
-			return nil, cannotCalculate("the expunge history for this account no longer reaches that state")
-		}
 		ids, err := s.folderMessageIDs(h, f, prevModSeq, uint32(prevNextUID))
 		if err != nil {
 			return nil, storeFailure("Email/changes read", accountID, err)
@@ -115,11 +103,11 @@ func (s *Server) emailChanges(_ context.Context, h *userHandle, accountID string
 			return nil, storeFailure("Email/changes vanished", accountID, err)
 		}
 		if !complete {
-			// Some expunge in range cannot be named -- a record written before
-			// the field carried the message id. Reporting the rest would be a
-			// destroyed list that is missing entries, which a client reads as
-			// "those still exist".
-			return nil, cannotCalculate("some deletions in that window cannot be identified")
+			// The history no longer reaches that state, or an expunge in range
+			// cannot be named; decided under the lock the read took. One such
+			// folder refuses the WHOLE call: a shorter destroyed list with a
+			// fresh state tells the client those messages still exist.
+			return nil, cannotCalculate("the deletions since that state can no longer all be listed")
 		}
 		for _, c := range vanished {
 			id := mailbox.FormatObjectID(c.GUID)

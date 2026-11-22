@@ -49,7 +49,7 @@ func TestTheBoxSurfaceReachesTheIndex(t *testing.T) {
 		if err := idx.ExpungeMessage(f.ID, 1); err != nil {
 			t.Fatal(err)
 		}
-		got, err := box.Vanished(f.ID, 1)
+		got, _, err := box.Vanished(f.ID, 1)
 		if err != nil || len(got) != 1 || got[0] != 1 {
 			t.Errorf("vanished %v, %v; want [1]", got, err)
 		}

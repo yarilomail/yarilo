@@ -140,6 +140,8 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		keywords:  img.keywords,
 		lineage:   img.lineage,
 		isView:    true,
+		// log2MaxAge reaches views: VANISHED and Email/changes read through them.
+		log2MaxAge: fs.log2MaxAge,
 	}
 	view.newBaseLoaded(img.file)
 

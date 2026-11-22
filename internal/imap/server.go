@@ -1223,26 +1223,15 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		ReadOnly:       readOnly,
 	}
 	// QRESYNC SELECT (RFC 7162 §3.2): on matching UIDVALIDITY, reply with
-	// VANISHED (EARLIER) listing UIDs expunged since the client's modseq.
-	// KnownUIDs narrows the response; empty means "tell me everything".
+	// VANISHED (EARLIER) for the uids expunged since the client's modseq, within
+	// its known uids; from the folder when the history no longer reaches it.
 	if opts != nil && opts.QResync != nil && opts.QResync.UIDValidity == f.UIDValidity {
-		vanishedUIDs, vErr := h.mailbox().Vanished(f.ID, opts.QResync.ModSeq)
-		if vErr == nil && len(vanishedUIDs) > 0 {
-			var vset imaplib.UIDSet
-			if len(opts.QResync.KnownUIDs) == 0 {
-				for _, uid := range vanishedUIDs {
-					vset.AddNum(imaplib.UID(uid))
-				}
-			} else {
-				for _, uid := range vanishedUIDs {
-					if opts.QResync.KnownUIDs.Contains(imaplib.UID(uid)) {
-						vset.AddNum(imaplib.UID(uid))
-					}
-				}
-			}
-			if len(vset) > 0 {
-				data.Vanished = vset
-			}
+		vset, vErr := vanishedSince(h.mailbox(), f.ID, opts.QResync.ModSeq, opts.QResync.KnownUIDs, f.NextUID, msgs)
+		if vErr != nil {
+			return nil, vErr
+		}
+		if len(vset) > 0 {
+			data.Vanished = vset
 		}
 	}
 	return data, nil
@@ -3112,12 +3101,17 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	// VANISHED on a sequence-number FETCH is invalid; the patched lib
 	// rejects that at parse time so we do not need to re-check here.
 	if opts.Vanished && opts.ChangedSince > 0 {
-		vanishedUIDs, vErr := s.folderMailbox().Vanished(s.folder.ID, opts.ChangedSince)
-		if vErr == nil && len(vanishedUIDs) > 0 {
-			var vset imaplib.UIDSet
-			for _, uid := range vanishedUIDs {
-				vset.AddNum(imaplib.UID(uid))
-			}
+		// Only the uids the command named, as §3.2.6 asks; from the folder when
+		// the history no longer reaches the modseq.
+		within, _ := numSet.(imaplib.UIDSet)
+		if len(within) == 0 {
+			within = imaplib.UIDSet{{Start: 1, Stop: 0}}
+		}
+		vset, vErr := vanishedSince(s.folderMailbox(), s.folder.ID, opts.ChangedSince, within, s.folder.NextUID, backendMsgs)
+		if vErr != nil {
+			return vErr
+		}
+		if len(vset) > 0 {
 			if writeErr := w.WriteVanished(vset); writeErr != nil {
 				return writeErr
 			}

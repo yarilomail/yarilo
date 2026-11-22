@@ -278,6 +278,8 @@ storage:
   ##                                         #          Raise it for a very large mailbox with sparse delivery,
   ##                                         #          where folds are the rarer cost.
   mail_index_log_rotate_max_size: "1M"   # 1 MiB  - fold above this whatever the age (human-readable; quote it)
+  mail_index_log2_max_age: 172800        # 2 days - a fold keeps the folded log as .log.2 this long, so JMAP
+  ##                                         #          and QRESYNC clients stay incremental across one fold; 0 keeps none.
   max_concurrent_writes: 0           # 0 = unlimited; tune to storage type: ~32 HDD, ~256 SSD
   ## mailbox_list_utf8: true            # true = UTF-8 on disk (default); false = modified-UTF-7 for legacy migrations
   ##                                    # UPGRADE NOTE: before 2.3.55 this key was documented but never rendered,

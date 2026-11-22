@@ -2605,6 +2605,10 @@ type StorageConfig struct {
 	// MailIndexLogRotateMinAge is the minimum log age in seconds before a
 	// min-size fold fires. Default 60 s.
 	MailIndexLogRotateMinAge int `koanf:"mail_index_log_rotate_min_age"`
+	// MailIndexLog2MaxAge is how long, in seconds, a fold keeps the log it
+	// folded as .log.2: the expunge history JMAP and QRESYNC answer from.
+	// Default 2 days; 0 keeps none.
+	MailIndexLog2MaxAge int `koanf:"mail_index_log2_max_age"`
 
 	// Pre-beta spellings of the triple above, accepted as aliases and removed
 	// after beta. Setting both spellings of one knob to different values is
@@ -3026,6 +3030,7 @@ func Defaults() *Config {
 	c.Storage.MailCachePurgeDeletePercentage = 20
 	c.Storage.MailCachePurgeContinuedPercentage = 200
 	c.Storage.MailIndexLogRotateMinAge = 60
+	c.Storage.MailIndexLog2MaxAge = 2 * 24 * 3600
 	c.AuthService.StartupWaitSeconds = 30
 	c.LocksClient.StartupWaitSeconds = 30
 	c.AuthClient.PoolSize = 4

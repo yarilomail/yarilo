@@ -229,32 +229,50 @@ func TestEmailChangesReportsDestroyedByID(t *testing.T) {
 	}
 }
 
-// The floor gate, end to end: once the fold has taken the expunge records, a
-// client asking about a point before it must be refused. The empty answer it
-// would otherwise get reads as "nothing was deleted".
-func TestEmailChangesRefusesBelowTheExpungeFloor(t *testing.T) {
-	s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
-	since := emailStateOf(t, s)
+// A state issued before one fold is answered from the kept log, destroyed
+// included; before two folds its expunge is in no log, and the call is refused
+// rather than answered with an empty destroyed list (#2664).
+func TestEmailChangesAcrossFolds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		folds int
+	}{{"one fold", 1}, {"two folds", 2}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := storedServerWithMessageAt(t, setTestMessage, 0)
+			since := emailStateOf(t, s)
 
-	h := openHandleForTest(t, s)
-	marks, err := s.folderMarks(h)
-	if err != nil || len(marks) == 0 {
-		t.Fatalf("folder marks: %v %v", marks, err)
-	}
-	folderID := marks[0].folder.ID
-	if err := h.index().ExpungeMessage(folderID, 1); err != nil {
-		t.Fatalf("expunge: %v", err)
-	}
-	// The fold: the expunge record is now in the base and out of the log.
-	if err := h.index().OptimizeIndex(folderID); err != nil {
-		t.Fatalf("optimize: %v", err)
-	}
+			h := openHandleForTest(t, s)
+			marks, err := s.folderMarks(h)
+			if err != nil || len(marks) == 0 {
+				t.Fatalf("folder marks: %v %v", marks, err)
+			}
+			folderID := marks[0].folder.ID
+			if err := h.index().ExpungeMessage(folderID, 1); err != nil {
+				t.Fatalf("expunge: %v", err)
+			}
+			for i := 0; i < tc.folds; i++ {
+				if err := h.index().OptimizeIndex(folderID); err != nil {
+					t.Fatalf("optimize: %v", err)
+				}
+			}
 
-	payload, errType := changesCall(t, s, "Email/changes",
-		fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
-	if errType != "cannotCalculateChanges" {
-		t.Fatalf("a state below the floor answered %q with %v -- an empty destroyed list is read as 'nothing was deleted'",
-			errType, payload)
+			payload, errType := changesCall(t, s, "Email/changes",
+				fmt.Sprintf(`{"accountId":%q,"sinceState":%q}`, testAccount, since))
+			switch tc.folds {
+			case 1:
+				if errType != "" {
+					t.Fatalf("a state before one fold was refused: %q", errType)
+				}
+				if d, _ := payload["destroyed"].([]any); len(d) != 1 {
+					t.Fatalf("after one fold destroyed is %v, want the expunged message", payload["destroyed"])
+				}
+			default:
+				if errType != "cannotCalculateChanges" {
+					t.Fatalf("a state before two folds answered %q with %v -- an empty destroyed list is read as 'nothing was deleted'",
+						errType, payload)
+				}
+			}
+		})
 	}
 }
 

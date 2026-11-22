@@ -25,6 +25,7 @@ func offKeys(cfg *Config) []intKey {
 		{"storage.mail_cache_purge_delete_percentage", &cfg.Storage.MailCachePurgeDeletePercentage},
 		{"storage.mail_cache_purge_continued_percentage", &cfg.Storage.MailCachePurgeContinuedPercentage},
 		{"storage.mail_index_log_rotate_min_age", &cfg.Storage.MailIndexLogRotateMinAge},
+		{"storage.mail_index_log2_max_age", &cfg.Storage.MailIndexLog2MaxAge},
 		{"storage.max_concurrent_writes", &cfg.Storage.MaxConcurrentWrites},
 		{"auth_service.auth_startup_wait", &cfg.AuthService.StartupWaitSeconds},
 		{"locks_client.locks_client_startup_wait", &cfg.LocksClient.StartupWaitSeconds},

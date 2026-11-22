@@ -30,8 +30,13 @@ type logReader struct {
 var wrapLogReads func(io.ReaderAt) io.ReaderAt
 
 func openLogRead(indexPath string) (*logReader, error) {
+	return openLogFile(indexPath + ".log")
+}
+
+// openLogFile is openLogRead for a log at its own path: the kept .log.2.
+func openLogFile(path string) (*logReader, error) {
 	lg := &logReader{}
-	f, err := os.Open(indexPath + ".log")
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return lg, nil
 	}

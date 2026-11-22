@@ -65,14 +65,12 @@ func (t *boxTx) Rollback()                         { t.tx.Rollback() }
 // unlockedReader is an index whose files prove their own freshness, so a read
 // that only answers a client skips the cross-process lock (#1249).
 type unlockedReader interface {
-	VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error)
 	KeywordsUnlocked(folderID uint64) ([]string, error)
 }
 
-func (b *Box) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	if u, ok := b.index.(unlockedReader); ok {
-		return u.VanishedUnlocked(folderID, sinceModSeq)
-	}
+// Vanished decides and reads under the index's folder lock: a fold between a
+// floor check and the read would shorten an answer marked whole (#2664).
+func (b *Box) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, bool, error) {
 	return b.index.Vanished(folderID, sinceModSeq)
 }
 

@@ -228,7 +228,7 @@ func TestABareLogStubIsReissuedUnderTheNewLineage(t *testing.T) {
 	// The log as a stub written while the base had no lineage yet: header only,
 	// announcing nothing. This is the case that pairs with nothing - a stub
 	// carrying the old constant still pairs, through folded.
-	if err := truncateLogLineage(indexPath, fs.file.Header.IndexID, lineageUnknown); err != nil {
+	if err := truncateLogLineage(indexPath, fs.file.Header.IndexID, lineageUnknown, 0); err != nil {
 		t.Fatalf("seed stub: %v", err)
 	}
 

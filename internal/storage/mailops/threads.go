@@ -83,11 +83,17 @@ func (o *Ops) mergeThreads(user, path string) {
 		return
 	}
 	go func() {
-		defer merging.Store(false)
 		if mergeSeam != nil {
 			mergeSeam(false)
-			defer mergeSeam(true)
 		}
+		// Cleared before the seam says so: a test that saves on "finished"
+		// must find no merge running.
+		defer func() {
+			merging.Store(false)
+			if mergeSeam != nil {
+				mergeSeam(true)
+			}
+		}()
 		o.mergeNow(user, path)
 	}()
 }

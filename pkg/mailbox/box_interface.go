@@ -92,7 +92,7 @@ type Box interface {
 	// Begin opens one command's changes to a folder.
 	Begin(folderID uint64) (BoxTx, error)
 	// Vanished are the uids expunged past sinceModSeq, for QRESYNC.
-	Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error)
+	Vanished(folderID uint64, sinceModSeq uint64) (uids []uint32, reaches bool, err error)
 	// VanishedGUIDs are the messages expunged past sinceModSeq, by identity;
 	// complete is false when some cannot be named.
 	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
