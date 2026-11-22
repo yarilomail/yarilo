@@ -362,6 +362,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		flags, keywords := mailbox.SplitStoredFlags(msg.Flags)
 		filename, vsize, guid, err := box.SaveReceived(msg.Folder, msg.bodyReader(), 0, int64(len(msg.Body)), flags, keywords, msg.GUID, msg.InternalDate)
 		if err != nil {
+			mailbox.ReleaseUID(idx, f.ID, uid)
 			return fmt.Errorf("save %s/%s: %w", user, msg.Folder, err)
 		}
 		meta := &mailbox.MessageMeta{
@@ -376,6 +377,7 @@ func migrateUser(walker sourceWalker, srcRoot string, boxBE mailbox.MailboxBacke
 		// The uid is already ours, so the name is settled here rather than in an
 		// allocating cycle (#1704, #1700).
 		if err := mailboxbase.NameAndAppend(idx, box, f.ID, msg.Folder, filename, meta); err != nil {
+			mailbox.ReleaseUID(idx, f.ID, uid)
 			return fmt.Errorf("name and append %s/%s: %w", user, msg.Folder, err)
 		}
 		migrated++

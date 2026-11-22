@@ -283,11 +283,6 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 
 	// Every name is read before any record goes: a driver named by uid reads
 	// it out of the record this command is about to remove (#1712).
-	type doomed struct {
-		msg  *mailbox.MessageMeta
-		name string
-		err  error
-	}
 	list := make([]doomed, 0, len(msgs))
 	for _, m := range msgs {
 		name, nameErr := MessagePath(b.store, folder, m)
@@ -295,6 +290,10 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 			name = ""
 		}
 		list = append(list, doomed{msg: m, name: name, err: nameErr})
+	}
+
+	if bf, ok := mailbox.Driver(b.store).(mailbox.BodyFirstExpunger); ok && bf.ExpungesBodyFirst() {
+		return b.expungeBodyFirst(f, folder, list, refs)
 	}
 
 	tx, terr := b.index.Begin(f.ID)
@@ -339,6 +338,72 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 			"folder", folder, "count", len(free), "err", err)
 	}
 	return removed, failed
+}
+
+type doomed struct {
+	msg  *mailbox.MessageMeta
+	name string
+	err  error
+}
+
+// expungeBodyFirst removes the bodies, then the records of those that went: a
+// stop between leaves a record with no file, which the next reconcile drops,
+// never a file whose uid is gone (#2663). A body that stays keeps its record.
+func (b *Box) expungeBodyFirst(f *mailbox.Folder, folder string, list []doomed, refs bodyRefs) (removed []*mailbox.MessageMeta, failed int) {
+	going := make([]doomed, 0, len(list))
+	for _, d := range list {
+		switch refs.fate(d.name) {
+		case bodyNameless:
+			slog.Warn("mailbox/expunge: the record named no file; its body, if any, stays",
+				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "err", d.err)
+		case bodyShared:
+			slog.Warn("mailbox/expunge: the body stays, another record still names it",
+				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "file", d.name)
+		case bodyFree:
+			if err := b.RemoveHeld(folder, d.name); err != nil {
+				slog.Error("mailbox/expunge: the body could not be removed, so its record stays",
+					"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "file", d.name, "err", err)
+				failed++
+				continue
+			}
+		}
+		going = append(going, d)
+	}
+	if testAfterBodyRemoved != nil {
+		testAfterBodyRemoved()
+	}
+	if len(going) == 0 {
+		return nil, failed
+	}
+	tx, terr := b.index.Begin(f.ID)
+	if terr != nil {
+		slog.Error("mailbox/expunge: the bodies went but the records could not be opened; the next reconcile drops them",
+			"user", b.store.Username(), "folder", folder, "err", terr)
+		return nil, failed + len(going)
+	}
+	defer tx.Rollback()
+	for _, d := range going {
+		tx.Expunge(d.msg.UID)
+	}
+	if _, cerr := tx.Commit(); cerr != nil {
+		slog.Error("mailbox/expunge: the bodies went but the records stayed; the next reconcile drops them",
+			"user", b.store.Username(), "folder", folder, "err", cerr)
+		return nil, failed + len(going)
+	}
+	for _, d := range going {
+		removed = append(removed, d.msg)
+	}
+	return removed, failed
+}
+
+// testAfterBodyRemoved runs between the bodies and the records of a body-first
+// expunge. Test seam: the crash window that order is chosen for.
+var testAfterBodyRemoved func()
+
+// SetTestAfterBodyRemoved arms that seam and returns a function disarming it.
+func SetTestAfterBodyRemoved(fn func()) func() {
+	testAfterBodyRemoved = fn
+	return func() { testAfterBodyRemoved = nil }
 }
 
 // testAfterRecordExpunged runs between the record and the body. Test seam: the

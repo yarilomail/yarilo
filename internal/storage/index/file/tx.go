@@ -234,8 +234,13 @@ func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byt
 			next = 1
 		}
 		if op.meta.UID == 0 {
+			if next > mailbox.MaxUID {
+				return nil, fmt.Errorf("fileindex/tx: next uid %d: %w", next, mailbox.ErrUIDSpaceFull)
+			}
 			fs.file.Header.NextUID = next + 1
 			op.meta.UID = next
+		} else if err := t.idx.claimIssued(fs, t.folderID, op.meta.UID); err != nil {
+			return nil, err
 		}
 		rec, err := fs.appendLockedWith(op.meta, nil)
 		if err != nil {

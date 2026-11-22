@@ -342,8 +342,11 @@ const (
 // that needs the chunks now (a new record width, an extension reset) loads
 // them instead.
 func (fs *folderState) deferRecord(kind mailindex.TxType, payload []byte, st *replayState) (bool, error) {
-	if fs.recs == nil || fs.loading || fs.recs.AllLoaded() {
+	if fs.recs == nil || fs.loading {
 		return false, nil
+	}
+	if fs.recs.AllLoaded() {
+		return false, fs.catchUpPending()
 	}
 	var unknown uint8
 	switch kind {
@@ -457,6 +460,9 @@ func (fs *folderState) uidTaken(uid uint32) (bool, error) {
 	if fs.recs == nil {
 		return false, nil
 	}
+	if err := fs.catchUpPending(); err != nil {
+		return false, err
+	}
 	if !fs.recs.AllLoaded() {
 		if _, appended := fs.pendingUIDs[uid]; !appended && fs.baseNextUID != 0 && uid >= fs.baseNextUID {
 			return false, nil
@@ -467,4 +473,19 @@ func (fs *folderState) uidTaken(uid uint32) (bool, error) {
 	}
 	_, taken := fs.recs.SeqOfUID(uid)
 	return taken, nil
+}
+
+// catchUpPending applies a writer's deferred records once its chunks are all
+// loaded: a fork's chunks load when another holder of the shared image reads
+// them, and a record replayed before the pending ones would apply out of
+// journal order, so an expunge met no record and a deferred append brought the
+// uid back (#2663).
+func (fs *folderState) catchUpPending() error {
+	if fs.isView || fs.loading || fs.recs == nil || !fs.recs.AllLoaded() ||
+		len(fs.pending) == 0 && fs.countersUnknown == 0 {
+		return nil
+	}
+	fs.loading = true
+	defer func() { fs.loading = false }()
+	return fs.applyPending()
 }

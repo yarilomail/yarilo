@@ -368,8 +368,9 @@ func TestAWriterWithChunksUnloadedTakesARewrittenBase(t *testing.T) {
 	}
 }
 
-// An append below the last uid, as a caller naming its own uids may make,
-// takes its place in the uid order the chunks' searches stand on.
+// An append below the last uid, as two allocations committed out of order
+// make, takes its place in the uid order the chunks' searches stand on; a uid
+// the folder gave up is not taken again (#2663).
 func TestAnAppendBelowTheLastUIDTakesItsPlace(t *testing.T) {
 	home := movedFolder(t, mailindex.ChunkRecords)
 	h, f := acceptOpen(t, home)
@@ -386,7 +387,16 @@ func TestAnAppendBelowTheLastUIDTakesItsPlace(t *testing.T) {
 	if _, err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	for _, uid := range []uint32{uint32(mailindex.ChunkRecords) + 5, 40} {
+	if err := h.AppendMessage(f.ID, &mailbox.MessageMeta{UID: 40, Size: 10}); !errors.Is(err, mailbox.ErrUIDNotIssued) {
+		t.Fatalf("the expunged uid 40 was taken again: %v", err)
+	}
+	var below, last uint32
+	for _, p := range []*uint32{&below, &last} {
+		if *p, err = h.AllocateUID(f.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, uid := range []uint32{last, below} {
 		if err := h.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10, Flags: []string{`\Flagged`}}); err != nil {
 			t.Fatal(err)
 		}
@@ -397,15 +407,15 @@ func TestAnAppendBelowTheLastUIDTakesItsPlace(t *testing.T) {
 	if !held {
 		t.Fatal("the writer holds no chunks")
 	}
-	msgs, err := h.GetMessages(f.ID, mailbox.SeqSet{{From: 39, To: 41}})
-	if err != nil || len(msgs) != 3 || msgs[1].UID != 40 || len(msgs[1].Flags) == 0 {
-		t.Fatalf("uids 39 to 41 read back as %+v: %v", msgs, err)
+	msgs, err := h.GetMessages(f.ID, mailbox.SeqSet{{From: below - 1, To: last}})
+	if err != nil || len(msgs) != 3 || msgs[1].UID != below || msgs[2].UID != last || len(msgs[1].Flags) == 0 {
+		t.Fatalf("uids %d to %d read back as %+v: %v", below-1, last, msgs, err)
 	}
-	if err := h.UpdateFlags(f.ID, 40, []string{`\Seen`}, nil); err != nil {
+	if err := h.UpdateFlags(f.ID, below, []string{`\Seen`}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := metaOfIdx(t, h, f.ID, 40); got == nil || got.Flags[0] != `\Seen` {
-		t.Errorf("uid 40 after a change: %+v", got)
+	if got := metaOfIdx(t, h, f.ID, below); got == nil || got.Flags[0] != `\Seen` {
+		t.Errorf("uid %d after a change: %+v", below, got)
 	}
 }
 

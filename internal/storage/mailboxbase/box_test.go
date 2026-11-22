@@ -231,9 +231,10 @@ func (l *countingLocker) HoldsResource(resource string) (locks.HoldMode, bool) {
 	return mode, ok
 }
 
-// A stop between the two steps leaves a file with no record, which the next
-// reconcile re-files, and never a record naming a file that is gone (#1690).
-func TestTheRecordGoesBeforeTheBody(t *testing.T) {
+// On maildir the body goes first: a stop between the two steps leaves a record
+// whose file is gone, which the next reconcile drops, and never a file whose
+// uid the folder gave up (#2663, reversing #1690 for this store).
+func TestTheBodyGoesBeforeTheRecord(t *testing.T) {
 	box, f := openBox(t, "u6@example.com")
 	const body = "From: a@b\r\nSubject: order\r\n\r\nbody\r\n"
 	uid, err := box.Index().AllocateUID(f.ID)
@@ -256,7 +257,7 @@ func TestTheRecordGoesBeforeTheBody(t *testing.T) {
 	// What the folder holds at the moment between the two steps.
 	var recordsThen int
 	var bodyThen bool
-	disarm := mailboxbase.SetTestAfterRecordExpunged(func() {
+	disarm := mailboxbase.SetTestAfterBodyRemoved(func() {
 		msgs, gerr := box.Index().GetMessages(f.ID, mailbox.SeqSet{})
 		if gerr != nil {
 			t.Error(gerr)
@@ -273,11 +274,11 @@ func TestTheRecordGoesBeforeTheBody(t *testing.T) {
 	if failed != 0 || len(removed) != 1 {
 		t.Fatalf("removed %v, failed %d", removed, failed)
 	}
-	if recordsThen != 0 {
-		t.Errorf("at the stop the folder still held %d records: the body went first", recordsThen)
+	if recordsThen != 1 {
+		t.Errorf("at the stop the folder held %d records, want its one: the record went first", recordsThen)
 	}
-	if !bodyThen {
-		t.Error("at the stop the body was already gone: the body went first")
+	if bodyThen {
+		t.Error("at the stop the body was still there: the record went first")
 	}
 }
 

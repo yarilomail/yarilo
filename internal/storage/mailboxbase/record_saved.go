@@ -17,17 +17,15 @@ func RecordSaved(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint64
 // file, so the caller need not ask the driver for it (#2639); empty when the
 // driver names no file by uid.
 func RecordSavedNamed(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint64, folder, saved string, m *mailbox.MessageMeta) (string, error) {
-	// The store's UID space before the uid: a delivery reaching a store first
-	// takes uids its own list already gave away otherwise (#2083).
-	if al, ok := mailbox.Driver(box).(mailbox.UIDSpaceAligningStore); ok {
-		if _, err := al.AlignUIDSpace(idx, folderID, folder); err != nil {
-			return "", err
-		}
-	}
 	stampStorageKey(box, folder, saved, m)
 	namer, isNamer := mailbox.Driver(box).(mailbox.UIDNamer)
 	appender, isAppender := idx.(mailbox.NamingAppender)
 	if !isNamer || !isAppender {
+		if al, ok := mailbox.Driver(box).(mailbox.UIDSpaceAligningStore); ok {
+			if _, err := al.AlignUIDSpace(idx, folderID, folder); err != nil {
+				return "", err
+			}
+		}
 		return "", idx.AllocateAndAppend(folderID, m)
 	}
 	var final string
@@ -49,6 +47,13 @@ func RecordSavedNamed(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID u
 		return named, nil, nil
 	}
 	err := inSaveSection(box, folder, func() error {
+		// The store's UID space before the uid, in the section that hands it
+		// out: its rows first, then its next uid (#2083, #2663).
+		if al, ok := mailbox.Driver(box).(mailbox.UIDSpaceAligningStore); ok {
+			if _, err := al.AlignUIDSpaceHeld(idx, folderID, folder); err != nil {
+				return err
+			}
+		}
 		if sa, ok := idx.(mailbox.StampingAppender); ok {
 			return sa.AllocateAndAppendStamped(folderID, m, name)
 		}

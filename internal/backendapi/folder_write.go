@@ -314,7 +314,7 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 	}
 	scoped := len(req.UIDs) > 0
 
-	var expunged []uint32
+	var doomed []*mailbox.MessageMeta
 	for _, m := range msgs {
 		if !hasDeletedFlag(m.Flags) {
 			continue
@@ -324,15 +324,21 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if err := bundle.idx.ExpungeMessage(folder.ID, m.UID); err != nil {
-			slog.Warn("backendapi/folder: expunge message failed",
-				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
-			continue
-		}
-		if err := bundle.mbox.RemoveMessage(req.Folder, m); err != nil {
-			slog.Warn("backendapi/folder: remove blob failed",
-				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
-		}
+		doomed = append(doomed, m)
+	}
+	// The protocols' expunge: under the folder hold, and in the store's order
+	// of body and record (#2663).
+	removed, failed, err := bundle.mbox.ExpungeMarked(folder, req.Folder, doomed)
+	if err != nil {
+		apiError(w, "expunge: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if failed > 0 {
+		slog.Warn("backendapi/folder: some messages were not expunged",
+			"user", req.User, "folder", req.Folder, "failed", failed)
+	}
+	expunged := make([]uint32, 0, len(removed))
+	for _, m := range removed {
 		expunged = append(expunged, m.UID)
 		s.emitFolderEvent(bundle, req.Folder, locks.EventExpunged, m.UID)
 	}
