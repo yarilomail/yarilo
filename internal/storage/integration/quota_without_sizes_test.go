@@ -64,10 +64,15 @@ func stripRecordSizes(t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rec := range fi.Records {
-		delete(rec.Ext, "vsize")
+	in := fi.ToRecreateInput(path)
+	in.RecordBytes = nil
+	layout := fi.Records.Layout()
+	for i := 0; i < fi.Records.Len(); i++ {
+		rec := fi.Records.Raw(i)
+		clear(layout.ExtOf(rec, "vsize"))
+		in.RecordBytes = append(in.RecordBytes, rec...)
 	}
-	if _, err := mailindex.Recreate(fi.ToRecreateInput(path)); err != nil {
+	if _, err := mailindex.Recreate(in); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -9,11 +9,7 @@ import (
 )
 
 func cowRecord(l RecordLayout, uid uint32, flags MailFlag) []byte {
-	raw := make([]byte, l.RecordSize)
-	if err := EncodeRecord(raw, l, &Record{UID: uid, Flags: flags, Ext: map[string][]byte{}}); err != nil {
-		panic(err)
-	}
-	return raw
+	return l.NewRecord(uid, flags)
 }
 
 func sameAsModel(t *testing.T, what string, r *Records, model [][]byte) {
@@ -35,7 +31,7 @@ func TestRecordsChangeAsTheModelAndSnapshotsStayFrozen(t *testing.T) {
 	l := chunkLayout(t)
 	gid, _ := l.ExtID("guid")
 	rng := rand.New(rand.NewPCG(1, 2))
-	r, err := ChunksFromRecords(chunkRecs(l, 2*ChunkRecords+5), l)
+	r, err := testChunks(l, chunkRecs(l, 2*ChunkRecords+5))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +116,7 @@ func TestRecordsChangeAsTheModelAndSnapshotsStayFrozen(t *testing.T) {
 // 1000th change in that generation copies no more than the first.
 func TestAChangeUnderASnapshotCopiesOneChunk(t *testing.T) {
 	l := chunkLayout(t)
-	r, err := ChunksFromRecords(chunkRecs(l, 4*ChunkRecords), l)
+	r, err := testChunks(l, chunkRecs(l, 4*ChunkRecords))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +152,7 @@ func TestAChangeUnderASnapshotCopiesOneChunk(t *testing.T) {
 func TestReadersNeverSeeAChangeHalfWritten(t *testing.T) {
 	l := chunkLayout(t)
 	gid, _ := l.ExtID("guid")
-	r, err := ChunksFromRecords(chunkRecs(l, 2*ChunkRecords), l)
+	r, err := testChunks(l, chunkRecs(l, 2*ChunkRecords))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +250,7 @@ func TestReadersNeverSeeAChangeHalfWritten(t *testing.T) {
 // other readers keep reading; its own chunks it then changes in place.
 func TestAForkNeverWritesTheRecordsItCameFrom(t *testing.T) {
 	l := chunkLayout(t)
-	base, err := ChunksFromRecords(chunkRecs(l, 3*ChunkRecords), l)
+	base, err := testChunks(l, chunkRecs(l, 3*ChunkRecords))
 	if err != nil {
 		t.Fatal(err)
 	}

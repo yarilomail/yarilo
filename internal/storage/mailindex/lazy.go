@@ -64,6 +64,7 @@ func OpenLazy(path string) (*File, *Records, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	parsed.Records = nil
 	size := int64(parsed.Layout.RecordSize)
 	body := st.Size() - int64(hdr.HeaderSize)
 	if body%size != 0 {
@@ -148,22 +149,6 @@ func readFull(rd io.ReaderAt, p []byte, off int64) error {
 		err = ErrShortRead
 	}
 	return fmt.Errorf("mailindex/lazy: %w: %w", ErrBaseMoved, err)
-}
-
-// Decode loads every chunk and decodes it into the map form.
-func (r *Records) Decode() ([]*Record, error) {
-	if err := r.LoadAll(); err != nil {
-		return nil, err
-	}
-	out := make([]*Record, r.n)
-	for i := range out {
-		rec, err := r.Record(i)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = &rec
-	}
-	return out, nil
 }
 
 // AllLoaded reports whether every chunk is in memory.

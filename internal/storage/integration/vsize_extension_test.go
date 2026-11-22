@@ -35,15 +35,13 @@ func stripVsizeExtension(t *testing.T, path string) {
 		t.Fatal("the folder has no vsize extension to strip; the fixture proves nothing")
 	}
 	f.Extensions = kept
-	for _, rec := range f.Records {
-		delete(rec.Ext, "vsize")
-	}
 	in := f.ToRecreateInput(path)
 	in.Extensions = kept
 	layout, lerr := mailindex.ComputeRecordLayout(kept)
 	if lerr != nil {
 		t.Fatal(lerr)
 	}
+	in.RecordBytes = f.Records.Reencode(layout).Bytes()
 	in.Header.RecordSize = layout.RecordSize
 	extBytes, eerr := mailindex.EncodeExtHeaders(layout.Extensions)
 	if eerr != nil {

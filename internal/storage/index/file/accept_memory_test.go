@@ -78,23 +78,22 @@ func acceptFolder(t *testing.T, n int) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl := base.Records[0]
-	recs := make([]*mailindex.Record, n)
-	for i := range recs {
-		r := &mailindex.Record{UID: uint32(i + 1), Flags: tmpl.Flags, Ext: map[string][]byte{}}
-		for k, v := range tmpl.Ext {
-			r.Ext[k] = append([]byte(nil), v...)
-		}
-		if g, ok := r.Ext[extNameGUID]; ok {
+	tmpl := base.Records.Raw(0)
+	layout := base.Records.Layout()
+	recs := make([]byte, 0, n*len(tmpl))
+	for i := 0; i < n; i++ {
+		r := append([]byte(nil), tmpl...)
+		binary.LittleEndian.PutUint32(r, uint32(i+1))
+		if g := layout.ExtOf(r, extNameGUID); g != nil {
 			binary.LittleEndian.PutUint32(g, uint32(i+1))
 		}
-		recs[i] = r
+		recs = append(recs, r...)
 	}
 	hdr := base.Header
 	hdr.NextUID = uint32(n + 1)
 	hdr.MessagesCount = uint32(n)
 	hdr.SeenMessagesCount = uint32(n)
-	if _, err := mailindex.Recreate(mailindex.RecreateInput{Path: path, Header: hdr, Extensions: base.Extensions, Records: recs}); err != nil {
+	if _, err := mailindex.Recreate(mailindex.RecreateInput{Path: path, Header: hdr, Extensions: base.Extensions, RecordBytes: recs}); err != nil {
 		t.Fatal(err)
 	}
 	// The log describes the one-message base; this one is the whole folder.

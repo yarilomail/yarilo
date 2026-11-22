@@ -10,7 +10,7 @@ import (
 // sizeof(uint8).
 const RecordMinSize = 5
 
-// MailFlag bits live in Record.Flags.
+// MailFlag bits live in a record's flags byte.
 type MailFlag uint8
 
 // IMAP mail-flags subset stored in the base record. Order/values
@@ -37,82 +37,45 @@ const (
 // bits are NOT in this mask - they're per-driver internal state.
 const FlagsMask MailFlag = FlagAnswered | FlagFlagged | FlagDeleted | FlagSeen | FlagDraft
 
-// Record is one logical row in the index. Base fields are
-// always present; extension bytes appear in the on-disk record
-// according to the per-extension (record_offset, record_size)
-// pinned at EXT_INTRO time - see Extension and RecordLayout.
-//
-// Ext is keyed by extension name; each value is exactly
-// extension.RecordSize bytes (or nil to mean "extension
-// registered but no per-record bytes for this record yet" - the
-// reader fills missing entries with zero-byte slices of the
-// right length).
-type Record struct {
-	UID   uint32
-	Flags MailFlag
-	Ext   map[string][]byte
+// NewRecord is a zeroed record of the layout carrying uid and flags; an
+// extension's bytes are zero until SetExt writes them, as for a record that
+// predates the extension.
+func (l RecordLayout) NewRecord(uid uint32, flags MailFlag) []byte {
+	rec := make([]byte, l.RecordSize)
+	binary.LittleEndian.PutUint32(rec[0:], uid)
+	rec[4] = uint8(flags)
+	return rec
 }
 
-// EncodeRecord writes one record into buf according to layout.
-// buf MUST be exactly layout.RecordSize bytes long; the caller
-// is responsible for sizing the destination buffer (typical
-// pattern: pre-allocate a flat []byte of N*RecordSize for all
-// records, then slice into chunks for each Record).
-//
-// Missing extension bytes (Ext[name] == nil) are written as
-// zeros - matches the canonical behaviour where a record
-// predates the extension's introduction.
-func EncodeRecord(buf []byte, layout RecordLayout, rec *Record) error {
-	if uint32(len(buf)) != layout.RecordSize {
-		return fmt.Errorf("mailindex: encode record: buf %d, layout %d: %w", len(buf), layout.RecordSize, ErrCorrupted)
+// RecordUID and RecordFlags read the base fields of a record in any layout.
+func RecordUID(rec []byte) uint32     { return binary.LittleEndian.Uint32(rec[0:]) }
+func RecordFlags(rec []byte) MailFlag { return MailFlag(rec[4]) }
+
+// ExtOf is the named extension's bytes in rec, a view into it; nil when the
+// layout carries no record bytes for that name.
+func (l RecordLayout) ExtOf(rec []byte, name string) []byte {
+	id, ok := l.ExtID(name)
+	if !ok {
+		return nil
 	}
-	for i := range buf {
-		buf[i] = 0
+	e := l.Extensions[id]
+	return rec[e.RecordOffset : e.RecordOffset+e.RecordSize]
+}
+
+// SetExt writes data as the named extension's bytes in rec; data must be the
+// extension's record size.
+func (l RecordLayout) SetExt(rec []byte, name string, data []byte) error {
+	if uint32(len(rec)) != l.RecordSize {
+		return fmt.Errorf("mailindex: set ext: record %d bytes, layout %d: %w", len(rec), l.RecordSize, ErrCorrupted)
 	}
-	binary.LittleEndian.PutUint32(buf[0:], rec.UID)
-	buf[4] = uint8(rec.Flags)
-	for _, ext := range layout.Extensions {
-		if ext.RecordSize == 0 {
-			continue
-		}
-		data, ok := rec.Ext[ext.Name]
-		if !ok || len(data) == 0 {
-			continue
-		}
-		if uint16(len(data)) != ext.RecordSize {
-			return fmt.Errorf("mailindex: encode record: ext %q has %d bytes, want %d: %w",
-				ext.Name, len(data), ext.RecordSize, ErrCorrupted)
-		}
-		copy(buf[ext.RecordOffset:ext.RecordOffset+ext.RecordSize], data)
+	id, ok := l.ExtID(name)
+	if !ok {
+		return fmt.Errorf("mailindex: set ext: layout carries no record bytes for %q: %w", name, ErrCorrupted)
 	}
+	e := l.Extensions[id]
+	if uint16(len(data)) != e.RecordSize {
+		return fmt.Errorf("mailindex: set ext: %q has %d bytes, want %d: %w", name, len(data), e.RecordSize, ErrCorrupted)
+	}
+	copy(rec[e.RecordOffset:], data)
 	return nil
-}
-
-// DecodeRecord parses one record from buf using layout. buf MUST
-// be exactly layout.RecordSize bytes long.
-//
-// The returned Record's Ext is populated for every extension
-// declared in the layout, with each value being a fresh
-// extension.RecordSize-byte slice (not a sub-slice of buf - the
-// caller can mutate either independently).
-func DecodeRecord(buf []byte, layout RecordLayout) (Record, error) {
-	if uint32(len(buf)) != layout.RecordSize {
-		return Record{}, fmt.Errorf("mailindex: decode record: buf %d, layout %d: %w", len(buf), layout.RecordSize, ErrCorrupted)
-	}
-	rec := Record{
-		UID:   binary.LittleEndian.Uint32(buf[0:]),
-		Flags: MailFlag(buf[4]),
-	}
-	if len(layout.Extensions) > 0 {
-		rec.Ext = make(map[string][]byte, len(layout.Extensions))
-		for _, ext := range layout.Extensions {
-			if ext.RecordSize == 0 {
-				continue
-			}
-			data := make([]byte, ext.RecordSize)
-			copy(data, buf[ext.RecordOffset:ext.RecordOffset+ext.RecordSize])
-			rec.Ext[ext.Name] = data
-		}
-	}
-	return rec, nil
 }

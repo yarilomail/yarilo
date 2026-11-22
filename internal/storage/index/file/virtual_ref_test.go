@@ -122,8 +122,8 @@ func TestTheIndexARunningReferenceWroteIsRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Records) != 116 {
-		t.Errorf("the fixture holds %d records, and the reference counted 116", len(f.Records))
+	if f.Records.Len() != 116 {
+		t.Errorf("the fixture holds %d records, and the reference counted 116", f.Records.Len())
 	}
 	ext := findExt(f.Extensions, extNameVirtual)
 	if ext == nil {

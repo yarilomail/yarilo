@@ -442,7 +442,7 @@ func (fs *folderState) refreshExtStateFromDisk() error {
 		return nil
 	}
 	// The typed copies come from the fresh headers; fs.file keeps its own
-	// list, describing the layout its in-memory records were decoded with.
+	// list, describing the layout its records in memory are in.
 	saved := fs.file.Extensions
 	fs.file.Extensions = exts
 	err = fs.refreshExtState()
@@ -998,7 +998,7 @@ func (fs *folderState) flush() error {
 		if err := fs.reencodeRecords(); err != nil {
 			return err
 		}
-		ri.Records, ri.RecordBytes = nil, fs.recs.Bytes()
+		ri.RecordBytes = fs.recs.Bytes()
 	}
 	if fs.volatileDir != "" {
 		if err := os.MkdirAll(fs.volatileDir, 0o700); err != nil {

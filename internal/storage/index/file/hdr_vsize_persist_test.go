@@ -35,7 +35,7 @@ func stripHdrVsizeExt(t *testing.T, path string) {
 	mf.Header.RecordSize = layout.RecordSize
 	mf.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	if _, err := mailindex.Recreate(mailindex.RecreateInput{
-		Path: path, Header: mf.Header, Extensions: mf.Extensions, Records: mf.Records,
+		Path: path, Header: mf.Header, Extensions: mf.Extensions, RecordBytes: mf.Records.Reencode(layout).Bytes(),
 	}); err != nil {
 		t.Fatalf("recreate stripped: %v", err)
 	}

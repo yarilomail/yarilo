@@ -2,6 +2,7 @@ package mailindex
 
 import (
 	"encoding/binary"
+	"fmt"
 )
 
 // TxType is the type-enum portion of a transaction-log record's type field
@@ -422,16 +423,17 @@ func EncodeTxBoundaryPayload(rec TxBoundary) []byte {
 	return out
 }
 
-// EncodeTxAppendPayload emits the payload for APPEND. Each record encodes a
-// full Record (base + extensions) using the supplied layout; the reader slices
-// the payload by layout.RecordSize (learned from earlier EXT_INTRO records).
-func EncodeTxAppendPayload(layout RecordLayout, recs []*Record) ([]byte, error) {
+// EncodeTxAppendPayload emits the payload for APPEND: the records as they lie
+// in layout, which the reader slices by layout.RecordSize (learned from earlier
+// EXT_INTRO records).
+func EncodeTxAppendPayload(layout RecordLayout, recs [][]byte) ([]byte, error) {
 	stride := int(layout.RecordSize)
-	out := make([]byte, stride*len(recs))
+	out := make([]byte, 0, stride*len(recs))
 	for i, rec := range recs {
-		if err := EncodeRecord(out[i*stride:(i+1)*stride], layout, rec); err != nil {
-			return nil, err
+		if len(rec) != stride {
+			return nil, fmt.Errorf("mailindex: append payload: record %d has %d bytes, layout %d: %w", i, len(rec), stride, ErrCorrupted)
 		}
+		out = append(out, rec...)
 	}
 	return out, nil
 }

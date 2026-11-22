@@ -293,11 +293,13 @@ func TestEncodeTxAppendPayload(t *testing.T) {
 	layout, _ := ComputeRecordLayout([]Extension{
 		{Name: "modseq", RecordSize: 8, RecordAlign: 8},
 	})
-	recs := []*Record{
+	recs := []testRec{
 		{UID: 1, Flags: FlagSeen, Ext: map[string][]byte{"modseq": {1, 2, 3, 4, 5, 6, 7, 8}}},
 		{UID: 2, Flags: FlagFlagged, Ext: map[string][]byte{"modseq": {9, 8, 7, 6, 5, 4, 3, 2}}},
 	}
-	payload, err := EncodeTxAppendPayload(layout, recs)
+	raw := encodeTestRecs(layout, recs)
+	stride := int(layout.RecordSize)
+	payload, err := EncodeTxAppendPayload(layout, [][]byte{raw[:stride], raw[stride:]})
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -306,15 +308,21 @@ func TestEncodeTxAppendPayload(t *testing.T) {
 	}
 	// Decode each slice back and verify.
 	for i, want := range recs {
-		got, err := DecodeRecord(payload[i*int(layout.RecordSize):(i+1)*int(layout.RecordSize)], layout)
-		if err != nil {
-			t.Fatalf("decode rec %d: %v", i, err)
+		got := payload[i*stride : (i+1)*stride]
+		if RecordUID(got) != want.UID || RecordFlags(got) != want.Flags {
+			t.Errorf("rec %d: got UID=%d Flags=0x%02x", i, RecordUID(got), RecordFlags(got))
 		}
-		if got.UID != want.UID || got.Flags != want.Flags {
-			t.Errorf("rec %d: got UID=%d Flags=0x%02x", i, got.UID, got.Flags)
-		}
-		if !bytes.Equal(got.Ext["modseq"], want.Ext["modseq"]) {
+		if !bytes.Equal(layout.ExtOf(got, "modseq"), want.Ext["modseq"]) {
 			t.Errorf("rec %d modseq drift", i)
 		}
+	}
+}
+
+// A record of another layout's size is refused, not sliced into the payload,
+// where the reader would stride across record boundaries.
+func TestEncodeTxAppendPayloadRefusesARecordOfAnotherSize(t *testing.T) {
+	layout, _ := ComputeRecordLayout([]Extension{{Name: "modseq", RecordSize: 8, RecordAlign: 8}})
+	if _, err := EncodeTxAppendPayload(layout, [][]byte{layout.NewRecord(1, 0), make([]byte, 5)}); !errors.Is(err, ErrCorrupted) {
+		t.Fatalf("got %v, want ErrCorrupted", err)
 	}
 }

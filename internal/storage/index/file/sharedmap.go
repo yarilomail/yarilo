@@ -41,8 +41,8 @@ type indexMap struct {
 	prev *indexMap
 
 	// w writes the map's chunks for the next version; view.recs is its
-	// snapshot, released once the map is neither current nor read. Nil for
-	// decoded records and for a view on the shared image.
+	// snapshot, released once the map is neither current nor read. Nil for a
+	// view with no records and for a view on the shared image.
 	w        *mailindex.Records
 	released bool
 	// broken says a fold onto w stopped part way: w holds some of a tail, so
@@ -182,8 +182,8 @@ func (fs *folderState) releaseView(m *indexMap) {
 // snapshot of it, and the next fold writes on.
 func (m *indexMap) publishRecords() {
 	if m.view.recs == nil || m.img != nil && m.view.recs == m.img.recs || len(m.view.pending) > 0 {
-		// Decoded, the shared image's records, which nobody writes, or a
-		// view's own with pending, which ensureRecords replaces.
+		// No records, the shared image's, which nobody writes, or a view's
+		// own with pending, which ensureRecords replaces.
 		return
 	}
 	m.w = m.view.recs
@@ -349,8 +349,8 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 			target.forkRecords()
 		}
 	case shared:
-		// Somebody is reading these decoded records: they stay as they are,
-		// and the fold goes onto a copy (the reference's move-to-private).
+		// Somebody is reading these records: they stay as they are, and the
+		// fold goes onto a copy (the reference's move-to-private).
 		mapCopies.add()
 		target = from.view.sibling()
 		target.forkRecords()
@@ -361,8 +361,7 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 		aerr = target.refreshExtState()
 	}
 	if aerr != nil {
-		// Even once the replay turned to decoded records, what it wrote
-		// before stays in the writer.
+		// What the replay wrote before it stopped stays in the writer.
 		if onWriter {
 			fs.mapMu.Lock()
 			from.broken = true

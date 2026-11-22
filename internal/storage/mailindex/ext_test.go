@@ -128,71 +128,59 @@ func TestExtHeaderRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRecordEncodeDecodeRoundTrip(t *testing.T) {
-	exts := []Extension{
+func TestRecordSetExtRoundTrips(t *testing.T) {
+	layout, err := ComputeRecordLayout([]Extension{
 		{Name: "modseq", RecordSize: 8, RecordAlign: 8},
 		{Name: "keywords", RecordSize: 4, RecordAlign: 4},
-	}
-	layout, err := ComputeRecordLayout(exts)
+	})
 	if err != nil {
 		t.Fatalf("compute: %v", err)
 	}
-	rec := Record{
-		UID:   42,
-		Flags: FlagSeen | FlagFlagged,
-		Ext: map[string][]byte{
-			"modseq":   {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
-			"keywords": {0xAA, 0xBB, 0xCC, 0xDD},
-		},
+	want := map[string][]byte{
+		"modseq":   {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+		"keywords": {0xAA, 0xBB, 0xCC, 0xDD},
 	}
-	buf := make([]byte, layout.RecordSize)
-	if err := EncodeRecord(buf, layout, &rec); err != nil {
-		t.Fatalf("encode: %v", err)
+	rec := layout.NewRecord(42, FlagSeen|FlagFlagged)
+	for name, data := range want {
+		if err := layout.SetExt(rec, name, data); err != nil {
+			t.Fatalf("set %q: %v", name, err)
+		}
 	}
-	got, err := DecodeRecord(buf, layout)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
+	if RecordUID(rec) != 42 || RecordFlags(rec) != FlagSeen|FlagFlagged {
+		t.Errorf("base fields drift: UID=%d Flags=0x%02x", RecordUID(rec), RecordFlags(rec))
 	}
-	if got.UID != rec.UID || got.Flags != rec.Flags {
-		t.Errorf("base fields drift: got UID=%d Flags=0x%02x", got.UID, got.Flags)
-	}
-	for name, want := range rec.Ext {
-		if !bytes.Equal(got.Ext[name], want) {
-			t.Errorf("ext %q drift: got % x, want % x", name, got.Ext[name], want)
+	for name, data := range want {
+		if !bytes.Equal(layout.ExtOf(rec, name), data) {
+			t.Errorf("ext %q drift: got % x, want % x", name, layout.ExtOf(rec, name), data)
 		}
 	}
 }
 
-func TestRecordEncodeMissingExtIsZeroed(t *testing.T) {
-	exts := []Extension{
-		{Name: "modseq", RecordSize: 8, RecordAlign: 8},
-	}
-	layout, _ := ComputeRecordLayout(exts)
-	rec := Record{UID: 1, Flags: FlagSeen} // no Ext entries
-	buf := make([]byte, layout.RecordSize)
-	if err := EncodeRecord(buf, layout, &rec); err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	for i := 5; i < int(layout.RecordSize); i++ {
-		if buf[i] != 0 {
-			t.Errorf("byte %d=0x%02x, want 0 (missing ext data must be zeroed)", i, buf[i])
+func TestANewRecordHasItsExtensionsZeroed(t *testing.T) {
+	layout, _ := ComputeRecordLayout([]Extension{{Name: "modseq", RecordSize: 8, RecordAlign: 8}})
+	rec := layout.NewRecord(1, FlagSeen)
+	for i := RecordMinSize; i < int(layout.RecordSize); i++ {
+		if rec[i] != 0 {
+			t.Errorf("byte %d=0x%02x, want 0 (an unset extension reads as zero)", i, rec[i])
 		}
 	}
 }
 
-func TestRecordEncodeRejectsExtSizeMismatch(t *testing.T) {
-	exts := []Extension{
-		{Name: "modseq", RecordSize: 8, RecordAlign: 8},
+func TestSetExtRefusesWhatTheLayoutDoesNotFit(t *testing.T) {
+	layout, _ := ComputeRecordLayout([]Extension{{Name: "modseq", RecordSize: 8, RecordAlign: 8}})
+	tests := []struct {
+		name string
+		rec  []byte
+		ext  string
+		data []byte
+	}{
+		{"short data", layout.NewRecord(1, 0), "modseq", []byte{1, 2, 3}},
+		{"unknown extension", layout.NewRecord(1, 0), "guid", make([]byte, 16)},
+		{"record of another size", make([]byte, layout.RecordSize+4), "modseq", make([]byte, 8)},
 	}
-	layout, _ := ComputeRecordLayout(exts)
-	rec := Record{
-		UID:   1,
-		Flags: FlagSeen,
-		Ext:   map[string][]byte{"modseq": {0x01, 0x02, 0x03}}, // 3 bytes, want 8
-	}
-	buf := make([]byte, layout.RecordSize)
-	err := EncodeRecord(buf, layout, &rec)
-	if !errors.Is(err, ErrCorrupted) {
-		t.Errorf("got %v, want ErrCorrupted", err)
+	for _, tc := range tests {
+		if err := layout.SetExt(tc.rec, tc.ext, tc.data); !errors.Is(err, ErrCorrupted) {
+			t.Errorf("%s: got %v, want ErrCorrupted", tc.name, err)
+		}
 	}
 }

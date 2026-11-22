@@ -112,11 +112,22 @@ func encodedByMailindex(t *testing.T, home string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := mailindex.ChunksFromRecords(f.Records, f.Layout)
-	if err != nil {
-		t.Fatal(err)
+	// Field by field into fresh records, so a byte the writer left outside
+	// every field is not carried over.
+	var out []byte
+	for i := 0; i < f.Records.Len(); i++ {
+		rec := f.Layout.NewRecord(f.Records.UID(i), f.Records.Flags(i))
+		for _, ext := range f.Layout.Extensions {
+			if ext.RecordSize == 0 {
+				continue
+			}
+			if err := f.Layout.SetExt(rec, ext.Name, f.Records.ExtNamed(i, ext.Name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out = append(out, rec...)
 	}
-	return r.Bytes()
+	return out
 }
 
 // A base the writer writes from chunks holds the records mailindex's encoder
@@ -136,16 +147,16 @@ func TestTheWriterWritesTheSameBaseFromChunks(t *testing.T) {
 				t.Fatal(err)
 			}
 			var seen, deleted uint32
-			for _, rec := range f.Records {
-				if rec.Flags&mailindex.FlagSeen != 0 {
+			for i := 0; i < f.Records.Len(); i++ {
+				if f.Records.Flags(i)&mailindex.FlagSeen != 0 {
 					seen++
 				}
-				if rec.Flags&mailindex.FlagDeleted != 0 {
+				if f.Records.Flags(i)&mailindex.FlagDeleted != 0 {
 					deleted++
 				}
 			}
-			if counters[1] != uint32(len(f.Records)) || counters[2] != seen || counters[3] != deleted {
-				t.Errorf("header counters %v for %d records, %d seen, %d deleted", counters, len(f.Records), seen, deleted)
+			if counters[1] != uint32(f.Records.Len()) || counters[2] != seen || counters[3] != deleted {
+				t.Errorf("header counters %v for %d records, %d seen, %d deleted", counters, f.Records.Len(), seen, deleted)
 			}
 			if want := developDigest(f); digest != want {
 				t.Errorf("records digest %x, develop's %x", digest, want)
@@ -277,9 +288,9 @@ func developDigest(f *mailindex.File) uint64 {
 	}
 	var scratch [8]byte
 	var zero [1]byte
-	for _, rec := range f.Records {
-		binary.LittleEndian.PutUint32(scratch[0:4], rec.UID)
-		binary.LittleEndian.PutUint32(scratch[4:8], uint32(rec.Flags))
+	for i := 0; i < f.Records.Len(); i++ {
+		binary.LittleEndian.PutUint32(scratch[0:4], f.Records.UID(i))
+		binary.LittleEndian.PutUint32(scratch[4:8], uint32(f.Records.Flags(i)))
 		write(scratch[:])
 		// Hashed as on disk: an unset extension is its width in zeros, and one
 		// holding no record bytes is not part of a record at all.
@@ -288,7 +299,7 @@ func developDigest(f *mailindex.File) uint64 {
 				continue
 			}
 			write([]byte(ext.Name))
-			b := rec.Ext[ext.Name]
+			b := f.Records.ExtNamed(i, ext.Name)
 			if len(b) > int(ext.RecordSize) {
 				b = b[:ext.RecordSize]
 			}

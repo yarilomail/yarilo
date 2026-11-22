@@ -18,11 +18,13 @@ func lazyBase(t *testing.T, path string, n int, flags MailFlag) { //nolint:unpar
 	}
 	f.Header.NextUID = uint32(n + 1)
 	f.Header.MessagesCount = uint32(n)
-	for i := 0; i < n; i++ {
+	recs := make([]testRec, n)
+	for i := range recs {
 		g := make([]byte, 16)
 		g[0] = byte(i)
-		f.Records = append(f.Records, &Record{UID: uint32(i + 1), Flags: flags, Ext: map[string][]byte{"guid": g}})
+		recs[i] = testRec{UID: uint32(i + 1), Flags: flags, Ext: map[string][]byte{"guid": g}}
 	}
+	setTestRecs(f, recs)
 	if _, err := Recreate(f.ToRecreateInput(path)); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestLazyRecordsReadAsTheBaseHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	if f.Records != nil || r.Len() != n {
-		t.Fatalf("lazy open decoded %d records, holds %d of %d", len(f.Records), r.Len(), n)
+		t.Fatalf("lazy open read records into the file, holds %d of %d", r.Len(), n)
 	}
 	if err := r.Load(ChunkRecords+3, ChunkRecords+4); err != nil {
 		t.Fatal(err)
@@ -52,13 +54,12 @@ func TestLazyRecordsReadAsTheBaseHolds(t *testing.T) {
 			t.Errorf("chunk %d loaded %v after a load of one record of chunk 1", ci, r.Loaded(ci))
 		}
 	}
-	got, err := r.Decode()
-	if err != nil {
+	if err := r.LoadAll(); err != nil {
 		t.Fatal(err)
 	}
-	for i := range got {
-		if got[i].UID != whole.Records[i].UID || got[i].Flags != whole.Records[i].Flags || !bytes.Equal(got[i].Ext["guid"], whole.Records[i].Ext["guid"]) {
-			t.Fatalf("record %d: %+v, want %+v", i, got[i], whole.Records[i])
+	for i := 0; i < n; i++ {
+		if !bytes.Equal(r.Raw(i), whole.Records.Raw(i)) {
+			t.Fatalf("record %d: % x, want % x", i, r.Raw(i), whole.Records.Raw(i))
 		}
 	}
 }
