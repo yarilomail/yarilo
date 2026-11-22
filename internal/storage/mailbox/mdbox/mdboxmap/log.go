@@ -96,6 +96,7 @@ func (m *Map) openLogLocked() (*os.File, error) {
 	}
 	m.logLineage = seq
 	m.logSize = mailindex.LogHeaderSize
+	m.logInfo, _ = f.Stat()
 	return f, nil
 }
 
@@ -207,7 +208,7 @@ func (m *Map) writeLogTxLocked(txType mailindex.TxType, payload []byte) error {
 		return fmt.Errorf("mdboxmap/log: write: %w", err)
 	}
 	if st, err := os.Stat(m.logPath()); err == nil {
-		m.logSize = st.Size()
+		m.logSize, m.logInfo = st.Size(), st
 	}
 	return nil
 }
@@ -249,47 +250,50 @@ func encMapLogRec(txType mailindex.TxType, payload []byte) ([]byte, error) {
 }
 
 // replayFromPersistedLocked replays what the base lacks, by lineage: its own log
-// whole, the folded one past its offset, anything else not at all.
+// whole, the folded one past its offset, anything else not at all. The lineage
+// is read through the descriptor the replay reads: a fold between two opens
+// pairs one file's offset with another's records (#2660).
 func (m *Map) replayFromPersistedLocked() (int64, error) {
-	seq, _, err := m.logIdentityLocked()
-	if err != nil {
-		return 0, err
-	}
-	if seq == 0 {
-		return 0, nil
-	}
-	if m.onDisk == FormatV1 {
-		// No lineage to compare against: v1 replays whole and lives with what
-		// that costs (see formatv1.go).
-		m.logLineage = seq
-		return m.replayLogLocked(mailindex.LogHeaderSize)
-	}
-	var from int64
-	switch seq {
-	case m.lineage:
-		from = mailindex.LogHeaderSize
-	case m.foldedLineage:
-		from = m.foldedOffset
-		if from < mailindex.LogHeaderSize {
-			from = mailindex.LogHeaderSize
+	start := time.Now()
+	defer func() { m.observePart("replay", time.Since(start)) }()
+	return m.replayLogFromLocked(0, func(lh mailindex.LogHeader, _ os.FileInfo) (int64, error) {
+		if m.onDisk == FormatV1 {
+			// No lineage to compare against: v1 replays whole (see formatv1.go).
+			m.logLineage = lh.FileSeq
+			return mailindex.LogHeaderSize, nil
 		}
-	default:
-		return 0, errLogIndexMismatch
-	}
-	m.logLineage = seq
-	return m.replayLogLocked(from)
+		var from int64
+		switch lh.FileSeq {
+		case m.lineage:
+			from = mailindex.LogHeaderSize
+		case m.foldedLineage:
+			from = max(m.foldedOffset, mailindex.LogHeaderSize)
+		default:
+			return 0, errLogIndexMismatch
+		}
+		m.logLineage = lh.FileSeq
+		return from, nil
+	})
 }
 
-// replayLogLocked folds transactions from fromOffset into the record area and
-// returns the new applied offset. A torn tail stops replay cleanly without
-// consuming the partial record. Caller holds m.mu.
+// replayLogLocked replays the log past fromOffset.
 func (m *Map) replayLogLocked(fromOffset int64) (off int64, err error) {
 	start := time.Now()
 	defer func() { m.observePart("replay", time.Since(start)) }()
-	return m.replayLogInnerLocked(fromOffset)
+	return m.replayLogFromLocked(fromOffset, nil)
 }
 
+// replayLogInnerLocked replays the log on disk from fromOffset, whatever file it is.
 func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
+	return m.replayLogFromLocked(fromOffset, nil)
+}
+
+// replayLogFromLocked folds transactions into the record area from the offset
+// choose picks for the log it opened (fromOffset when nil), and returns the new
+// applied offset. A torn tail stops replay cleanly without consuming the
+// partial record. Caller holds m.mu.
+func (m *Map) replayLogFromLocked(fromOffset int64, choose func(mailindex.LogHeader, os.FileInfo) (int64, error)) (int64, error) {
+	m.replayed = nil
 	f, err := os.Open(m.logPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return fromOffset, nil
@@ -298,6 +302,7 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 		return fromOffset, fmt.Errorf("mdboxmap/log: open: %w", err)
 	}
 	defer f.Close()
+	st, _ := f.Stat()
 
 	lh, err := mailindex.DecodeLogHeader(f)
 	if err != nil {
@@ -306,6 +311,12 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 	if lh.IndexID != m.indexID {
 		return fromOffset, errLogIndexMismatch
 	}
+	if choose != nil {
+		if fromOffset, err = choose(lh, st); err != nil {
+			return 0, err
+		}
+	}
+	m.replayed = st
 	pos := int64(mailindex.LogHeaderSize)
 	if fromOffset > pos {
 		if _, err := f.Seek(fromOffset, io.SeekStart); err != nil {

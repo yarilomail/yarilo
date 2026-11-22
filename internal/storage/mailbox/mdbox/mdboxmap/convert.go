@@ -43,7 +43,7 @@ func (m *Map) convertToConfiguredLocked() error {
 	m.foldedLineage, m.foldedOffset = seq, applied
 	m.lineage = seq + 1
 	m.logLineage = seq
-	m.logSize = applied
+	m.noteLogLocked(applied)
 
 	if err := m.writeBaseLocked(nil); err != nil {
 		return err
