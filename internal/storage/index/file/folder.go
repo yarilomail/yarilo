@@ -3361,7 +3361,13 @@ func (fs *folderState) appendLogRecordsWith(raw []byte, h mailindex.Header) ([][
 // after a successful base rewrite, once the records are absorbed into the
 // snapshot. A zero lineage is what a pre-extension base gives, and it reads as
 // "proves nothing".
+// truncateSeam is a test seam run before a fold replaces the log. Nil elsewhere.
+var truncateSeam func()
+
 func truncateLogLineage(indexPath string, indexID, lineage uint32) error {
+	if truncateSeam != nil {
+		truncateSeam()
+	}
 	logPath := indexPath + ".log"
 	tmp := logPath + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
