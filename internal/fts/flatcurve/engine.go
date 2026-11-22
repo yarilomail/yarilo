@@ -225,12 +225,11 @@ func (u *userIndex) state() *mboxState {
 }
 
 // cleanStaleOptimizeTmp removes a leftover "optimize" compaction tmp directory
-// from a crash mid-run. optimizeDir already os.RemoveAll()s this path before a
-// fresh Compact, so a stale one is at worst wasted disk, never corruption;
-// this reclaims it the first time the directory is touched, since the service
-// has no upfront list of mailboxes to sweep at startup. shardPaths only picks
-// up dbPrefix/currentPrefix dirs, so a stale one is never taken for a shard.
+// from a crash mid-merge: the merge takes its sealed name before any shard
+// goes, so a leftover is a copy of shards still in place, and dropping it loses
+// nothing (#2666). Reclaimed the first time the directory is touched.
 func cleanStaleOptimizeTmp(dir string) {
+	cleanRetiredShards(dir)
 	tmp := filepath.Join(dir, "optimize")
 	if _, err := os.Stat(tmp); err != nil {
 		return
@@ -240,6 +239,19 @@ func cleanStaleOptimizeTmp(dir string) {
 		return
 	}
 	slog.Info("fts/flatcurve: cleaned stale optimize tmp dir left over from a prior crash", "dir", tmp)
+}
+
+// cleanRetiredShards finishes the removal of shards a merge retired: their
+// documents are in the merged shard, whole or half-removed alike.
+func cleanRetiredShards(dir string) {
+	left, _ := filepath.Glob(filepath.Join(dir, removingPrefix+"*"))
+	for _, p := range left {
+		if err := os.RemoveAll(p); err != nil {
+			slog.Warn("fts/flatcurve: failed to remove a retired shard", "dir", p, "err", err)
+			continue
+		}
+		slog.Info("fts/flatcurve: removed a shard a merge had retired", "dir", p)
+	}
 }
 
 func shardPaths(dir string) ([]string, error) {
@@ -1254,6 +1266,7 @@ func mergeShards(st *mboxState) (string, []string, error) {
 	if err := st.closeCurrent(); err != nil {
 		return "", nil, err
 	}
+	cleanRetiredShards(st.dir)
 	paths, err := shardPaths(st.dir)
 	if err != nil || len(paths) < 2 {
 		return "", nil, err
@@ -1282,17 +1295,33 @@ func mergeShards(st *mboxState) (string, []string, error) {
 }
 
 // switchToMerged puts the merged index in place of the shards it was built
-// from. This is the part that must not run beside another writer.
+// from. This is the part that must not run beside another writer. The merged
+// index takes its sealed name first: from then on a stop or a failed removal
+// leaves old shards beside it, which a search reads with it and the next merge
+// folds in, and never documents under "optimize" alone, which the next run
+// deletes and no search reads (#2666).
 func switchToMerged(st *mboxState, merged string, paths []string) error {
 	t0 := time.Now()
-	for _, p := range paths {
-		if err := os.RemoveAll(p); err != nil {
-			return fmt.Errorf("fts/flatcurve: optimize cleanup: %w", err)
-		}
-	}
 	sealed := filepath.Join(st.dir, fmt.Sprintf("%s%d", dbPrefix, time.Now().UnixMicro()))
 	if err := os.Rename(merged, sealed); err != nil {
 		return fmt.Errorf("fts/flatcurve: optimize rename: %w", err)
+	}
+	if switchSeam != nil {
+		if err := switchSeam(); err != nil {
+			return err
+		}
+	}
+	// Each old shard leaves the shard names whole, by one rename, before it is
+	// removed: one half-removed under its own name no longer opens, and every
+	// search and merge of the folder would stop on it.
+	for _, p := range paths {
+		gone := filepath.Join(st.dir, removingPrefix+filepath.Base(p))
+		if err := os.Rename(p, gone); err != nil {
+			return fmt.Errorf("fts/flatcurve: optimize retire: %w", err)
+		}
+		if err := removeShard(gone); err != nil {
+			return fmt.Errorf("fts/flatcurve: optimize cleanup: %w", err)
+		}
 	}
 	// Durability of the directory entries themselves, where the medium makes
 	// it worth issuing (#1176). Best-effort: a failure costs a rebuild.
@@ -1305,6 +1334,18 @@ func switchToMerged(st *mboxState, merged string, paths []string) error {
 		"shards_merged", len(paths), "dur_ms", time.Since(t0).Milliseconds())
 	return nil
 }
+
+// removingPrefix names a retired shard on its way out: shardPaths does not
+// list it, and the next touch of the directory finishes its removal.
+const removingPrefix = "removing."
+
+// removeShard deletes one shard the merge replaced. Test seam: a removal that
+// fails part-way, as a directory holding a silly-renamed file does on NFS.
+var removeShard = os.RemoveAll
+
+// switchSeam runs between the sealing rename and the removals. Test seam: a
+// process stopped there.
+var switchSeam func() error
 
 func (u *userIndex) Refresh() error {
 	u.mu.Lock()
