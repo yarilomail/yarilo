@@ -108,6 +108,16 @@ func SetAfterWalk(fn func(string)) func() {
 	return func() { afterWalk = nil }
 }
 
+// noIndexStamp makes an open ignore the index's stamp. Test seam: a row that
+// measures a walk needs one to happen.
+var noIndexStamp bool
+
+// SetTestNoIndexStamp sets it and returns a function clearing it.
+func SetTestNoIndexStamp() func() {
+	noIndexStamp = true
+	return func() { noIndexStamp = false }
+}
+
 // SetWalkedFolder registers the hook and returns a function removing it.
 func SetWalkedFolder(fn func(string)) func() {
 	walkedFolder = fn
@@ -234,7 +244,7 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 				// A moved mtime is always walked, as the reference does; the window
 				// bounds only re-walks of a dirty directory that has not moved (#1875).
 				reason = reasonTokenMoved
-			case prev.dirtyThen && time.Since(prev.checkedAt) < window:
+			case prev.dirtyThen && mailbox.SyncClock().Sub(prev.checkedAt) < window:
 				MetricReconcile.WithLabelValues("skipped-window", "").Inc()
 				return false
 			case prev.dirtyThen:
@@ -248,6 +258,26 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 			}
 		}
 	}
+	// This process remembers no walk of the folder as it is now; the index may:
+	// its stamp is shared, so a walk by any process serves this one (#2661).
+	if !partial && token != "" && !noIndexStamp {
+		if q, ok := ps.(mailbox.IndexSyncChecker); ok && q.SyncedPerIndex(b.index, f.ID, folder, mailbox.SyncClock()) {
+			MetricReconcile.WithLabelValues("skipped-index", reason).Inc()
+			syncTokens.put(key, token, mailbox.SyncClock(), false)
+			return false
+		}
+	}
+	// One walk per folder in this process; a session arriving during it takes
+	// its result instead of a walk of its own (#2661).
+	done, wait := walkFlights.lead(key)
+	if wait != nil {
+		MetricReconcile.WithLabelValues("joined", reason).Inc()
+		<-wait
+		return b.reconcile(folder, f)
+	}
+	defer done()
+	release := walkBudget.acquire(int64(f.Messages+1) * WalkBytesPerFile)
+	defer release()
 	// Why it walks, not only how often: a folder whose driver gives no token
 	// walks every open, and it counts apart from one whose token moved (#1821).
 	switch {
@@ -286,7 +316,7 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 		after = token
 	}
 	hotAfter, dirtyAfter, _ := b.syncDirtiness(ps, folder)
-	syncTokens.put(key, after, time.Now(), dirtyAfter || hotAfter)
+	syncTokens.put(key, after, mailbox.SyncClock(), dirtyAfter || hotAfter)
 	if !st.Changed {
 		return false
 	}

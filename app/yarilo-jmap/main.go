@@ -289,6 +289,7 @@ func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error)
 	// file.withDistLock runs those unguarded when no locker is wired. That
 	// would race a live IMAP SELECT on the same shared index.
 	idxOpts := backend.IndexOptions(cfg.Storage, locker)
+	backend.SetWalkBudget(cfg.Storage)
 	return &jmap.Storage{
 		Mailbox: backend.BuildMailbox(cfg.Storage, locker),
 		MailboxByDriver: func(driver string) mailbox.MailboxBackend {

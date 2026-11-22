@@ -19,6 +19,7 @@ func FlagsWritten(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint6
 		return nil
 	}
 	driver := mailbox.Driver(box)
+	pre, stamped := dirTimes(box, folder)
 	var results []mailbox.FlagWriteResult
 	switch w := driver.(type) {
 	case mailbox.FlagWriterMulti:
@@ -50,6 +51,7 @@ func FlagsWritten(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint6
 		}
 	}
 	if terr == nil {
+		carryInTx(box, folder, tx, pre, stamped)
 		defer tx.Rollback()
 		if _, cerr := tx.Commit(); cerr != nil {
 			slog.Warn("mailbox: could not record which flags landed",

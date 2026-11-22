@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -453,7 +454,7 @@ func (u *userMailbox) alignedByStamp(idx mailbox.UserIndex, folderID uint64, fol
 	if !can || !listed || now.UIDListSize == 0 {
 		return 0, false, nil
 	}
-	if was, known := st.MaildirStamp(folderID); !known || was != now {
+	if was, known := st.MaildirStamp(folderID); !known || !was.SameList(now) {
 		return 0, false, nil
 	}
 	metricListStampAligned.Inc()
@@ -1546,6 +1547,12 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 		if sub == "cur" && !mtime.IsZero() {
 			cache.storeDirEntries(entries, mtime)
 		}
+		// Sized once from the listing: grown by doubling, the records and the
+		// facts were allocated about twice over on a large folder (#2661).
+		out = slices.Grow(out, len(entries))
+		if len(kept) == 0 {
+			kept = make(map[string]scanFacts, len(entries))
+		}
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
@@ -1584,8 +1591,8 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 				Size:         facts.size,
 				VSize:        facts.vsize,
 				InternalDate: facts.date,
-				Flags:        append([]string(nil), flags...),
-				Keywords:     append([]string(nil), keywords...),
+				Flags:        flags,
+				Keywords:     keywords,
 				GUID:         u.guidFor(folder, name),
 			})
 		}
@@ -1684,7 +1691,10 @@ func maildirBase(name string) string {
 // guidFromBase derives the GUID from the base name, which is never rewritten: a
 // flag change touches the trailer and Move keeps it, so EMAILID survives both.
 func guidFromBase(filename string) [16]byte {
-	sum := sha256.Sum256([]byte(maildirBase(filename)))
+	// Through a buffer on the stack: the conversion of a name this long
+	// allocates once per file of every walk (#2661).
+	var buf [256]byte
+	sum := sha256.Sum256(append(buf[:0], maildirBase(filename)...))
 	var g [16]byte
 	copy(g[:], sum[:16])
 	return g
@@ -1766,9 +1776,18 @@ func (u *userMailbox) reconcileOnce(idx mailbox.UserIndex, folder *mailbox.Folde
 	u.folderCacheFor(folder.Name).closeWindow("reconcile")
 	// A full walk earns the window; so does a uid list the index was built
 	// from, by one stat (#1875, as the reference does).
+	// The directories as the walk found them, recorded only when it finished:
+	// a stamp after a failed walk would call the folder settled (#2661).
+	var walkDirs mailbox.DirTimes
+	var walkStart time.Time
+	walked := false
 	if !arrivalsOnly {
 		defer u.folderCacheFor(folder.Name).markChecked()
-		defer u.stampUIDList(idx, folder)
+		defer func() {
+			if walked {
+				u.stampFolder(idx, folder, walkDirs, walkStart)
+			}
+		}()
 	} else {
 		// At the end, as the full pass does: a window opened before the pass
 		// runs is one the pass itself closes.
@@ -1782,6 +1801,10 @@ func (u *userMailbox) reconcileOnce(idx mailbox.UserIndex, folder *mailbox.Folde
 		movePhaseProbe(movedNew)
 	}
 	var arrivals []string
+	var beforeMove mailbox.DirTimes
+	if movedNew {
+		beforeMove = u.DirTimes(folder.Name)
+	}
 	if movedNew {
 		// Shared: the swap looks names up in new/ as well, where delivered and
 		// never opened mail lies.
@@ -1798,6 +1821,12 @@ func (u *userMailbox) reconcileOnce(idx mailbox.UserIndex, folder *mailbox.Folde
 		if err != nil {
 			return st, nowRacing, err
 		}
+		if arrivalsOnly {
+			u.carryDirTimes(idx, folder.ID, folder.Name, beforeMove)
+		}
+	}
+	if !arrivalsOnly {
+		walkStart, walkDirs = mailbox.SyncClock(), u.DirTimes(folder.Name)
 	}
 
 	// The walk, holding nothing. A flag change renames only the part after
@@ -1830,6 +1859,7 @@ func (u *userMailbox) reconcileOnce(idx mailbox.UserIndex, folder *mailbox.Folde
 		return st, nil, nil
 	}
 	if !arrivalsOnly && u.reconcileIsClean(idx, folder, scanned) {
+		walked = true
 		return st, nil, nil
 	}
 
@@ -2174,6 +2204,7 @@ func (u *userMailbox) reconcileOnce(idx mailbox.UserIndex, folder *mailbox.Folde
 		return nil
 	})
 	st.Changed = st.Imported > 0 || st.Expunged > 0 || st.Updated > 0 || st.Relinked > 0
+	walked = err == nil
 	return st, nowRacing, err
 }
 
@@ -3027,32 +3058,43 @@ func decodeFlagsWith(filename string, names map[byte]string) (flags, keywords []
 	if idx < 0 {
 		return nil, nil
 	}
-	info := filename[idx+3:]
-	for _, c := range info {
-		switch c {
-		case 'D':
-			flags = append(flags, `\Draft`)
-		case 'F':
-			flags = append(flags, `\Flagged`)
-		case 'R':
-			flags = append(flags, `\Answered`)
-		case 'S':
-			flags = append(flags, `\Seen`)
-		case 'T':
-			flags = append(flags, `\Deleted`)
-		default:
-			if c >= 'a' && c <= 'z' {
-				// Only what the keyword file names: a letter with no line has
-				// its name recorded nowhere, and inventing one shows a client
-				// what nothing on disk said (#1600).
-				if name, ok := names[byte(c)]; ok {
-					keywords = append(keywords, name)
-				}
+	var set uint8
+	for _, c := range filename[idx+3:] {
+		if bit, ok := infoFlagBit[c]; ok {
+			set |= bit
+			continue
+		}
+		if c >= 'a' && c <= 'z' {
+			// Only what the keyword file names: a letter with no line has
+			// its name recorded nowhere, and inventing one shows a client
+			// what nothing on disk said (#1600).
+			if name, ok := names[byte(c)]; ok {
+				keywords = append(keywords, name)
 			}
 		}
 	}
-	return
+	return infoFlagSets[set], keywords
 }
+
+// infoFlagBit is each system flag's letter in a maildir name, in name order.
+var infoFlagBit = map[rune]uint8{'D': 1, 'F': 2, 'R': 4, 'S': 8, 'T': 16}
+
+// infoFlagSets is every set of system flags as one shared, read-only slice: a
+// walk returned a new one per file, a fifth of what it allocates (#2661). Their
+// capacity is their length, so a caller that appends gets a copy.
+var infoFlagSets = func() (out [32][]string) {
+	names := []string{`\Draft`, `\Flagged`, `\Answered`, `\Seen`, `\Deleted`}
+	for set := 1; set < 32; set++ {
+		var f []string
+		for i, n := range names {
+			if set&(1<<i) != 0 {
+				f = append(f, n)
+			}
+		}
+		out[set] = f[:len(f):len(f)]
+	}
+	return out
+}()
 
 func randomGUID() string {
 	b := make([]byte, 16)
@@ -3343,21 +3385,91 @@ func (u *userMailbox) uidListStamp(folder string) (mailbox.MaildirStamp, bool) {
 	}, true
 }
 
-// stampUIDList records what a full pass read the list at, so the next open can
-// ask one stat rather than a walk.
-func (u *userMailbox) stampUIDList(idx mailbox.UserIndex, folder *mailbox.Folder) {
+// stampFolder records what a full pass read: the list, and the directories as
+// it found them before the walk with the walk's start as their check time, the
+// reference's layout, so every process sees the walk (#2661).
+func (u *userMailbox) stampFolder(idx mailbox.UserIndex, folder *mailbox.Folder, dirs mailbox.DirTimes, start time.Time) {
 	st, ok := idx.(mailbox.MaildirStamped)
 	if !ok {
 		return
 	}
-	now, have := u.uidListStamp(folder.Name)
-	if !have {
-		return
+	now, _ := u.uidListStamp(folder.Name)
+	check := uint32(start.Unix())
+	now.NewMtime, now.NewMtimeNsecs, now.NewCheckTime = dirs.NewSec, dirs.NewNsec, check
+	now.CurMtime, now.CurMtimeNsecs, now.CurCheckTime = dirs.CurSec, dirs.CurNsec, check
+	// A check already past the window says what a new one would: kept, a pass
+	// that changed nothing writes nothing (#1875). Nor does a check go back.
+	if was, have := st.MaildirStamp(folder.ID); have {
+		if was.NewMtime == now.NewMtime && was.NewMtimeNsecs == now.NewMtimeNsecs &&
+			(was.NewCheckTime > was.NewMtime+syncSecs || was.NewCheckTime > now.NewCheckTime) {
+			now.NewCheckTime = was.NewCheckTime
+		}
+		if was.CurMtime == now.CurMtime && was.CurMtimeNsecs == now.CurMtimeNsecs &&
+			(was.CurCheckTime > was.CurMtime+syncSecs || was.CurCheckTime > now.CurCheckTime) {
+			now.CurCheckTime = was.CurCheckTime
+		}
 	}
 	if err := st.SetMaildirStamp(folder.ID, now); err != nil {
-		slog.Warn("maildir: the uid list stamp was not recorded",
+		slog.Warn("maildir: the folder stamp was not recorded",
 			"user", u.username, "folder", folder.Name, "err", err)
 	}
+}
+
+// DirTimes is when the folder's new/ and cur/ last changed.
+func (u *userMailbox) DirTimes(folder string) mailbox.DirTimes {
+	var d mailbox.DirTimes
+	base := u.folderPath(folder)
+	if fi, err := statPath(filepath.Join(base, "new")); err == nil {
+		t := fi.ModTime()
+		d.NewSec, d.NewNsec = uint32(t.Unix()), uint32(t.Nanosecond())
+	}
+	if fi, err := statPath(filepath.Join(base, "cur")); err == nil {
+		t := fi.ModTime()
+		d.CurSec, d.CurNsec = uint32(t.Unix()), uint32(t.Nanosecond())
+	}
+	return d
+}
+
+// carryDirTimes carries the stamp over a change of ours begun at before.
+func (u *userMailbox) carryDirTimes(idx mailbox.UserIndex, folderID uint64, folder string, before mailbox.DirTimes) {
+	c, ok := idx.(mailbox.DirCarrier)
+	if !ok {
+		return
+	}
+	if err := c.CarryDirTimes(folderID, before, u.DirTimes(folder)); err != nil {
+		slog.Warn("maildir: the folder stamp was not carried", "user", u.username, "err", err)
+	}
+}
+
+// syncSecs is the reference's MAILDIR_SYNC_SECS: a directory checked within
+// this of its change may have taken another one in the same tick of its clock.
+const syncSecs = 1
+
+// SyncedPerIndex answers from the index's stamp whether the folder needs no
+// walk, as the reference's quick check: both directories at the recorded time
+// to the nanosecond, and neither changed so close to its check that a second
+// change could hide in the same tick, unless that check is still recent.
+func (u *userMailbox) SyncedPerIndex(idx mailbox.UserIndex, folderID uint64, folder string, now time.Time) bool {
+	st, ok := idx.(mailbox.MaildirStamped)
+	if !ok {
+		return false
+	}
+	s, have := st.MaildirStamp(folderID)
+	if !have || s.NewMtime == 0 || s.CurMtime == 0 {
+		return false // never walked into the stamp
+	}
+	d := u.DirTimes(folder)
+	if d.NewSec != s.NewMtime || d.NewNsec != s.NewMtimeNsecs || d.CurSec != s.CurMtime || d.CurNsec != s.CurMtimeNsecs {
+		return false
+	}
+	nowSec := now.Unix()
+	// A dirty directory is walked once its change is two whole seconds old: a
+	// walk starting then records a check past the window, so one write costs
+	// one walk; the reference's bound costs one or two (reviewer, 2026-11-22).
+	delayed := func(check, mtime uint32) bool {
+		return check <= mtime+syncSecs && nowSec >= int64(mtime)+2*syncSecs
+	}
+	return !delayed(s.NewCheckTime, s.NewMtime) && !delayed(s.CurCheckTime, s.CurMtime)
 }
 
 // windowFromStamp opens the window a walk would have earned, when the list is
@@ -3372,7 +3484,7 @@ func (u *userMailbox) windowFromStamp(idx mailbox.UserIndex, folder *mailbox.Fol
 		return
 	}
 	now, fresh := u.uidListStamp(folder.Name)
-	if !fresh || now != was {
+	if !fresh || !now.SameList(was) {
 		metricStampMiss.Inc()
 		return
 	}

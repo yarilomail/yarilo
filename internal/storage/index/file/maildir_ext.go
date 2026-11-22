@@ -118,3 +118,59 @@ func (fs *folderState) addMaildirStampLocked(s mailbox.MaildirStamp) error {
 // StampUnchangedCount exposes the counter to a driver's row: the number that
 // says a pass changing nothing wrote nothing.
 func StampUnchangedCount() prometheus.Counter { return metricStampUnchanged }
+
+// keepDirsOf is s with the recorded directory times when s carries the list
+// alone: a save stamps the list it wrote, not the walk it did not do (#2661).
+func (fs *folderState) keepDirsOf(s mailbox.MaildirStamp) mailbox.MaildirStamp {
+	if s.HasDirs() {
+		return s
+	}
+	if was, ok := fs.maildirStampLocked(); ok {
+		s.NewCheckTime, s.NewMtime, s.NewMtimeNsecs = was.NewCheckTime, was.NewMtime, was.NewMtimeNsecs
+		s.CurCheckTime, s.CurMtime, s.CurMtimeNsecs = was.CurCheckTime, was.CurMtime, was.CurMtimeNsecs
+	}
+	return s
+}
+
+func (fs *folderState) maildirStampLocked() (mailbox.MaildirStamp, bool) {
+	if ext := findExt(fs.file.Extensions, extNameMaildir); ext != nil {
+		return decodeMaildirHdr(ext.HdrData)
+	}
+	return mailbox.MaildirStamp{}, false
+}
+
+// CarryDirTimes moves the recorded time of each directory our write changed
+// from pre to post, when it still reads pre to the nanosecond; another time
+// there is someone else's change, and the stamp stays for a walk to settle
+// (#2661). As the reference, the check time is not moved back.
+func (u *userIndex) CarryDirTimes(folderID uint64, pre, post mailbox.DirTimes) error {
+	return u.withFolderSite(folderID, lockSiteMaildirStamp, func(fs *folderState) error {
+		return fs.carryDirTimesLocked(pre, post)
+	})
+}
+
+func (fs *folderState) carryDirTimesLocked(pre, post mailbox.DirTimes) error {
+	was, ok := fs.maildirStampLocked()
+	if !ok || !was.HasDirs() {
+		return nil // never walked into the stamp: the first walk records it
+	}
+	s := carriedStamp(was, pre, post)
+	if s == was {
+		return nil
+	}
+	return fs.setMaildirStampLocked(s)
+}
+
+// carriedStamp is was with each changed directory carried from pre to post.
+func carriedStamp(was mailbox.MaildirStamp, pre, post mailbox.DirTimes) mailbox.MaildirStamp {
+	s := was
+	if (pre.NewSec != post.NewSec || pre.NewNsec != post.NewNsec) && was.NewMtime == pre.NewSec && was.NewMtimeNsecs == pre.NewNsec {
+		s.NewMtime, s.NewMtimeNsecs = post.NewSec, post.NewNsec
+		s.NewCheckTime = max(s.NewCheckTime, post.NewSec)
+	}
+	if (pre.CurSec != post.CurSec || pre.CurNsec != post.CurNsec) && was.CurMtime == pre.CurSec && was.CurMtimeNsecs == pre.CurNsec {
+		s.CurMtime, s.CurMtimeNsecs = post.CurSec, post.CurNsec
+		s.CurCheckTime = max(s.CurCheckTime, post.CurSec)
+	}
+	return s
+}

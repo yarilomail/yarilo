@@ -2,6 +2,7 @@ package file
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -42,6 +43,13 @@ type indexTx struct {
 	done     bool
 	// expect is the modseq each read record had; its ops apply only on that.
 	expect map[uint32]uint64
+	// carry moves the maildir stamp's directory times in the same hold.
+	carry *[2]mailbox.DirTimes
+}
+
+// CarryDirTimes carries the stamp in this commit: see userIndex.CarryDirTimes.
+func (t *indexTx) CarryDirTimes(pre, post mailbox.DirTimes) {
+	t.carry = &[2]mailbox.DirTimes{pre, post}
 }
 
 func (t *indexTx) Expunge(uid uint32) {
@@ -80,7 +88,7 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 		return out, fmt.Errorf("fileindex/tx: already finished")
 	}
 	t.done = true
-	if len(t.ops) == 0 {
+	if len(t.ops) == 0 && t.carry == nil {
 		return out, nil
 	}
 	var gone uint32
@@ -91,16 +99,20 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 		defer undo.settle()
 		fs.cacheGone = 0
 		out.Skipped = t.dropUnmet(fs)
-		if len(t.ops) == 0 {
-			return nil
-		}
-		err := t.applyAll(fs, &out)
-		if err != nil {
-			fs.restore(undo)
-			out = mailbox.TxResult{}
-			return err
+		if len(t.ops) > 0 {
+			if err := t.applyAll(fs, &out); err != nil {
+				fs.restore(undo)
+				out = mailbox.TxResult{}
+				return err
+			}
 		}
 		gone = fs.cacheGone
+		if t.carry != nil {
+			// The ops are journalled already; a stamp left stale costs a walk.
+			if cerr := fs.carryDirTimesLocked(t.carry[0], t.carry[1]); cerr != nil {
+				slog.Warn("fileindex: the maildir stamp was not carried", "folder", fs.folder, "err", cerr)
+			}
+		}
 		return nil
 	})
 	if err != nil {

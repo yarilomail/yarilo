@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // A burst on a dirty folder walks once: the reference re-walks an unvouched
@@ -59,10 +61,17 @@ func TestAMovedMtimeIsWalkedInsideTheWindow(t *testing.T) {
 }
 
 // Held, not dropped: once the window has passed the folder is walked again,
-// which is what keeps a filesystem with second-granularity mtimes honest.
+// which is what keeps a filesystem with second-granularity mtimes honest. The
+// window is two whole seconds from the write, so the walk then records a check
+// past it and one write costs one walk; it used to be a walk one second after
+// the last walk (reviewer, 2026-11-22).
 func TestADirtyFolderIsWalkedAgainAfterTheWindow(t *testing.T) {
 	box, inbox := gateSetup(t)
 	deliverNow(t, inbox, "1700000200.M1P1.h:2,")
+	written := time.Now()
+	clock := written
+	t.Cleanup(func() { mailbox.SyncClock = time.Now })
+	mailbox.SyncClock = func() time.Time { return clock }
 
 	if _, err := box.Folder("INBOX", 0); err != nil {
 		t.Fatalf("first open: %v", err)
@@ -75,16 +84,17 @@ func TestADirtyFolderIsWalkedAgainAfterTheWindow(t *testing.T) {
 		t.Fatalf("the window did not hold the second open: %v walks", got)
 	}
 
-	// A second later the same dirty folder is walked again: the mtime is now
-	// old enough to be compared, and a change inside that second would
-	// otherwise never be seen.
-	time.Sleep(1100 * time.Millisecond)
+	// Two whole seconds after the write the same dirty folder is walked
+	// again, once: a change inside that time would otherwise never be seen.
+	clock = time.Unix(written.Unix()+2, 0)
 	scanned = syncCount(t, "scanned")
-	if _, err := box.Folder("INBOX", 0); err != nil {
-		t.Fatalf("third open: %v", err)
+	for i := 0; i < 2; i++ {
+		if _, err := box.Folder("INBOX", 0); err != nil {
+			t.Fatalf("open after the window: %v", err)
+		}
 	}
 	if got := syncCount(t, "scanned") - scanned; got != 1 {
-		t.Errorf("the folder was walked %v times after the window passed, want 1", got)
+		t.Errorf("the folder was walked %v times in two opens after the window, want 1", got)
 	}
 }
 

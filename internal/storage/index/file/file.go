@@ -408,6 +408,16 @@ func (h *userHandle) AllocateUID(folderID uint64) (uint32, error) {
 }
 
 var _ mailbox.UIDReleaser = (*userHandle)(nil)
+var _ mailbox.DirCarrier = (*userHandle)(nil)
+var _ mailbox.CarryingAppender = (*userHandle)(nil)
+
+func (h *userHandle) AllocateAndAppendCarried(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, *mailbox.MaildirStamp, *mailbox.DirCarry, error)) error {
+	return h.stamped(folderID).AllocateAndAppendCarried(folderID, m, name)
+}
+
+func (h *userHandle) CarryDirTimes(folderID uint64, pre, post mailbox.DirTimes) error {
+	return h.stamped(folderID).CarryDirTimes(folderID, pre, post)
+}
 
 func (h *userHandle) ReleaseUID(folderID uint64, uid uint32) { h.ui.ReleaseUID(folderID, uid) }
 
@@ -1149,24 +1159,30 @@ func imapFlagsToIndex(flags []string) uint8 {
 // indexFlagsToIMAP is the inverse: per-record flag byte → IMAP
 // flag list (stable order, useful for tests).
 func indexFlagsToIMAP(b uint8) []string {
-	var flags []string
-	if b&flagAnswered != 0 {
-		flags = append(flags, `\Answered`)
-	}
-	if b&flagFlagged != 0 {
-		flags = append(flags, `\Flagged`)
-	}
-	if b&flagDeleted != 0 {
-		flags = append(flags, `\Deleted`)
-	}
-	if b&flagSeen != 0 {
-		flags = append(flags, `\Seen`)
-	}
-	if b&flagDraft != 0 {
-		flags = append(flags, `\Draft`)
-	}
-	return flags
+	return imapFlagSets[b&(flagAnswered|flagFlagged|flagDeleted|flagSeen|flagDraft)]
 }
+
+// imapFlagSets is every set of system flags as one shared, read-only slice, by
+// the record's flag bits: one per record was a fifth of a walk (#2661). Their
+// capacity is their length, so a caller that appends gets a copy.
+var imapFlagSets = func() (out [256][]string) {
+	order := []struct {
+		bit  uint8
+		name string
+	}{{flagAnswered, `\Answered`}, {flagFlagged, `\Flagged`}, {flagDeleted, `\Deleted`}, {flagSeen, `\Seen`}, {flagDraft, `\Draft`}}
+	for set := 1; set < 256; set++ {
+		var f []string
+		for _, o := range order {
+			if uint8(set)&o.bit != 0 {
+				f = append(f, o.name)
+			}
+		}
+		if f != nil {
+			out[set] = f[:len(f):len(f)]
+		}
+	}
+	return out
+}()
 
 // seqSetContains reports whether uid falls in the set; an empty one matches
 // everything, the "give me all records" idiom.

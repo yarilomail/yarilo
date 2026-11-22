@@ -32,6 +32,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.jmap.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-jmap"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}

@@ -33,6 +33,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.locks.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-locks"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}

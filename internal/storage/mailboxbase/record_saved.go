@@ -54,6 +54,18 @@ func RecordSavedNamed(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID u
 				return err
 			}
 		}
+		// The directories either side of the naming, carried in the append's
+		// journal write: the save moved them, and nobody else (#2661).
+		if ca, ok := idx.(mailbox.CarryingAppender); ok {
+			if _, timed := dirTimes(box, folder); timed {
+				return ca.AllocateAndAppendCarried(folderID, m, func(uid uint32) (string, *mailbox.MaildirStamp, *mailbox.DirCarry, error) {
+					pre, _ := dirTimes(box, folder)
+					named, s, err := name(uid)
+					post, _ := dirTimes(box, folder)
+					return named, s, &mailbox.DirCarry{Pre: pre, Post: post}, err
+				})
+			}
+		}
 		if sa, ok := idx.(mailbox.StampingAppender); ok {
 			return sa.AllocateAndAppendStamped(folderID, m, name)
 		}

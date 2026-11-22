@@ -28,12 +28,25 @@ type Moved struct {
 	// srcFile is the copied source body, removed once its record is gone.
 	srcFile   string
 	relocated bool
+	// srcBefore is the source's directory times before the move began.
+	srcBefore    mailbox.DirTimes
+	srcBeforeSet bool
 }
 
 // MoveIn puts each message into the destination: relocated within one store,
 // copied between stores. It stops at the first failure and answers what landed.
 func (o *Ops) MoveIn(req MoveRequest) ([]Moved, error) {
 	var out []Moved
+	var before mailbox.DirTimes
+	timer, timed := mailbox.Driver(req.Src.Store()).(mailbox.DirTimer)
+	if timed {
+		before = timer.DirTimes(req.SrcName)
+	}
+	defer func() {
+		for i := range out {
+			out[i].srcBefore, out[i].srcBeforeSet = before, timed
+		}
+	}()
 	for _, m := range req.Msgs {
 		if req.Src != req.Dst {
 			mv, err := o.moveCopy(req, m)
@@ -164,6 +177,15 @@ func (o *Ops) expungeMovedBodyFirst(req MoveRequest, tx mailbox.BoxTx, moved []M
 }
 
 func (o *Ops) expungeSource(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map[uint32]bool {
+	// The stamp of the source rides the same commit: the move took files out
+	// of its cur/ (#2661).
+	if len(moved) > 0 && moved[0].srcBeforeSet {
+		if c, ok := tx.(mailbox.DirCarryTx); ok {
+			if timer, ok := mailbox.Driver(req.Src.Store()).(mailbox.DirTimer); ok {
+				c.CarryDirTimes(moved[0].srcBefore, timer.DirTimes(req.SrcName))
+			}
+		}
+	}
 	relocated := make(map[uint32]bool, len(moved))
 	for _, mv := range moved {
 		tx.Expunge(mv.Src.UID)

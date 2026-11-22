@@ -350,6 +350,7 @@ type doomed struct {
 // stop between leaves a record with no file, which the next reconcile drops,
 // never a file whose uid is gone (#2663). A body that stays keeps its record.
 func (b *Box) expungeBodyFirst(f *mailbox.Folder, folder string, list []doomed, refs bodyRefs) (removed []*mailbox.MessageMeta, failed int) {
+	pre, stamped := dirTimes(b.store, folder)
 	going := make([]doomed, 0, len(list))
 	for _, d := range list {
 		switch refs.fate(d.name) {
@@ -385,6 +386,7 @@ func (b *Box) expungeBodyFirst(f *mailbox.Folder, folder string, list []doomed, 
 	for _, d := range going {
 		tx.Expunge(d.msg.UID)
 	}
+	carryInTx(b.store, folder, tx, pre, stamped)
 	if _, cerr := tx.Commit(); cerr != nil {
 		slog.Error("mailbox/expunge: the bodies went but the records stayed; the next reconcile drops them",
 			"user", b.store.Username(), "folder", folder, "err", cerr)

@@ -150,6 +150,7 @@ func New(cfg *config.Config) (*Server, error) {
 	// quota data goes to dicts only via the quota_clone mirror; enforcement
 	// reads the index
 	idx := file.New(IndexOptions(cfg.Storage, locker)...)
+	SetWalkBudget(cfg.Storage)
 
 	quotaWarner, quotaClone, err := QuotaServices(cfg)
 	if err != nil {
@@ -1391,3 +1392,7 @@ func DeploymentBase(r *mailbox.Resolver) *mailbox.UserInfo {
 	}
 	return &mailbox.UserInfo{StorageEscapeChar: full.StorageEscapeChar, SkipNFCNormalize: full.SkipNFCNormalize}
 }
+
+// SetWalkBudget bounds what the whole-folder walks of this process hold
+// together, from storage.mail_sync_walk_memory (#2661).
+func SetWalkBudget(sc config.StorageConfig) { mailboxbase.SetWalkBudget(sc.MailSyncWalkMemory) }
