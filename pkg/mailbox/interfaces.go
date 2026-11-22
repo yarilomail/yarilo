@@ -217,7 +217,9 @@ var SyncClock = time.Now
 // stat per directory, whether a folder needs no walk: the stamp is shared by
 // every process, so one walk serves them all (#2661).
 type IndexSyncChecker interface {
-	SyncedPerIndex(idx UserIndex, folderID uint64, folder string, now time.Time) bool
+	// dirty says the folder is settled now but changed within its check's
+	// tick, so it is walked again once the window has passed.
+	SyncedPerIndex(idx UserIndex, folderID uint64, folder string, now time.Time) (synced, dirty bool)
 }
 
 // VirtualBacking is one folder a virtual mailbox draws from. Keyed by GUID, so

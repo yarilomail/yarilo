@@ -261,10 +261,15 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 	// This process remembers no walk of the folder as it is now; the index may:
 	// its stamp is shared, so a walk by any process serves this one (#2661).
 	if !partial && token != "" && !noIndexStamp {
-		if q, ok := ps.(mailbox.IndexSyncChecker); ok && q.SyncedPerIndex(b.index, f.ID, folder, mailbox.SyncClock()) {
-			MetricReconcile.WithLabelValues("skipped-index", reason).Inc()
-			syncTokens.put(key, token, mailbox.SyncClock(), false)
-			return false
+		if q, ok := ps.(mailbox.IndexSyncChecker); ok {
+			// A folder settled but still inside its window is remembered as
+			// dirty: the window in memory brings this process back to the
+			// index once it passes, for the one walk it owes (#2661).
+			if synced, dirty := q.SyncedPerIndex(b.index, f.ID, folder, mailbox.SyncClock()); synced {
+				MetricReconcile.WithLabelValues("skipped-index", reason).Inc()
+				syncTokens.put(key, token, mailbox.SyncClock(), dirty)
+				return false
+			}
 		}
 	}
 	// One walk per folder in this process; a session arriving during it takes
@@ -276,8 +281,11 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 		return b.reconcile(folder, f)
 	}
 	defer done()
-	release := walkBudget.acquire(int64(f.Messages+1) * WalkBytesPerFile)
-	defer release()
+	// A whole walk weighs the folder; a pass over new/ holds only what arrived.
+	if !partial {
+		release := walkBudget.acquire(int64(f.Messages+1) * WalkBytesPerFile)
+		defer release()
+	}
 	// Why it walks, not only how often: a folder whose driver gives no token
 	// walks every open, and it counts apart from one whose token moved (#1821).
 	switch {

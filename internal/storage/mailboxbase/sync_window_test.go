@@ -86,7 +86,7 @@ func TestADirtyFolderIsWalkedAgainAfterTheWindow(t *testing.T) {
 
 	// Two whole seconds after the write the same dirty folder is walked
 	// again, once: a change inside that time would otherwise never be seen.
-	clock = time.Unix(written.Unix()+2, 0)
+	clock = written.Add(2 * time.Second)
 	scanned = syncCount(t, "scanned")
 	for i := 0; i < 2; i++ {
 		if _, err := box.Folder("INBOX", 0); err != nil {

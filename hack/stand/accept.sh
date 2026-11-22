@@ -154,6 +154,10 @@ fill_start() {
       kube exec "$pod" -c yarilo-imap -- sh -c \
         "for n in \$(seq $from $to); do rm -rf \"/var/mail/vhosts/$dom/u\${n}@$dom\"; done" > /dev/null
     done
+    # As an arm checks its wipe: a start from more than nothing is not the fill.
+    left=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
+      "f=0; for n in \$(seq $from $to); do f=\$((f+\$(find \"/var/mail/vhosts/$dom/u\${n}@$dom\" -type f 2>/dev/null | wc -l))); done; echo \$f" 2>/dev/null)
+    [ "$left" = 0 ] || { echo "accept: the wipe of $dom $from-$to left ${left:-an unreadable count of} files" >&2; exit 1; }
     YARILO_NS="$NS" YARILO_FILL_DOMAIN="$dom" \
       bash "$REPO/hack/stand/fill-mailboxes.sh" "$from" "$to" "$ACCEPT_FILL" >> "$OUT/fill.txt" 2>&1 ||
       { echo "accept: the fill of $dom did not take ($OUT/fill.txt)" >&2; exit 1; }

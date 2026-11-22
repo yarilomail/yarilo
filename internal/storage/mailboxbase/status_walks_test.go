@@ -160,6 +160,7 @@ func TestAWriteCostsOneWalkToEveryProcess(t *testing.T) {
 	}
 	for _, w := range writes {
 		t.Run(w.name+" of ours in another process", func(t *testing.T) {
+			mailbox.SyncClock = time.Now
 			_, open := statusFolder(t)
 			writer := open().(*mailboxbase.Box)
 			f, err := writer.Folder("INBOX", 0)
@@ -171,14 +172,14 @@ func TestAWriteCostsOneWalkToEveryProcess(t *testing.T) {
 			clock := written
 			mailbox.SyncClock = func() time.Time { return clock }
 			for _, at := range []int64{0, 1} { // the write's second, and the one after: inside the window
-				clock = time.Unix(written.Unix()+at, 0)
+				clock = written.Add(time.Duration(at) * time.Second)
 				for _, p := range []string{"second", "third"} {
 					if got := opensAt(t, open, 8); got != 0 {
 						t.Fatalf("%d s after the write, the %s process walked %v times; the window is two seconds", at, p, got)
 					}
 				}
 			}
-			clock = time.Unix(written.Unix()+2, 0)
+			clock = written.Add(2 * time.Second)
 			var total float64
 			for _, p := range []string{"second", "third", "fourth"} {
 				got := opensAt(t, open, 8)
@@ -197,6 +198,7 @@ func TestAWriteCostsOneWalkToEveryProcess(t *testing.T) {
 		})
 	}
 	t.Run("a file put in from outside", func(t *testing.T) {
+		mailbox.SyncClock = time.Now
 		home, open := statusFolder(t)
 		deliverOutOfBand(t, filepath.Join(home, "Maildir"), "1700099999.M9P9.h:2,", time.Now().Add(-time.Minute))
 		var total float64
@@ -262,5 +264,104 @@ func TestProcessesArrivingAtOnceWalkAtMostOnceEach(t *testing.T) {
 	}
 	if total < 1 {
 		t.Errorf("no process walked the changed folder")
+	}
+}
+
+// A process that opens the folder inside the window keeps the walk it owes: its
+// memory is dirty too, and brings it back to the index once the window passed.
+// One process, its memory kept from open to open (#2661).
+func TestOneProcessKeepsTheWalkItOwes(t *testing.T) {
+	t.Cleanup(func() { mailbox.SyncClock = time.Now })
+	for _, who := range []string{"the writer", "another process", "a process first opening inside the window"} {
+		t.Run(who, func(t *testing.T) {
+			mailbox.SyncClock = time.Now
+			_, open := statusFolder(t)
+			t.Cleanup(mailboxbase.SetTestSyncTokens(8))
+			writer := open().(*mailboxbase.Box)
+			f, err := writer.Folder("INBOX", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const body = "From: a@b\r\n\r\nours\r\n"
+			saved, vsize, guid, err := writer.Store().Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.RecordSaved(f, "INBOX", saved, &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}); err != nil {
+				t.Fatal(err)
+			}
+			reader := writer
+			if who != "the writer" {
+				reader = open().(*mailboxbase.Box)
+			}
+			steps := []struct {
+				sec  int64
+				want float64
+			}{{0, 0}, {1, 0}, {2, 1}, {3, 0}}
+			// Counted from the folder's last change, which the first open makes
+			// itself when it moves the delivery out of new/.
+			var changed time.Time
+			dirs := func() time.Time {
+				d := mailbox.Driver(reader.Store()).(mailbox.DirTimer).DirTimes("INBOX")
+				c := time.Unix(int64(d.NewSec), int64(d.NewNsec))
+				if cur := time.Unix(int64(d.CurSec), int64(d.CurNsec)); cur.After(c) {
+					c = cur
+				}
+				return c
+			}
+			if who == "a process first opening inside the window" {
+				// Its first open is one second on, with nothing in its memory:
+				// the index alone answers, and its answer must carry the walk.
+				steps, changed = steps[1:], dirs()
+				t.Cleanup(mailboxbase.SetTestSyncTokens(8))
+			}
+			for _, at := range steps {
+				mailbox.SyncClock = func() time.Time {
+					if changed.IsZero() {
+						return time.Now()
+					}
+					return changed.Add(time.Duration(at.sec) * time.Second)
+				}
+				before := syncCount(t, "scanned")
+				if _, err := reader.Folder("INBOX", 0); err != nil {
+					t.Fatal(err)
+				}
+				if got := syncCount(t, "scanned") - before; got != at.want {
+					t.Errorf("+%d s: %v walks, want %v", at.sec, got, at.want)
+				}
+				if changed.IsZero() {
+					changed = dirs()
+				}
+			}
+		})
+	}
+}
+
+// A pass over new/ holds only what arrived, so it does not wait for the walk
+// budget a whole walk of a heavy folder holds (#2661).
+func TestAPassOverArrivalsDoesNotWaitForTheWalkBudget(t *testing.T) {
+	box, inbox := gateSetup(t)
+	settle(t, inbox, time.Now().Add(-time.Hour))
+	if _, err := box.Folder("INBOX", 0); err != nil {
+		t.Fatal(err)
+	}
+	mailboxbase.SetWalkBudget(1 << 20)
+	t.Cleanup(func() { mailboxbase.SetWalkBudget(0) })
+	release := mailboxbase.HoldWholeWalkBudget()
+	defer release()
+	arrive(t, inbox, "1700002000.M1P1.h")
+	partial := syncCount(t, "scanned-partial")
+	done := make(chan error, 1)
+	go func() { _, err := box.Folder("INBOX", 0); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a pass over new/ waited for the budget a whole walk holds")
+	}
+	if got := syncCount(t, "scanned-partial") - partial; got != 1 {
+		t.Errorf("%v partial passes, want 1", got)
 	}
 }

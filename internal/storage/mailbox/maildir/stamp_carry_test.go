@@ -93,7 +93,7 @@ func TestTwoCarriesThatOverlapNeverSettleAnUnseenTime(t *testing.T) {
 				}
 			}
 			now := at.Add(time.Hour)
-			if got := box.SyncedPerIndex(idx, f.ID, "INBOX", now); got != tc.settled {
+			if got, _ := box.SyncedPerIndex(idx, f.ID, "INBOX", now); got != tc.settled {
 				st, _ := idx.(mailbox.MaildirStamped).MaildirStamp(f.ID)
 				t.Fatalf("settled %v, want %v: stamp cur %d.%09d, directory %+v", got, tc.settled, st.CurMtime, st.CurMtimeNsecs, box.DirTimes("INBOX"))
 			}

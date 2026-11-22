@@ -632,7 +632,7 @@ func (c *folderCache) dirEntriesWhy(mtime time.Time) ([]os.DirEntry, bool, strin
 const dirSettleWindow = time.Second
 
 // settled reports whether a directory's mtime stands for its contents (#1797).
-func settled(mtime time.Time) bool { return time.Since(mtime) >= dirSettleWindow }
+func settled(mtime time.Time) bool { return mailbox.SyncClock().Sub(mtime) >= dirSettleWindow }
 
 func (c *folderCache) storeDirEntries(entries []os.DirEntry, mtime time.Time) {
 	c.mu.Lock()
@@ -3441,26 +3441,26 @@ func (u *userMailbox) carryDirTimes(idx mailbox.UserIndex, folderID uint64, fold
 	}
 }
 
-// syncSecs is the reference's MAILDIR_SYNC_SECS: a directory checked within
-// this of its change may have taken another one in the same tick of its clock.
+// syncSecs is the tick a directory's time is trusted to: one checked within it
+// of its change may have taken another change in the same tick.
 const syncSecs = 1
 
 // SyncedPerIndex answers from the index's stamp whether the folder needs no
 // walk, as the reference's quick check: both directories at the recorded time
 // to the nanosecond, and neither changed so close to its check that a second
 // change could hide in the same tick, unless that check is still recent.
-func (u *userMailbox) SyncedPerIndex(idx mailbox.UserIndex, folderID uint64, folder string, now time.Time) bool {
+func (u *userMailbox) SyncedPerIndex(idx mailbox.UserIndex, folderID uint64, folder string, now time.Time) (synced, dirty bool) {
 	st, ok := idx.(mailbox.MaildirStamped)
 	if !ok {
-		return false
+		return false, false
 	}
 	s, have := st.MaildirStamp(folderID)
 	if !have || s.NewMtime == 0 || s.CurMtime == 0 {
-		return false // never walked into the stamp
+		return false, false // never walked into the stamp
 	}
 	d := u.DirTimes(folder)
 	if d.NewSec != s.NewMtime || d.NewNsec != s.NewMtimeNsecs || d.CurSec != s.CurMtime || d.CurNsec != s.CurMtimeNsecs {
-		return false
+		return false, false
 	}
 	nowSec := now.Unix()
 	// A dirty directory is walked once its change is two whole seconds old: a
@@ -3469,7 +3469,10 @@ func (u *userMailbox) SyncedPerIndex(idx mailbox.UserIndex, folderID uint64, fol
 	delayed := func(check, mtime uint32) bool {
 		return check <= mtime+syncSecs && nowSec >= int64(mtime)+2*syncSecs
 	}
-	return !delayed(s.NewCheckTime, s.NewMtime) && !delayed(s.CurCheckTime, s.CurMtime)
+	if delayed(s.NewCheckTime, s.NewMtime) || delayed(s.CurCheckTime, s.CurMtime) {
+		return false, true
+	}
+	return true, s.NewCheckTime <= s.NewMtime+syncSecs || s.CurCheckTime <= s.CurMtime+syncSecs
 }
 
 // windowFromStamp opens the window a walk would have earned, when the list is
