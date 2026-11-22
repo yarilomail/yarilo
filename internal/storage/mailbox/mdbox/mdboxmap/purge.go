@@ -30,32 +30,38 @@ func (m *Map) AppendMove(moved []MovedRecord, expunged []uint32) error {
 }
 
 func (m *Map) appendMoveLocked(moved []MovedRecord, expunged []uint32) error {
-	// 1) Rewrite physical pointers and GUID for moved records.
 	for _, mv := range moved {
-		i, ok := m.findLocked(mv.UID)
+		e, ok, err := m.st.get(mv.UID)
+		if err != nil {
+			m.invalidateLocked()
+			return fmt.Errorf("mdboxmap/move: %w", err)
+		}
 		if !ok {
+			m.invalidateLocked()
 			return fmt.Errorf("mdboxmap/move: map_uid %d not found", mv.UID)
 		}
-		e := m.st.at(i)
 		e.FileID, e.Offset, e.Size = mv.FileID, mv.Offset, mv.Size
 		if mv.GUID != ([16]byte{}) {
 			e.GUID = mv.GUID
 		}
-		m.st.setAt(i, e)
+		if err := m.st.put(e); err != nil {
+			m.invalidateLocked()
+			return fmt.Errorf("mdboxmap/move: %w", err)
+		}
 		if mv.FileID > m.highestFileID {
 			m.highestFileID = mv.FileID
 		}
 	}
-	// 2) Expunge zero-ref records.
-	if len(expunged) > 0 {
-		drop := make(map[uint32]bool, len(expunged))
-		for _, uid := range expunged {
-			if _, ok := m.findLocked(uid); !ok {
-				return fmt.Errorf("mdboxmap/move: expunge target %d not found", uid)
-			}
-			drop[uid] = true
+	for _, uid := range expunged {
+		ok, err := m.st.remove(uid)
+		if err != nil {
+			m.invalidateLocked()
+			return fmt.Errorf("mdboxmap/move: %w", err)
 		}
-		m.st.removeFunc(func(uid uint32) bool { return drop[uid] })
+		if !ok {
+			m.invalidateLocked()
+			return fmt.Errorf("mdboxmap/move: expunge target %d not found", uid)
+		}
 	}
 	return m.flushLocked()
 }
@@ -68,11 +74,19 @@ func (m *Map) ExpungeVanished(presentUIDs map[uint32]bool) (int, error) {
 		if err := m.reloadLocked(); err != nil {
 			return err
 		}
-		dropped = m.st.removeFunc(func(uid uint32) bool { return !presentUIDs[uid] })
+		dropped = 0
+		if err := m.st.scan(func(e MapEntry) error {
+			if !presentUIDs[e.UID] {
+				dropped++
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("mdboxmap/expunge-vanished: %w", err)
+		}
 		if dropped == 0 {
 			return nil
 		}
-		return m.flushLocked()
+		return m.foldLocked(func(e *MapEntry) bool { return presentUIDs[e.UID] })
 	})
 	if err != nil {
 		return 0, err
@@ -89,10 +103,11 @@ func (m *Map) CompactGarbage() []uint32 {
 		return nil
 	}
 	var out []uint32
-	m.st.each(func(e MapEntry) {
+	_ = m.st.scan(func(e MapEntry) error {
 		if e.RefCount == 0 {
 			out = append(out, e.UID)
 		}
+		return nil
 	})
 	return out
 }

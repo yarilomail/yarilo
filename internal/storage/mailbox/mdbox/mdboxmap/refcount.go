@@ -20,14 +20,20 @@ func (m *Map) UpdateRefcounts(mapUIDs []uint32, delta int16) error {
 		deltas := make([]mailindex.TxExtAtomicInc, 0, len(mapUIDs))
 		var missing []uint32
 		for _, uid := range mapUIDs {
-			i, ok := m.findLocked(uid)
+			e, ok, err := m.st.get(uid)
+			if err != nil {
+				m.invalidateLocked()
+				return fmt.Errorf("mdboxmap/refcount: %w", err)
+			}
 			if !ok {
 				missing = append(missing, uid)
 				continue
 			}
-			e := m.st.at(i)
 			e.RefCount = clampRef(int32(e.RefCount) + int32(delta))
-			m.st.setAt(i, e)
+			if err := m.st.put(e); err != nil {
+				m.invalidateLocked()
+				return fmt.Errorf("mdboxmap/refcount: %w", err)
+			}
 			deltas = append(deltas, mailindex.TxExtAtomicInc{UID: uid, Diff: int32(delta)})
 		}
 		if len(deltas) == 0 {
@@ -59,8 +65,7 @@ func (m *Map) SetRefcountsFromReferences(refs map[uint32]int) (int, error) {
 			return err
 		}
 		zeroed = 0
-		for i, count := 0, m.st.count(); i < count; i++ {
-			e := m.st.at(i)
+		return m.foldLocked(func(e *MapEntry) bool {
 			n := refs[e.UID]
 			if n < 0 {
 				n = 0
@@ -72,9 +77,8 @@ func (m *Map) SetRefcountsFromReferences(refs map[uint32]int) (int, error) {
 				zeroed++
 			}
 			e.RefCount = uint16(n)
-			m.st.setAt(i, e)
-		}
-		return m.flushLocked()
+			return true
+		})
 	})
 	if err != nil {
 		return 0, err
@@ -96,20 +100,21 @@ func (m *Map) SetGUIDs(guids map[uint32][16]byte) (int, error) {
 			return err
 		}
 		written = 0
-		for i, count := 0, m.st.count(); i < count; i++ {
-			e := m.st.at(i)
-			g, ok := guids[e.UID]
-			if !ok || g == zero || e.GUID != zero {
-				continue
+		stamp := func(e *MapEntry) bool {
+			if g, ok := guids[e.UID]; ok && g != zero && e.GUID == zero {
+				e.GUID = g
+				written++
 			}
-			e.GUID = g
-			m.st.setAt(i, e)
-			written++
+			return true
+		}
+		if err := m.st.scan(func(e MapEntry) error { stamp(&e); return nil }); err != nil {
+			return fmt.Errorf("mdboxmap/set-guids: %w", err)
 		}
 		if written == 0 {
 			return nil
 		}
-		return m.flushLocked()
+		written = 0
+		return m.foldLocked(stamp)
 	})
 	if err != nil {
 		return 0, err
@@ -132,11 +137,14 @@ func (m *Map) GetZeroRefFiles() ([]uint32, error) {
 		return nil, fmt.Errorf("mdboxmap/zero-ref: %w", err)
 	}
 	seen := make(map[uint32]bool)
-	m.st.each(func(e MapEntry) {
+	if err := m.st.scan(func(e MapEntry) error {
 		if e.RefCount == 0 {
 			seen[e.FileID] = true
 		}
-	})
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("mdboxmap/zero-ref: %w", err)
+	}
 	out := make([]uint32, 0, len(seen))
 	for id := range seen {
 		out = append(out, id)
@@ -157,15 +165,19 @@ func (m *Map) RecordsInFile(fileID uint32) ([]MapEntry, error) {
 	if err := m.reloadLocked(); err != nil {
 		return nil, fmt.Errorf("mdboxmap/records-in-file: %w", err)
 	}
-	return m.recordsInFileLocked(fileID), nil
+	return m.recordsInFileLocked(fileID)
 }
 
-func (m *Map) recordsInFileLocked(fileID uint32) []MapEntry {
+func (m *Map) recordsInFileLocked(fileID uint32) ([]MapEntry, error) {
 	var out []MapEntry
-	m.st.each(func(e MapEntry) {
+	err := m.st.scan(func(e MapEntry) error {
 		if e.FileID == fileID {
 			out = append(out, e)
 		}
+		return nil
 	})
-	return out
+	if err != nil {
+		return nil, fmt.Errorf("mdboxmap/records-in-file: %w", err)
+	}
+	return out, nil
 }

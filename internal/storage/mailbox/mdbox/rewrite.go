@@ -48,13 +48,12 @@ func (u *userMailbox) RewriteStore(rw mailbox.StoreRewrite) error {
 			return err
 		}
 	}
-	recs, err := m.RecordsReloaded()
-	if err != nil {
-		return fmt.Errorf("mdbox/rewrite: records: %w", err)
-	}
 	files := map[uint32]bool{}
-	for _, e := range recs {
+	if err := m.EachRecordReloaded(func(e mdboxmap.MapEntry) error {
 		files[e.FileID] = true
+		return nil
+	}); err != nil {
+		return fmt.Errorf("mdbox/rewrite: records: %w", err)
 	}
 	ids := make([]uint32, 0, len(files))
 	for id := range files {
@@ -99,7 +98,10 @@ func (u *userMailbox) rewriteFile(m *mdboxmap.Map, fileID uint32, rw mailbox.Sto
 	var srcSize int64
 	var dstID uint32
 	if err := m.Place(func(p *mdboxmap.Placement) error {
-		snap = p.RecordsInFile(fileID)
+		var err error
+		if snap, err = p.RecordsInFile(fileID); err != nil {
+			return err
+		}
 		st, err := os.Stat(srcPath)
 		if err != nil {
 			return err
@@ -140,7 +142,10 @@ func (u *userMailbox) rewriteFile(m *mdboxmap.Map, fileID uint32, rw mailbox.Sto
 	// is never removed after that, as purge never removes its new file.
 	repointed := false
 	err = m.Place(func(p *mdboxmap.Placement) error {
-		now := p.RecordsInFile(fileID)
+		now, rerr := p.RecordsInFile(fileID)
+		if rerr != nil {
+			return rerr
+		}
 		st, serr := os.Stat(srcPath)
 		if serr != nil || st.Size() != srcSize || !sameRecords(now, snap) {
 			return mailbox.ErrRecordChanged
@@ -204,6 +209,9 @@ func (u *userMailbox) tierPath(fileID uint32) (string, bool, error) {
 
 // fileNeedsRewrite probes the file's records with no lock: a file whose
 // records are all as wanted is not touched.
+// errStopRecords ends a walk over the map that has its answer.
+var errStopRecords = errors.New("mdbox: records walk stopped")
+
 func (u *userMailbox) fileNeedsRewrite(m *mdboxmap.Map, fileID uint32, path string, needs func(mailbox.RawBody) (bool, error)) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -213,19 +221,26 @@ func (u *userMailbox) fileNeedsRewrite(m *mdboxmap.Map, fileID uint32, path stri
 		return false, err
 	}
 	defer f.Close() //nolint:errcheck
-	for _, e := range m.Records() {
+	need := false
+	err = m.EachRecord(func(e mdboxmap.MapEntry) error {
 		if e.FileID != fileID {
-			continue
+			return nil
 		}
-		body, _, err := readRecordRaw(f, e.Offset)
-		if err != nil {
-			return true, nil // the copy reports it, against its record
+		body, _, rerr := readRecordRaw(f, e.Offset)
+		if rerr != nil {
+			need = true // the copy reports it, against its record
+			return errStopRecords
 		}
-		if need, err := needs(rawSection{SectionReader: io.NewSectionReader(bytes.NewReader(body), 0, int64(len(body)))}); err != nil || need {
-			return true, nil
+		if n, nerr := needs(rawSection{SectionReader: io.NewSectionReader(bytes.NewReader(body), 0, int64(len(body)))}); nerr != nil || n {
+			need = true
+			return errStopRecords
 		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStopRecords) {
+		return false, err
 	}
-	return false, nil
+	return need, nil
 }
 
 func (u *userMailbox) copyRewritten(srcPath, dstPath string, dstID uint32, snap []mdboxmap.MapEntry,

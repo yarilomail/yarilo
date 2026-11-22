@@ -178,9 +178,7 @@ func (u *userMailbox) scanLocated() ([]scanRecord, error) {
 		out = append(out, recs...)
 	}
 	if m != nil {
-		if entries, err := m.RecordsReloaded(); err == nil {
-			pairWithMap(out, entries)
-		}
+		_ = pairWithMap(out, m.EachRecordReloaded)
 	}
 	if firstErr != nil {
 		// Partial records are returned for a partial-aware consumer, but the error
@@ -193,17 +191,20 @@ func (u *userMailbox) scanLocated() ([]scanRecord, error) {
 
 // pairWithMap names each record by its map entry: first an entry at the
 // record's own place, then one carrying its GUID wherever it points (#2236).
-func pairWithMap(recs []scanRecord, entries []mdboxmap.MapEntry) {
+func pairWithMap(recs []scanRecord, each func(func(mdboxmap.MapEntry) error) error) error {
 	type place struct{ file, off uint32 }
 	var zero [16]byte
-	used := make(map[uint32]bool, len(entries))
-	at := make(map[place][]mdboxmap.MapEntry, len(entries))
-	byGUID := make(map[[16]byte][]mdboxmap.MapEntry, len(entries))
-	for _, e := range entries {
+	used := map[uint32]bool{}
+	at := map[place][]mdboxmap.MapEntry{}
+	byGUID := map[[16]byte][]mdboxmap.MapEntry{}
+	if err := each(func(e mdboxmap.MapEntry) error {
 		at[place{e.FileID, e.Offset}] = append(at[place{e.FileID, e.Offset}], e)
 		if e.GUID != zero {
 			byGUID[e.GUID] = append(byGUID[e.GUID], e)
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	name := func(r *scanRecord, e mdboxmap.MapEntry) {
 		r.scan.Filename = strconv.FormatUint(uint64(e.UID), 10)
@@ -232,6 +233,7 @@ func pairWithMap(recs []scanRecord, entries []mdboxmap.MapEntry) {
 			}
 		}
 	}
+	return nil
 }
 
 // scanRecord wraps a ScanRecord with its physical offset so scanStorage can

@@ -45,26 +45,31 @@ func TestLookupAtTheEdgesOfTheRecordArea(t *testing.T) {
 	}
 }
 
-// Records are kept in map_uid order because the search depends on it. Appends
-// arrive in order and take the cheap tail path; an out-of-order insert is the
-// case that would break the ordering if it were appended blindly.
-func TestStoreKeepsRecordsOrdered(t *testing.T) {
-	var s store
-	for _, uid := range []uint32{5, 9, 1, 7} {
-		s.insert(MapEntry{UID: uid, Size: uid * 10})
-	}
-	want := []uint32{1, 5, 7, 9}
-	if s.count() != len(want) {
-		t.Fatalf("store holds %d records, want %d", s.count(), len(want))
-	}
-	for i, uid := range want {
-		if got := s.at(i); got.UID != uid || got.Size != uid*10 {
-			t.Fatalf("record %d is %+v, want map_uid %d", i, got, uid)
+// The layer shadows the base by map_uid: a walk that merged them by position
+// would emit a changed record twice or a removed one at all.
+func TestTheLayerShadowsTheBaseInAWalk(t *testing.T) {
+	s := store{base: memBase([]MapEntry{{UID: 1}, {UID: 3, Size: 30}, {UID: 5}}, 6), count: 3}
+	for _, e := range []MapEntry{{UID: 3, Size: 31}, {UID: 4}, {UID: 9}} {
+		if err := s.put(e); err != nil {
+			t.Fatal(err)
 		}
 	}
-	for _, uid := range want {
-		if _, ok := s.find(uid); !ok {
-			t.Errorf("map_uid %d not findable after ordered insert", uid)
+	if _, err := s.remove(5); err != nil {
+		t.Fatal(err)
+	}
+	var got []MapEntry
+	sn := s.snapshot()
+	defer sn.release()
+	if err := sn.each(func(e MapEntry) error { got = append(got, e); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	want := []MapEntry{{UID: 1}, {UID: 3, Size: 31}, {UID: 4}, {UID: 9}}
+	if len(got) != len(want) || s.count != len(want) {
+		t.Fatalf("walk %+v, count %d, want %+v", got, s.count, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("record %d is %+v, want %+v", i, got[i], want[i])
 		}
 	}
 }
@@ -85,7 +90,7 @@ func TestBaseHeaderRoundTrips(t *testing.T) {
 		FoldedOffset:  4096,
 		FoldedLineage: 6,
 		Lineage:       7,
-		RecordsDigest: digestRecords([]byte("records")),
+		RecordsDigest: 0x1234_5678_9abc_def0,
 		IndexID:       4242,
 	}
 	got, err := decodeBaseHeader(encodeBaseHeader(want))
@@ -100,15 +105,13 @@ func TestBaseHeaderRoundTrips(t *testing.T) {
 // A record that round-trips at a non-zero index proves the offset arithmetic,
 // not just the codec.
 func TestRecordRoundTripsAtAnOffset(t *testing.T) {
-	var s store
 	want := MapEntry{UID: 9, FileID: 3, Offset: 1024, Size: 777, RefCount: 2, GUID: [16]byte{0xde, 0xad}}
-	s.insert(MapEntry{UID: 1})
-	s.insert(want)
-	i, ok := s.find(want.UID)
-	if !ok {
-		t.Fatal("record not found")
+	b := memBase([]MapEntry{{UID: 1}, want}, 10)
+	got, ok, err := b.find(want.UID)
+	if err != nil || !ok {
+		t.Fatalf("record not found: %v", err)
 	}
-	if got := s.at(i); got != want {
+	if got != want {
 		t.Errorf("record round-tripped to %+v, want %+v", got, want)
 	}
 }

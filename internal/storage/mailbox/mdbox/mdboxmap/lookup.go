@@ -1,6 +1,7 @@
 package mdboxmap
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -30,16 +31,14 @@ func lockRead(mu *sync.Mutex) {
 func (m *Map) Lookup(mapUID uint32) (MapEntry, bool, error) {
 	lockRead(&m.mu)
 	defer m.mu.Unlock()
-	if e, ok := m.lookupLocked(mapUID); ok {
-		return e, true, nil
+	if e, ok, err := m.lookupLocked(mapUID); err != nil || ok {
+		return e, ok, err
 	}
-	// Miss: a sibling process may have appended this map_uid after we cached the
-	// map. Refresh (incremental log replay) and retry before reporting absence.
+	// Miss: a sibling may have appended it since; refresh and retry.
 	if rerr := m.reloadLocked(); rerr != nil {
 		return MapEntry{}, false, rerr
 	}
-	e, ok := m.lookupLocked(mapUID)
-	return e, ok, nil
+	return m.lookupLocked(mapUID)
 }
 
 // LookupReloaded is Lookup on a freshly replayed view, for a reader whose file
@@ -50,66 +49,97 @@ func (m *Map) LookupReloaded(mapUID uint32) (MapEntry, bool, error) {
 	if err := m.reloadLocked(); err != nil {
 		return MapEntry{}, false, err
 	}
-	e, ok := m.lookupLocked(mapUID)
+	return m.lookupLocked(mapUID)
+}
+
+func (m *Map) lookupLocked(mapUID uint32) (MapEntry, bool, error) {
+	if !m.loaded {
+		return MapEntry{}, false, nil
+	}
+	e, ok, err := m.st.get(mapUID)
+	if err != nil {
+		return MapEntry{}, false, fmt.Errorf("mdboxmap/lookup: %w", err)
+	}
 	return e, ok, nil
 }
 
-func (m *Map) lookupLocked(mapUID uint32) (MapEntry, bool) {
-	i, ok := m.findLocked(mapUID)
-	if !ok {
-		return MapEntry{}, false
-	}
-	return m.st.at(i), true
+// EachRecord calls fn with every record in map order, from a view taken under
+// the mutex and walked without it; fn may call the map. An error from fn stops
+// the walk and is returned.
+func (m *Map) EachRecord(fn func(MapEntry) error) error {
+	lockRead(&m.mu)
+	sn := m.st.snapshot()
+	m.mu.Unlock()
+	noteFullScan()
+	defer sn.release()
+	return sn.each(fn)
 }
 
-// Records returns every record in map order, for pairing a whole map against
-// another one. The slice is a copy; the caller may keep it.
-func (m *Map) Records() []MapEntry {
-	lockRead(&m.mu)
-	defer m.mu.Unlock()
-	out := make([]MapEntry, 0, m.st.count())
-	for i, n := 0, m.st.count(); i < n; i++ {
-		out = append(out, m.st.at(i))
+// EachRecordReloaded is EachRecord after a reload, for a caller pairing the
+// map with what is on disk now.
+func (m *Map) EachRecordReloaded(fn func(MapEntry) error) error {
+	m.mu.Lock()
+	if err := m.reloadLocked(); err != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("mdboxmap/records: %w", err)
 	}
+	sn := m.st.snapshot()
+	m.mu.Unlock()
+	noteFullScan()
+	defer sn.release()
+	return sn.each(fn)
+}
+
+// Records collects EachRecord: the whole map in the heap, for tests and
+// tools, never a path a session runs.
+func (m *Map) Records() []MapEntry {
+	var out []MapEntry
+	_ = m.EachRecord(func(e MapEntry) error { out = append(out, e); return nil })
 	return out
 }
 
-// RecordsReloaded is Records after a reload, for a caller pairing the map with
-// what is on disk now.
+// RecordsReloaded collects EachRecordReloaded, under the same terms as Records.
 func (m *Map) RecordsReloaded() ([]MapEntry, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.reloadLocked(); err != nil {
-		return nil, fmt.Errorf("mdboxmap/records: %w", err)
-	}
-	out := make([]MapEntry, 0, m.st.count())
-	for i, n := 0, m.st.count(); i < n; i++ {
-		out = append(out, m.st.at(i))
-	}
-	return out, nil
+	var out []MapEntry
+	err := m.EachRecordReloaded(func(e MapEntry) error { out = append(out, e); return nil })
+	return out, err
 }
 
-// LookupMany resolves a batch of map_uids in a single lock hop.
-// Returns one MapEntry per requested UID; entries that did not
-// resolve carry UID=0. The result slice mirrors the input order.
+// LookupMany resolves a batch of map_uids in a single lock hop and one forward
+// pass over the base. Returns one MapEntry per requested UID; entries that did
+// not resolve carry UID=0. The result slice mirrors the input order.
 func (m *Map) LookupMany(mapUIDs []uint32) ([]MapEntry, error) {
 	lockRead(&m.mu)
 	defer m.mu.Unlock()
+	if !m.loaded {
+		return make([]MapEntry, len(mapUIDs)), nil
+	}
+	found, err := m.st.lookupMany(mapUIDs)
+	if err != nil {
+		return nil, fmt.Errorf("mdboxmap/lookup: %w", err)
+	}
+	var missed []uint32
+	for _, uid := range mapUIDs {
+		if _, ok := found[uid]; !ok {
+			missed = append(missed, uid)
+		}
+	}
+	if len(missed) > 0 {
+		// Refresh once to pick up a sibling's appends.
+		if rerr := m.reloadLocked(); rerr != nil {
+			return nil, fmt.Errorf("mdboxmap/lookup refresh: %w", rerr)
+		}
+		again, err := m.st.lookupMany(missed)
+		if err != nil {
+			return nil, fmt.Errorf("mdboxmap/lookup: %w", err)
+		}
+		for uid, e := range again {
+			found[uid] = e
+		}
+	}
 	out := make([]MapEntry, len(mapUIDs))
-	refreshed := false
 	for i, uid := range mapUIDs {
-		e, ok := m.lookupLocked(uid)
-		if !ok && !refreshed {
-			// Refresh once on the first miss to pick up a sibling's appends.
-			if rerr := m.reloadLocked(); rerr != nil {
-				return nil, fmt.Errorf("mdboxmap/lookup refresh: %w", rerr)
-			}
-			refreshed = true
-			e, ok = m.lookupLocked(uid)
-		}
-		if ok {
-			out[i] = e
-		}
+		out[i] = found[uid]
 	}
 	return out, nil
 }
@@ -124,10 +154,22 @@ func (m *Map) LookupByGUID(guid [16]byte) (MapEntry, bool, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i, n := 0, m.st.count(); i < n; i++ {
-		if e := m.st.at(i); e.GUID == guid {
-			return e, true, nil
+	var hit MapEntry
+	err := m.st.scan(func(e MapEntry) error {
+		if e.GUID == guid {
+			hit = e
+			return errStopWalk
 		}
+		return nil
+	})
+	if errors.Is(err, errStopWalk) {
+		return hit, true, nil
+	}
+	if err != nil {
+		return MapEntry{}, false, fmt.Errorf("mdboxmap/lookup guid: %w", err)
 	}
 	return MapEntry{}, false, nil
 }
+
+// errStopWalk ends a walk that has its answer.
+var errStopWalk = errors.New("mdboxmap: walk stopped")
