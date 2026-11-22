@@ -31,14 +31,38 @@ func lockRead(mu *sync.Mutex) {
 func (m *Map) Lookup(mapUID uint32) (MapEntry, bool, error) {
 	lockRead(&m.mu)
 	defer m.mu.Unlock()
-	if e, ok, err := m.lookupLocked(mapUID); err != nil || ok {
+	var e MapEntry
+	var ok bool
+	if err := m.retryBaseLocked(func() (err error) {
+		e, ok, err = m.lookupLocked(mapUID)
+		return err
+	}); err != nil || ok {
 		return e, ok, err
 	}
 	// Miss: a sibling may have appended it since; refresh and retry.
 	if rerr := m.reloadLocked(); rerr != nil {
 		return MapEntry{}, false, rerr
 	}
-	return m.lookupLocked(mapUID)
+	err := m.retryBaseLocked(func() (err error) {
+		e, ok, err = m.lookupLocked(mapUID)
+		return err
+	})
+	return e, ok, err
+}
+
+// retryBaseLocked runs fn again on a reloaded base when a read of the one it
+// had failed: another node's fold replaces the file, and on NFS the old one
+// answers ESTALE. A second failure is the caller's.
+func (m *Map) retryBaseLocked(fn func() error) error {
+	err := fn()
+	if !errors.Is(err, errBaseRead) {
+		return err
+	}
+	m.invalidateLocked()
+	if rerr := m.reloadLocked(); rerr != nil {
+		return rerr
+	}
+	return fn()
 }
 
 // LookupReloaded is Lookup on a freshly replayed view, for a reader whose file
@@ -49,7 +73,13 @@ func (m *Map) LookupReloaded(mapUID uint32) (MapEntry, bool, error) {
 	if err := m.reloadLocked(); err != nil {
 		return MapEntry{}, false, err
 	}
-	return m.lookupLocked(mapUID)
+	var e MapEntry
+	var ok bool
+	err := m.retryBaseLocked(func() (err error) {
+		e, ok, err = m.lookupLocked(mapUID)
+		return err
+	})
+	return e, ok, err
 }
 
 func (m *Map) lookupLocked(mapUID uint32) (MapEntry, bool, error) {
@@ -114,8 +144,11 @@ func (m *Map) LookupMany(mapUIDs []uint32) ([]MapEntry, error) {
 	if !m.loaded {
 		return make([]MapEntry, len(mapUIDs)), nil
 	}
-	found, err := m.st.lookupMany(mapUIDs)
-	if err != nil {
+	var found map[uint32]MapEntry
+	if err := m.retryBaseLocked(func() (err error) {
+		found, err = m.st.lookupMany(mapUIDs)
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("mdboxmap/lookup: %w", err)
 	}
 	var missed []uint32
@@ -129,8 +162,11 @@ func (m *Map) LookupMany(mapUIDs []uint32) ([]MapEntry, error) {
 		if rerr := m.reloadLocked(); rerr != nil {
 			return nil, fmt.Errorf("mdboxmap/lookup refresh: %w", rerr)
 		}
-		again, err := m.st.lookupMany(missed)
-		if err != nil {
+		var again map[uint32]MapEntry
+		if err := m.retryBaseLocked(func() (err error) {
+			again, err = m.st.lookupMany(missed)
+			return err
+		}); err != nil {
 			return nil, fmt.Errorf("mdboxmap/lookup: %w", err)
 		}
 		for uid, e := range again {

@@ -182,7 +182,11 @@ func TestRebuildRestoresTaggedOrphanOptIn(t *testing.T) {
 	// The untagged orphan is NOT restored - it is zero-ref for purge.
 	zeroRef := map[uint32]bool{}
 	m, _ := box.openMap()
-	for _, uid := range m.CompactGarbage() {
+	garbage, err := m.CompactGarbage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, uid := range garbage {
 		zeroRef[uid] = true
 	}
 	if !zeroRef[untaggedUID] {
@@ -219,7 +223,11 @@ func TestRebuildDefaultDoesNotRestore(t *testing.T) {
 	}
 	zeroRef := map[uint32]bool{}
 	m, _ := box.openMap()
-	for _, uid := range m.CompactGarbage() {
+	garbage, err := m.CompactGarbage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, uid := range garbage {
 		zeroRef[uid] = true
 	}
 	if !zeroRef[taggedUID] {
@@ -258,7 +266,11 @@ func TestRebuildZeroRefsUnreferenced(t *testing.T) {
 	// referenced one is not.
 	zeroRef := map[uint32]bool{}
 	m, _ := box.openMap()
-	for _, uid := range m.CompactGarbage() {
+	garbage, err := m.CompactGarbage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, uid := range garbage {
 		zeroRef[uid] = true
 	}
 	if !zeroRef[orphanUID] {

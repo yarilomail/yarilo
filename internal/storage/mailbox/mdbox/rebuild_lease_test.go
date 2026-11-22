@@ -94,7 +94,7 @@ func TestRebuildPastALapsedLeaseLeavesTheMapAlone(t *testing.T) {
 		t.Errorf("rebuild past a lapsed lease: %v, want the lost lease reported", err)
 	}
 	m, _ := box.openMap()
-	if z := m.CompactGarbage(); len(z) != 0 {
+	if z, err := m.CompactGarbage(); err != nil || len(z) != 0 {
 		t.Fatalf("map written past a lapsed lease: zero-ref %v", z)
 	}
 }

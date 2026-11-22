@@ -2,9 +2,11 @@ package mdboxmap
 
 import (
 	"errors"
+	"io"
 	"math/bits"
 	"os"
 	"runtime"
+	"syscall"
 	"testing"
 )
 
@@ -155,5 +157,94 @@ func TestAFoldSyncsTheFileAndItsDirectory(t *testing.T) {
 	}
 	if len(seen) != 2 || seen[0] != "file" || seen[1] != "dir" {
 		t.Errorf("fold synced %v, want [file dir]", seen)
+	}
+}
+
+// staleReader answers every read as a replaced NFS file does.
+type staleReader struct{}
+
+func (staleReader) ReadAt([]byte, int64) (int, error) { return 0, syscall.ESTALE }
+
+// Another node's fold replaces the base under an open session: a lookup takes
+// the new one and answers, and only a read failing again reaches the caller.
+func TestALookupOnAReplacedBaseReadsTheNewOne(t *testing.T) {
+	lookups := []struct {
+		name string
+		do   func(m *Map, uid uint32) (MapEntry, error)
+	}{
+		{"Lookup", func(m *Map, uid uint32) (MapEntry, error) {
+			e, _, err := m.Lookup(uid)
+			return e, err
+		}},
+		{"LookupReloaded", func(m *Map, uid uint32) (MapEntry, error) {
+			e, _, err := m.LookupReloaded(uid)
+			return e, err
+		}},
+		{"LookupMany", func(m *Map, uid uint32) (MapEntry, error) {
+			es, err := m.LookupMany([]uint32{uid})
+			if err != nil {
+				return MapEntry{}, err
+			}
+			return es[0], nil
+		}},
+	}
+	for _, lk := range lookups {
+		cases := []struct {
+			name             string
+			replaced, always bool
+			wantRef          uint16
+		}{
+			{"replaced", true, false, 2},
+			// stat still shows the old file, as an NFS attribute cache can.
+			{"looks-unchanged", false, false, 1},
+			{"fails-again", true, true, 0},
+		}
+		for _, tc := range cases {
+			always := tc.always
+			t.Run(lk.name+"/"+tc.name, func(t *testing.T) {
+				r, dir := foldedMap(t, 300)
+				old := r.st.base
+				if tc.replaced {
+					w, err := Open(dir, "alice@example.com")
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer w.Close() //nolint:errcheck
+					if err := w.UpdateRefcounts([]uint32{150}, +1); err != nil {
+						t.Fatal(err)
+					}
+					if err := w.Compact(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				readSeam = func(b *baseRecords) io.ReaderAt {
+					if always || b == old {
+						return staleReader{}
+					}
+					return b.r
+				}
+				defer func() { readSeam = nil }()
+				e, err := lk.do(r, 150)
+				if always {
+					if !errors.Is(err, errBaseRead) {
+						t.Fatalf("a base failing again answered %+v %v, want errBaseRead", e, err)
+					}
+					return
+				}
+				if err != nil || e.UID != 150 || e.RefCount != tc.wantRef {
+					t.Fatalf("lookup on a failing base: %+v %v, want map_uid 150 at refcount %d", e, err, tc.wantRef)
+				}
+			})
+		}
+	}
+}
+
+// A walk that fails is an error, not a short list of purge candidates.
+func TestCompactGarbageReturnsAFailedWalk(t *testing.T) {
+	m, _ := foldedMap(t, 300)
+	readSeam = func(*baseRecords) io.ReaderAt { return staleReader{} }
+	defer func() { readSeam = nil }()
+	if got, err := m.CompactGarbage(); !errors.Is(err, errBaseRead) {
+		t.Fatalf("CompactGarbage over a failing base: %v %v, want errBaseRead", got, err)
 	}
 }

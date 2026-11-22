@@ -78,9 +78,16 @@ func (b *baseRecords) release() {
 // would otherwise be taken as records.
 var errBaseRead = errors.New("mdboxmap: base read")
 
+// readSeam is a test seam wrapping every base read. Nil elsewhere.
+var readSeam func(b *baseRecords) io.ReaderAt
+
 func (b *baseRecords) readAt(p []byte, i int) error {
 	noteBaseRead()
-	n, err := b.r.ReadAt(p, b.off+int64(i)*baseRecordLen)
+	r := b.r
+	if readSeam != nil {
+		r = readSeam(b)
+	}
+	n, err := r.ReadAt(p, b.off+int64(i)*baseRecordLen)
 	if n == len(p) {
 		return nil
 	}

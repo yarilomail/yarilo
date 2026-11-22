@@ -96,18 +96,20 @@ func (m *Map) ExpungeVanished(presentUIDs map[uint32]bool) (int, error) {
 
 // CompactGarbage returns every map_uid at refcount zero, for a purge driver
 // enumerating what the next AppendMove should expunge.
-func (m *Map) CompactGarbage() []uint32 {
+func (m *Map) CompactGarbage() ([]uint32, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.loaded {
-		return nil
+		return nil, nil
 	}
 	var out []uint32
-	_ = m.st.scan(func(e MapEntry) error {
+	if err := m.st.scan(func(e MapEntry) error {
 		if e.RefCount == 0 {
 			out = append(out, e.UID)
 		}
 		return nil
-	})
-	return out
+	}); err != nil {
+		return nil, fmt.Errorf("mdboxmap/compact-garbage: %w", err)
+	}
+	return out, nil
 }
