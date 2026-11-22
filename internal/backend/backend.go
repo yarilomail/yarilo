@@ -1039,6 +1039,7 @@ func IndexOptions(cfg config.StorageConfig, locker locks.Locker) []file.Option {
 		cfg.MailIndexLogRotateMaxSize,
 		time.Duration(cfg.MailIndexLogRotateMinAge)*time.Second,
 	))
+	opts = append(opts, file.WithLog2MaxAge(time.Duration(cfg.MailIndexLog2MaxAge)*time.Second))
 	return opts
 }
 

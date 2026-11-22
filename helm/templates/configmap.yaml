@@ -894,6 +894,7 @@ data:
       mail_index_log_rotate_min_size: {{ $storage.mail_index_log_rotate_min_size | quote }}
       mail_index_log_rotate_max_size: {{ $storage.mail_index_log_rotate_max_size | quote }}
       mail_index_log_rotate_min_age: {{ $storage.mail_index_log_rotate_min_age }}
+      mail_index_log2_max_age: {{ $storage.mail_index_log2_max_age }}
       {{- /* Pre-beta spellings, still rendered so an existing values.yaml keeps working. */}}
       {{- if $storage.index_log_compact_min_bytes }}
       index_log_compact_min_bytes: {{ $storage.index_log_compact_min_bytes | quote }}

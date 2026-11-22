@@ -38,6 +38,8 @@ var (
 	defaultLogCompactMinBytes = logrotate.MinSize
 	defaultLogCompactMaxBytes = logrotate.MaxSize
 	defaultLogCompactMinAge   = logrotate.MinAge
+	// defaultLog2MaxAge is the reference's mail_index_log2_max_age.
+	defaultLog2MaxAge = 48 * time.Hour
 )
 
 // sidecarTmpSeq gives concurrent sidecar writers unique tmp names, so a shared
@@ -125,6 +127,8 @@ type Backend struct {
 	logCompactMinBytes int64
 	logCompactMaxBytes int64
 	logCompactMinAge   time.Duration
+	// log2MaxAge caps the age of the log a fold keeps as .log.2; zero keeps none.
+	log2MaxAge time.Duration
 
 	// cachePurgeDeletePct is the deleted-record share that purges a folder's
 	// cache; negative never purges on its own.
@@ -192,6 +196,12 @@ func WithLogCompaction(minBytes, maxBytes int64, minAge time.Duration) Option {
 	}
 }
 
+// WithLog2MaxAge sets how long a fold keeps the log it folded as .log.2, for
+// the expunge history JMAP and QRESYNC read; zero keeps none.
+func WithLog2MaxAge(d time.Duration) Option {
+	return func(b *Backend) { b.log2MaxAge = d }
+}
+
 // WithCachePurgeDeletePercentage sets the deleted-record share that purges a
 // cache; zero keeps the default, negative never purges on its own.
 func WithCachePurgeDeletePercentage(p int) Option {
@@ -227,6 +237,7 @@ func New(opts ...Option) *Backend {
 		logCompactMinBytes: defaultLogCompactMinBytes,
 		logCompactMaxBytes: defaultLogCompactMaxBytes,
 		logCompactMinAge:   defaultLogCompactMinAge,
+		log2MaxAge:         defaultLog2MaxAge,
 
 		cachePurgeDeletePct: defaultCachePurgeDeletePct,
 		cachePurgeMinSize:   defaultCachePurgeMinSize,
@@ -608,6 +619,10 @@ type folderState struct {
 	cacheGone   uint32
 	indexPath   string // <indexDir>/yarilo.index
 	volatileDir string // local dir for tmp files (empty = same as indexDir)
+	// log2MaxAge is how long a fold keeps the log it folded; zero keeps none.
+	log2MaxAge time.Duration
+	// log2Checked is when this state last looked at the kept log's age.
+	log2Checked time.Time
 
 	// intent is why this folder is being opened. A missing index means
 	// different things to the two answers.
@@ -725,6 +740,7 @@ func (fs *folderState) sinceLastFold() time.Duration {
 // compactLogIfNeeded flushes and resets the log once it crosses the thresholds.
 // Errors are non-fatal; the log stays larger. Caller holds fs.mu.
 func (u *userIndex) compactLogIfNeeded(fs *folderState) {
+	fs.pruneKeptLogSometimesLocked()
 	min := u.b.logCompactMinBytes
 	if min == 0 {
 		return // compaction disabled
@@ -754,7 +770,7 @@ func (u *userIndex) compactLogIfNeeded(fs *folderState) {
 		return
 	}
 	fs.closeFDs()
-	if err := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); err != nil {
+	if err := rotateLog(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq(), fs.log2MaxAge > 0); err != nil {
 		slog.Warn("fileindex: log compaction truncate failed", "folder", fs.folder, "err", err)
 		return
 	}
@@ -1281,7 +1297,7 @@ func migrateLegacyFilenames(indexDir string) error {
 
 // ensureLogStub writes an empty .log if none exists: the canonical reader fails
 // hard when .index is present without it, even though Recreate never appends.
-func ensureLogStub(indexPath, volatileDir string, indexID, lineage uint32) error {
+func ensureLogStub(indexPath, volatileDir string, indexID, lineage uint32, initial uint64) error {
 	logPath := indexPath + ".log"
 	if _, err := os.Stat(logPath); err == nil {
 		return nil
@@ -1301,6 +1317,7 @@ func ensureLogStub(indexPath, volatileDir string, indexID, lineage uint32) error
 	// The stub announces the base it belongs to: carrying the old constant it
 	// would pair with nothing, leaving the folder unprovable until an append.
 	hdr := mailindex.NewLogHeader(indexID, lineage, uint32(nowUnix()))
+	hdr.InitialModSeq = initial
 	if err := hdr.Encode(f); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)

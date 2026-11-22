@@ -246,6 +246,7 @@ func (v *folderState) siblingBase() *folderState {
 		vsize:       v.vsize,
 		isView:      v.isView,
 		baseNextUID: v.baseNextUID,
+		log2MaxAge:  v.log2MaxAge,
 	}
 }
 
