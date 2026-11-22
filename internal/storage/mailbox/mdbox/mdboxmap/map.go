@@ -706,6 +706,9 @@ func (m *Map) BumpRebuildCount() error {
 	})
 }
 
+// reloadStatSeam is a test seam run after a reload's checks. Nil elsewhere.
+var reloadStatSeam func()
+
 // reloadLocked refreshes incrementally: the base only when changed, else the log
 // tail. Caller holds m.mu; readers need no cross-process lock, a torn tail stops.
 func (m *Map) reloadLocked() error {
@@ -718,13 +721,18 @@ func (m *Map) reloadLocked() error {
 
 	statStart := time.Now()
 	baseStat, baseErr := os.Stat(m.path)
-	var logSize int64
-	if st, _ := os.Stat(m.logPath()); st != nil {
-		logSize = st.Size()
+	// The log by its lineage, which every fold renews: a size, or a file's
+	// identity the filesystem reuses, cannot tell a new log from the old (#2660).
+	logSeq, logSize, lerr := m.logIdentityLocked()
+	if lerr != nil {
+		return fmt.Errorf("mdboxmap/reload: %w", lerr)
 	}
 	m.observePart("stat", time.Since(statStart))
+	if reloadStatSeam != nil {
+		reloadStatSeam()
+	}
 
-	sameBase := m.loaded && m.sameBaseLocked(baseStat)
+	sameBase := m.loaded && m.sameBaseLocked(baseStat) && (logSeq == 0 || logSeq == m.logLineage)
 	// A log shrinks only by being folded, so it signals change without a clock --
 	// a rewrite inside one timestamp tick leaves the mtime where it was.
 	logShrank := logSize < m.logSize
@@ -761,6 +769,11 @@ func (m *Map) reloadLocked() error {
 	if logSize > m.logSize {
 		metricMapReload.WithLabelValues("replay").Inc()
 		applied, err := m.replayLogLocked(m.logSize)
+		if errors.Is(err, errLogMoved) {
+			// A fold between the check and the open: taken as one is.
+			m.invalidateLocked()
+			return m.reloadLocked()
+		}
 		if err != nil && !errors.Is(err, errLogIndexMismatch) {
 			return err
 		}
