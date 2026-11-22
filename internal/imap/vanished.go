@@ -1,6 +1,9 @@
 package imap
 
 import (
+	"cmp"
+	"slices"
+
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -26,30 +29,38 @@ func vanishedSince(box mailbox.Box, folderID, modseq uint64, within imaplib.UIDS
 		}
 		return out, nil
 	}
-	present := make(map[uint32]struct{}, len(held))
-	for _, m := range held {
-		present[m.UID] = struct{}{}
+	return gapsIn(ranges, held), nil
+}
+
+// gapsIn is the uids in ranges that held does not carry, in one pass over both
+// in uid order: the cost is the folder's messages and the ranges, never the
+// width of the uid space a long-lived folder has used.
+func gapsIn(ranges [][2]uint32, held []*mailbox.MessageMeta) imaplib.UIDSet {
+	uids := make([]uint32, len(held))
+	for i, m := range held {
+		uids[i] = m.UID
 	}
+	if !slices.IsSorted(uids) {
+		slices.Sort(uids)
+	}
+	var out imaplib.UIDSet
+	j := 0
 	for _, r := range ranges {
-		var runStart uint32
-		for uid := r[0]; ; uid++ {
-			_, here := present[uid]
-			switch {
-			case !here && runStart == 0:
-				runStart = uid
-			case here && runStart != 0:
-				out.AddRange(imaplib.UID(runStart), imaplib.UID(uid-1))
-				runStart = 0
-			}
-			if uid == r[1] {
-				break
-			}
+		next := r[0]
+		for j < len(uids) && uids[j] < r[0] {
+			j++
 		}
-		if runStart != 0 {
-			out.AddRange(imaplib.UID(runStart), imaplib.UID(r[1]))
+		for ; j < len(uids) && uids[j] <= r[1]; j++ {
+			if uids[j] > next {
+				out.AddRange(imaplib.UID(next), imaplib.UID(uids[j]-1))
+			}
+			next = uids[j] + 1
+		}
+		if next <= r[1] && next != 0 {
+			out.AddRange(imaplib.UID(next), imaplib.UID(r[1]))
 		}
 	}
-	return out, nil
+	return out
 }
 
 // clipUIDs is set as closed ranges in [1, nextUID-1]; an empty set is all of
@@ -79,7 +90,17 @@ func clipUIDs(set imaplib.UIDSet, nextUID uint32) [][2]uint32 {
 		}
 		out = append(out, [2]uint32{start, min(stop, last)})
 	}
-	return out
+	// In order and apart, so one pass over the folder's uids serves them all.
+	slices.SortFunc(out, func(a, b [2]uint32) int { return cmp.Compare(a[0], b[0]) })
+	merged := out[:0]
+	for _, r := range out {
+		if n := len(merged); n > 0 && r[0] <= merged[n-1][1]+1 {
+			merged[n-1][1] = max(merged[n-1][1], r[1])
+			continue
+		}
+		merged = append(merged, r)
+	}
+	return merged
 }
 
 func inRanges(ranges [][2]uint32, uid uint32) bool {

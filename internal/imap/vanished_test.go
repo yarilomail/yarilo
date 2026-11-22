@@ -3,6 +3,7 @@ package imap
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
 
@@ -42,6 +43,7 @@ func TestVanishedSinceAnswersFromTheFolderPastTheHistory(t *testing.T) {
 		{"past the history, the named uids", []uint32{4}, false, set([2]uint32{2, 4}), set([2]uint32{3, 4})},
 		{"past the history, to *", nil, false, imaplib.UIDSet{{Start: 6, Stop: 0}}, set([2]uint32{7, 7})},
 		{"past the history, nothing gone", nil, false, set([2]uint32{5, 6}), nil},
+		{"past the history, ranges out of order and overlapping", nil, false, imaplib.UIDSet{{Start: 6, Stop: 7}, {Start: 1, Stop: 3}, {Start: 2, Stop: 4}}, set([2]uint32{1, 1}, [2]uint32{3, 4}, [2]uint32{7, 7})},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,5 +55,30 @@ func TestVanishedSinceAnswersFromTheFolderPastTheHistory(t *testing.T) {
 				t.Errorf("VANISHED %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A folder that has used nearly all of the uid space and holds three messages
+// costs what three messages cost: the answer past the history walks the
+// messages, not the uids. A walk over the uids would take minutes here.
+func TestVanishedPastTheHistoryCostsTheMessagesNotTheUIDSpace(t *testing.T) {
+	const next = mailbox.MaxUID + 1
+	held := []*mailbox.MessageMeta{{UID: next - 10}, {UID: 4}, {UID: 500_000}}
+	done := make(chan imaplib.UIDSet, 1)
+	go func() {
+		got, err := vanishedSince(historyBox{reaches: false}, 1, 10, nil, next, held)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- got
+	}()
+	select {
+	case got := <-done:
+		want := imaplib.UIDSet{{Start: 1, Stop: 3}, {Start: 5, Stop: 499_999}, {Start: 500_001, Stop: next - 11}, {Start: next - 9, Stop: next - 1}}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("VANISHED %v, want %v", got, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the answer for three messages walked the uid space")
 	}
 }
