@@ -89,9 +89,7 @@ func dropGUIDExt(t *testing.T, root string) {
 		if err != nil {
 			return err
 		}
-		for _, rec := range f.Records {
-			delete(rec.Ext, "guid")
-		}
+		f.Records = f.Records.Reencode(layout)
 		f.Extensions = layout.Extensions
 		f.Layout = layout
 		f.Header.RecordSize = layout.RecordSize

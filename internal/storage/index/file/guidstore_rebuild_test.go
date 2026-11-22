@@ -163,8 +163,8 @@ func recordsOf(t *testing.T, raw []byte) string {
 		t.Fatal(err)
 	}
 	out := ""
-	for _, r := range f.Records {
-		out += fmt.Sprintf("%d:%x\n", r.UID, r.Ext[extNameGUIDMap])
+	for i := 0; i < f.Records.Len(); i++ {
+		out += fmt.Sprintf("%d:%x\n", f.Records.UID(i), f.Records.ExtNamed(i, extNameGUIDMap))
 	}
 	return out
 }

@@ -29,23 +29,24 @@ func TestTheMdboxRecordMatchesTheReferenceBytes(t *testing.T) {
 	if ext.RecordSize != mdboxRecSize {
 		t.Errorf("their record field is %d bytes, ours %d", ext.RecordSize, mdboxRecSize)
 	}
-	if len(f.Records) == 0 {
+	if f.Records.Len() == 0 {
 		t.Fatal("their index holds no records")
 	}
-	for _, rec := range f.Records {
-		theirs := rec.Ext[extNameMdbox]
+	for i := 0; i < f.Records.Len(); i++ {
+		uid := f.Records.UID(i)
+		theirs := f.Records.ExtNamed(i, extNameMdbox)
 		if len(theirs) != mdboxRecSize {
-			t.Fatalf("uid %d carries %d bytes, want %d", rec.UID, len(theirs), mdboxRecSize)
+			t.Fatalf("uid %d carries %d bytes, want %d", uid, len(theirs), mdboxRecSize)
 		}
 		mapUID := binary.LittleEndian.Uint32(theirs[0:4])
 		saveDate := binary.LittleEndian.Uint32(theirs[4:8])
-		if mapUID != rec.UID {
+		if mapUID != uid {
 			// Their fixture was delivered in order, so the two run together;
 			// this is what says the first field is the map uid at all.
-			t.Errorf("uid %d names map uid %d", rec.UID, mapUID)
+			t.Errorf("uid %d names map uid %d", uid, mapUID)
 		}
 		if got := encodeMdboxRec(mapUID, saveDate); string(got) != string(theirs) {
-			t.Errorf("uid %d: we write % x, they wrote % x", rec.UID, got, theirs)
+			t.Errorf("uid %d: we write % x, they wrote % x", uid, got, theirs)
 		}
 	}
 }
@@ -317,9 +318,7 @@ func stripExt(t *testing.T, path, name string) uint32 {
 	f.Layout = layout
 	f.Header.RecordSize = layout.RecordSize
 	f.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
-	for _, rec := range f.Records {
-		delete(rec.Ext, name)
-	}
+	f.Records = f.Records.Reencode(layout)
 	if _, err := mailindex.Recreate(f.ToRecreateInput(path)); err != nil {
 		t.Fatal(err)
 	}

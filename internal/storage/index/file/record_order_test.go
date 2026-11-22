@@ -17,9 +17,9 @@ func asUnorderedBase(t *testing.T, home string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recs := f.Records
-	for i, j := 0, len(recs)-1; i < j; i, j = i+1, j-1 {
-		recs[i], recs[j] = recs[j], recs[i]
+	var recs []byte
+	for i := f.Records.Len() - 1; i >= 0; i-- {
+		recs = append(recs, f.Records.Raw(i)...)
 	}
 	for i := range f.Extensions {
 		if f.Extensions[i].Name == extNameLineage {
@@ -37,7 +37,7 @@ func asUnorderedBase(t *testing.T, home string) {
 	}
 	hdr := f.Header
 	hdr.HeaderSize = uint32(hdr.BaseHeaderSize) + uint32(len(extBytes))
-	if _, err := mailindex.Recreate(mailindex.RecreateInput{Path: path, Header: hdr, Extensions: layout.Extensions, Records: recs}); err != nil {
+	if _, err := mailindex.Recreate(mailindex.RecreateInput{Path: path, Header: hdr, Extensions: layout.Extensions, RecordBytes: recs}); err != nil {
 		t.Fatal(err)
 	}
 	baseImages.Delete(path)
@@ -97,13 +97,13 @@ func TestABaseOutOfUIDOrderIsOrderedBeforeItIsSearched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i < len(disk.Records); i++ {
-		if disk.Records[i].UID <= disk.Records[i-1].UID {
-			t.Fatalf("on disk record %d has uid %d after %d", i, disk.Records[i].UID, disk.Records[i-1].UID)
+	for i := 1; i < disk.Records.Len(); i++ {
+		if disk.Records.UID(i) <= disk.Records.UID(i-1) {
+			t.Fatalf("on disk record %d has uid %d after %d", i, disk.Records.UID(i), disk.Records.UID(i-1))
 		}
 	}
-	if len(disk.Records) != n-1 {
-		t.Errorf("%d records on disk, want %d", len(disk.Records), n-1)
+	if disk.Records.Len() != n-1 {
+		t.Errorf("%d records on disk, want %d", disk.Records.Len(), n-1)
 	}
 }
 
@@ -150,9 +150,9 @@ func TestAWriterWritesItsBaseInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i < len(disk.Records); i++ {
-		if disk.Records[i].UID <= disk.Records[i-1].UID {
-			t.Fatalf("on disk record %d has uid %d after %d", i, disk.Records[i].UID, disk.Records[i-1].UID)
+	for i := 1; i < disk.Records.Len(); i++ {
+		if disk.Records.UID(i) <= disk.Records.UID(i-1) {
+			t.Fatalf("on disk record %d has uid %d after %d", i, disk.Records.UID(i), disk.Records.UID(i-1))
 		}
 	}
 	if got := mustLineage(t, home).Flags; got&lineageInUIDOrder == 0 {
@@ -189,7 +189,7 @@ func TestABaseWithItsNextUIDLowIsWrittenWithItRaised(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if last := disk.Records[len(disk.Records)-1].UID; disk.Header.NextUID <= last {
+	if last := disk.Records.UID(disk.Records.Len() - 1); disk.Header.NextUID <= last {
 		t.Fatalf("the base was written with next uid %d at or below its last record %d", disk.Header.NextUID, last)
 	}
 	baseImages.Delete(indexPathFor(home))

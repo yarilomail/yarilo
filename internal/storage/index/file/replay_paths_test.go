@@ -179,9 +179,6 @@ func withoutExtension(t *testing.T, home, name string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, r := range f.Records {
-		delete(r.Ext, name)
-	}
 	hdr := f.Header
 	hdr.RecordSize = layout.RecordSize
 	extBytes, err := mailindex.EncodeExtHeaders(layout.Extensions)
@@ -189,7 +186,7 @@ func withoutExtension(t *testing.T, home, name string) {
 		t.Fatal(err)
 	}
 	hdr.HeaderSize = uint32(hdr.BaseHeaderSize) + uint32(len(extBytes))
-	if _, err := mailindex.Recreate(mailindex.RecreateInput{Path: path, Header: hdr, Extensions: layout.Extensions, Records: f.Records}); err != nil {
+	if _, err := mailindex.Recreate(mailindex.RecreateInput{Path: path, Header: hdr, Extensions: layout.Extensions, RecordBytes: f.Records.Reencode(layout).Bytes()}); err != nil {
 		t.Fatal(err)
 	}
 }

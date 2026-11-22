@@ -38,29 +38,36 @@ var logLayout = sync.OnceValues(func() (mailindex.RecordLayout, error) {
 	return mailindex.ComputeRecordLayout(defaultExtensions(0))
 })
 
-func entryToLogRecord(e MapEntry) *mailindex.Record {
-	return &mailindex.Record{
-		UID: e.UID,
-		Ext: map[string][]byte{
-			extMap:  encodeMapExt(e.FileID, e.Offset, e.Size),
-			extRef:  encodeRefExt(e.RefCount),
-			extGUID: encodeGUIDExt(e.GUID),
-		},
+// encodeEntry is e as a mailindex record of layout, for the log and a v1 base.
+func encodeEntry(layout mailindex.RecordLayout, e MapEntry) ([]byte, error) {
+	rec := layout.NewRecord(e.UID, 0)
+	for _, x := range []struct {
+		name string
+		data []byte
+	}{
+		{extMap, encodeMapExt(e.FileID, e.Offset, e.Size)},
+		{extRef, encodeRefExt(e.RefCount)},
+		{extGUID, encodeGUIDExt(e.GUID)},
+	} {
+		if err := layout.SetExt(rec, x.name, x.data); err != nil {
+			return nil, err
+		}
 	}
+	return rec, nil
 }
 
-func logRecordToEntry(rec mailindex.Record) (MapEntry, error) {
-	fileID, offset, size, err := decodeMapExt(rec.Ext[extMap])
+func decodeEntry(layout mailindex.RecordLayout, rec []byte) (MapEntry, error) {
+	fileID, offset, size, err := decodeMapExt(layout.ExtOf(rec, extMap))
 	if err != nil {
 		return MapEntry{}, fmt.Errorf("decode map ext: %w", err)
 	}
 	return MapEntry{
-		UID:      rec.UID,
+		UID:      mailindex.RecordUID(rec),
 		FileID:   fileID,
 		Offset:   offset,
 		Size:     size,
-		RefCount: decodeRefExt(rec.Ext[extRef]),
-		GUID:     decodeGUIDExt(rec.Ext[extGUID]),
+		RefCount: decodeRefExt(layout.ExtOf(rec, extRef)),
+		GUID:     decodeGUIDExt(layout.ExtOf(rec, extGUID)),
 	}, nil
 }
 
@@ -124,9 +131,11 @@ func (m *Map) appendLogLocked(entries []MapEntry) error {
 	if err != nil {
 		return fmt.Errorf("mdboxmap/log: layout: %w", err)
 	}
-	recs := make([]*mailindex.Record, len(entries))
+	recs := make([][]byte, len(entries))
 	for i, e := range entries {
-		recs[i] = entryToLogRecord(e)
+		if recs[i], err = encodeEntry(layout, e); err != nil {
+			return fmt.Errorf("mdboxmap/log: encode: %w", err)
+		}
 	}
 	payload, err := mailindex.EncodeTxAppendPayload(layout, recs)
 	if err != nil {
@@ -343,18 +352,15 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 			continue
 		}
 		for i := 0; i+stride <= len(payload); i += stride {
-			rec, rderr := mailindex.DecodeRecord(payload[i:i+stride], layout)
-			if rderr != nil {
-				break
-			}
-			_, dup, gerr := m.st.get(rec.UID)
+			rec := payload[i : i+stride]
+			_, dup, gerr := m.st.get(mailindex.RecordUID(rec))
 			if gerr != nil {
 				return fromOffset, fmt.Errorf("mdboxmap/log: %w", gerr)
 			}
 			if dup {
 				continue
 			}
-			e, cerr := logRecordToEntry(rec)
+			e, cerr := decodeEntry(layout, rec)
 			if cerr != nil {
 				break
 			}

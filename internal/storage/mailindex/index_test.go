@@ -24,8 +24,8 @@ func TestNewFileEmptyHasMatchingHeader(t *testing.T) {
 		t.Errorf("Header.HeaderSize=%d, BaseHeaderSize=%d (must be greater because we have extensions)",
 			f.Header.HeaderSize, f.Header.BaseHeaderSize)
 	}
-	if len(f.Records) != 0 {
-		t.Errorf("fresh file has %d records, want 0", len(f.Records))
+	if f.Records != nil && f.Records.Len() != 0 {
+		t.Errorf("fresh file has %d records, want 0", f.Records.Len())
 	}
 }
 
@@ -46,8 +46,9 @@ func TestRecreateReadRoundTrip(t *testing.T) {
 	f.Header.NextUID = 6
 	f.Header.MessagesCount = 5
 	f.Header.SeenMessagesCount = 3
+	var want []testRec
 	for uid := uint32(1); uid <= 5; uid++ {
-		f.Records = append(f.Records, &Record{
+		want = append(want, testRec{
 			UID:   uid,
 			Flags: FlagSeen,
 			Ext: map[string][]byte{
@@ -56,6 +57,7 @@ func TestRecreateReadRoundTrip(t *testing.T) {
 			},
 		})
 	}
+	setTestRecs(f, want)
 
 	if _, err := Recreate(f.ToRecreateInput(path)); err != nil {
 		t.Fatalf("Recreate: %v", err)
@@ -76,18 +78,18 @@ func TestRecreateReadRoundTrip(t *testing.T) {
 	if got.Header.RecordSize != f.Header.RecordSize {
 		t.Errorf("RecordSize drift: got %d, want %d", got.Header.RecordSize, f.Header.RecordSize)
 	}
-	if len(got.Records) != len(f.Records) {
-		t.Fatalf("records count: got %d, want %d", len(got.Records), len(f.Records))
+	if got.Records.Len() != len(want) {
+		t.Fatalf("records count: got %d, want %d", got.Records.Len(), len(want))
 	}
-	for i, want := range f.Records {
-		if got.Records[i].UID != want.UID {
-			t.Errorf("rec %d UID: got %d, want %d", i, got.Records[i].UID, want.UID)
+	for i, want := range want {
+		if got.Records.UID(i) != want.UID {
+			t.Errorf("rec %d UID: got %d, want %d", i, got.Records.UID(i), want.UID)
 		}
-		if got.Records[i].Flags != want.Flags {
-			t.Errorf("rec %d Flags: got 0x%02x, want 0x%02x", i, got.Records[i].Flags, want.Flags)
+		if got.Records.Flags(i) != want.Flags {
+			t.Errorf("rec %d Flags: got 0x%02x, want 0x%02x", i, got.Records.Flags(i), want.Flags)
 		}
 		for name, wantBytes := range want.Ext {
-			if !bytes.Equal(got.Records[i].Ext[name], wantBytes) {
+			if !bytes.Equal(got.Records.ExtNamed(i, name), wantBytes) {
 				t.Errorf("rec %d ext %q drift", i, name)
 			}
 		}
@@ -239,7 +241,7 @@ func TestAddHeaderExtension(t *testing.T) {
 	// Header must now match the encoded extensions, else Recreate rejects it.
 	path := filepath.Join(t.TempDir(), "yarilo.index")
 	if _, err := Recreate(RecreateInput{
-		Path: path, Header: f.Header, Extensions: f.Extensions, Records: f.Records,
+		Path: path, Header: f.Header, Extensions: f.Extensions,
 	}); err != nil {
 		t.Fatalf("Recreate after AddHeaderExtension (HeaderSize not fixed up?): %v", err)
 	}

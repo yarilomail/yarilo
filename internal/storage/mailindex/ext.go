@@ -50,7 +50,7 @@ type Extension struct {
 
 // RecordLayout summarises the per-record byte layout of the
 // index: total record size and the per-extension offset table
-// that EncodeRecord/DecodeRecord look up.
+// that NewRecord, ExtOf and SetExt look up.
 //
 // RecordSize equals RecordMinSize + sum of every extension's
 // RecordSize, rounded so each extension's RecordOffset honours

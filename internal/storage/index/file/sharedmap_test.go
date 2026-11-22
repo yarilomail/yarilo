@@ -297,7 +297,10 @@ func TestAFoldExtendsOnlyTheSameBaseAndTheSameLog(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				mf.Records = mf.Records[:3]
+				all := mf.Records.Bytes()
+				if mf.Records, err = mailindex.ChunksFromBytes(all[:3*int(mf.Layout.RecordSize)], mf.Layout); err != nil {
+					t.Fatal(err)
+				}
 				mf.Header.MessagesCount = 3
 				if _, err := mailindex.Recreate(mf.ToRecreateInput(base)); err != nil {
 					t.Fatal(err)

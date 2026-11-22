@@ -108,10 +108,17 @@ func (r *Records) SeqOfUID(uid uint32) (int, bool) {
 	return seq, seq < r.n && r.UID(seq) == uid
 }
 
-// Record decodes the record at seq into the map form, for the callers that
-// still take it.
-func (r *Records) Record(seq int) (Record, error) {
-	return DecodeRecord(r.rec(seq), r.layout)
+// Raw is a copy of the record at seq as it lies on disk.
+func (r *Records) Raw(seq int) []byte { return append([]byte(nil), r.rec(seq)...) }
+
+// ExtNamed is Ext by the extension's name; nil when the layout carries no
+// record bytes for it.
+func (r *Records) ExtNamed(seq int, name string) []byte {
+	id, ok := r.layout.ExtID(name)
+	if !ok {
+		return nil
+	}
+	return r.Ext(seq, id)
 }
 
 // ChunksFromBytes splits a records section, as read from disk, into chunks
@@ -134,18 +141,6 @@ func ChunksFromBytes(raw []byte, layout RecordLayout) (*Records, error) {
 		out.chunks[ci].Store(&Chunk{raw: b, size: size, n: end - start, owner: out.w})
 	}
 	return out, nil
-}
-
-// ChunksFromRecords encodes the map form into chunks.
-func ChunksFromRecords(recs []*Record, layout RecordLayout) (*Records, error) {
-	raw := make([]byte, len(recs)*int(layout.RecordSize))
-	for i, rec := range recs {
-		off := i * int(layout.RecordSize)
-		if err := EncodeRecord(raw[off:off+int(layout.RecordSize)], layout, rec); err != nil {
-			return nil, err
-		}
-	}
-	return ChunksFromBytes(raw, layout)
 }
 
 // Bytes is the records section as it lies on disk; every chunk is loaded.

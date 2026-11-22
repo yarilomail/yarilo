@@ -15,8 +15,9 @@ import (
 type File struct {
 	Header     Header
 	Extensions []Extension
-	Records    []*Record
-	Layout     RecordLayout
+	// Records are the file's records as they lie on disk, all loaded.
+	Records *Records
+	Layout  RecordLayout
 }
 
 // Open reads and parses the .index file at path. Returns
@@ -70,9 +71,8 @@ func Read(r io.Reader) (*File, error) {
 	if hdr.RecordSize == 0 {
 		return nil, fmt.Errorf("mailindex/read: header has zero RecordSize: %w", ErrCorrupted)
 	}
-	// Rebuild the layout from the extensions we just read so
-	// EncodeRecord/DecodeRecord can find each extension's
-	// (record_offset, record_size). We don't trust the
+	// Rebuild the layout from the extensions we just read so the
+	// accessors can find each extension's (record_offset, record_size). We don't trust the
 	// in-record offsets from the on-disk ext table blindly -
 	// re-deriving them lets us catch corrupt layouts.
 	layout, err := ComputeRecordLayout(exts)
@@ -96,24 +96,13 @@ func Read(r io.Reader) (*File, error) {
 		return nil, fmt.Errorf("mailindex/read: header RecordSize=%d, layout=%d: %w",
 			hdr.RecordSize, layout.RecordSize, ErrCorrupted)
 	}
-	recBuf := make([]byte, hdr.RecordSize)
-	var records []*Record
-	for {
-		_, err := io.ReadFull(r, recBuf)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if errors.Is(err, io.ErrUnexpectedEOF) {
-				return nil, fmt.Errorf("mailindex/read: trailing partial record: %w", ErrShortRead)
-			}
-			return nil, fmt.Errorf("mailindex/read: record: %w", err)
-		}
-		rec, err := DecodeRecord(recBuf, layout)
-		if err != nil {
-			return nil, fmt.Errorf("mailindex/read: decode record: %w", err)
-		}
-		records = append(records, &rec)
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("mailindex/read: record: %w", err)
+	}
+	records, err := ChunksFromBytes(raw, layout)
+	if err != nil {
+		return nil, fmt.Errorf("mailindex/read: %w", err)
 	}
 	return &File{
 		Header:     hdr,
@@ -219,10 +208,9 @@ func (f *File) addExtension(name string, hdrData []byte, recordSize, recordAlign
 // RecreateInput ready to pass to Recreate. Convenience for
 // callers that read, mutate, and write back the same file.
 func (f *File) ToRecreateInput(path string) RecreateInput {
-	return RecreateInput{
-		Path:       path,
-		Header:     f.Header,
-		Extensions: f.Extensions,
-		Records:    f.Records,
+	in := RecreateInput{Path: path, Header: f.Header, Extensions: f.Extensions}
+	if f.Records != nil {
+		in.RecordBytes = f.Records.Bytes()
 	}
+	return in
 }

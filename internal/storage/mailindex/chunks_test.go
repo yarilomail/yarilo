@@ -20,14 +20,14 @@ func chunkLayout(t *testing.T) RecordLayout {
 	return l
 }
 
-func chunkRecs(l RecordLayout, n int) []*Record {
-	out := make([]*Record, n)
+func chunkRecs(l RecordLayout, n int) []testRec {
+	out := make([]testRec, n)
 	for i := range out {
 		g := make([]byte, 16)
 		binary.LittleEndian.PutUint32(g, uint32(i))
 		ms := make([]byte, 8)
 		binary.LittleEndian.PutUint64(ms, uint64(1000+i))
-		out[i] = &Record{UID: uint32(2*i + 1), Flags: MailFlag(i % 32), Ext: map[string][]byte{"guid": g, "modseq": ms}}
+		out[i] = testRec{UID: uint32(2*i + 1), Flags: MailFlag(i % 32), Ext: map[string][]byte{"guid": g, "modseq": ms}}
 	}
 	return out
 }
@@ -38,7 +38,7 @@ func TestChunksReadAsTheRecordsTheyHold(t *testing.T) {
 	l := chunkLayout(t)
 	for _, n := range []int{0, 1, ChunkRecords - 1, ChunkRecords, ChunkRecords + 1, 3*ChunkRecords + 17} {
 		recs := chunkRecs(l, n)
-		r, err := ChunksFromRecords(recs, l)
+		r, err := testChunks(l, recs)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,23 +47,14 @@ func TestChunksReadAsTheRecordsTheyHold(t *testing.T) {
 		}
 		gid, _ := l.ExtID("guid")
 		for seq, want := range recs {
-			got, err := r.Record(seq)
-			if err != nil {
-				t.Fatal(err)
-			}
 			if r.UID(seq) != want.UID || r.Flags(seq) != want.Flags || !bytes.Equal(r.Ext(seq, gid), want.Ext["guid"]) {
 				t.Fatalf("n=%d seq %d: uid %d flags %d guid %x, want %d %d %x", n, seq, r.UID(seq), r.Flags(seq), r.Ext(seq, gid), want.UID, want.Flags, want.Ext["guid"])
 			}
-			if !reflect.DeepEqual(got.Ext["modseq"], want.Ext["modseq"]) {
-				t.Fatalf("n=%d seq %d: modseq %x, want %x", n, seq, got.Ext["modseq"], want.Ext["modseq"])
+			if !reflect.DeepEqual(r.ExtNamed(seq, "modseq"), want.Ext["modseq"]) {
+				t.Fatalf("n=%d seq %d: modseq %x, want %x", n, seq, r.ExtNamed(seq, "modseq"), want.Ext["modseq"])
 			}
 		}
-		raw := make([]byte, n*int(l.RecordSize))
-		for i, rec := range recs {
-			if err := EncodeRecord(raw[i*int(l.RecordSize):(i+1)*int(l.RecordSize)], l, rec); err != nil {
-				t.Fatal(err)
-			}
-		}
+		raw := encodeTestRecs(l, recs)
 		if !bytes.Equal(r.Bytes(), raw) {
 			t.Fatalf("n=%d: Bytes differs from the encoded records", n)
 		}
@@ -73,7 +64,7 @@ func TestChunksReadAsTheRecordsTheyHold(t *testing.T) {
 // A uid is found by binary search; a uid between two is not.
 func TestChunksFindAUIDBySearch(t *testing.T) {
 	l := chunkLayout(t)
-	r, err := ChunksFromRecords(chunkRecs(l, 2*ChunkRecords+5), l)
+	r, err := testChunks(l, chunkRecs(l, 2*ChunkRecords+5))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +94,7 @@ func TestChunksRefuseAPartialRecord(t *testing.T) {
 // Building chunks allocates per chunk, not per record: the point of the form.
 func TestChunksAllocatePerChunk(t *testing.T) {
 	l := chunkLayout(t)
-	raw, err := ChunksFromRecords(chunkRecs(l, 10*ChunkRecords), l)
+	raw, err := testChunks(l, chunkRecs(l, 10*ChunkRecords))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -81,9 +81,9 @@ func (fs *folderState) recsDeferred() bool {
 	return fs.recs != nil && !fs.recs.AllLoaded()
 }
 
-// The write half, for the one journal replay (INDEX-MEMORY.md §4): decoded
-// records are changed as before, a view's records through the structure, which
-// copies a chunk only while a snapshot shares it.
+// The write half, for the one journal replay (INDEX-MEMORY.md §4): records
+// change through the structure, which copies a chunk only while a snapshot
+// shares it.
 
 // recSeqOfUID finds a uid by search in the chunks' uid order.
 func (fs *folderState) recSeqOfUID(uid uint32) (int, bool) {
@@ -239,7 +239,7 @@ func (fs *folderState) orderRecords() {
 var nowUnix = func() int64 { return time.Now().Unix() }
 
 // recordBuilder writes one record's fields straight into its bytes in the
-// folder's layout: what a base is built from, without a decoded record.
+// folder's layout: what a base is built from.
 type recordBuilder struct {
 	layout mailindex.RecordLayout
 	raw    []byte
@@ -270,8 +270,7 @@ func newRecordIn(layout mailindex.RecordLayout, uid uint32, flags mailindex.Mail
 	return b
 }
 
-// set writes an extension's bytes; one the layout does not carry is dropped,
-// as the encoder of decoded records dropped it.
+// set writes an extension's bytes; one the layout does not carry is dropped.
 func (b recordBuilder) set(name string, v []byte) {
 	id, ok := b.layout.ExtID(name)
 	if !ok {

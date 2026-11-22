@@ -120,7 +120,7 @@ func replayStart(h lineageHdr, logLineage uint32) (offset int64, paired bool) {
 
 // digestRecords hashes what a reader would serve, in file order, with FNV-1a --
 // a change detector for our own file, not a defence against a forged one. Runs
-// over records already in memory, chunked or decoded alike, so the proof costs
+// over the chunks already in memory, so the proof costs
 // no I/O beyond the header.
 func (fs *folderState) digestRecords() uint64 {
 	const (

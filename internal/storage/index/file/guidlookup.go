@@ -124,7 +124,7 @@ func (u *userIndex) dropGUIDLookup() {
 	}
 }
 
-// errGUIDNoChunks is a view holding decoded records: answered by a read of all.
+// errGUIDNoChunks is a view with no chunks or no lookup: answered by a scan.
 var errGUIDNoChunks = errors.New("fileindex/guid-lookup: the store's view has no chunks")
 
 // errGUIDLookupUnread is a lookup whose read failed: dropped and rebuilt.

@@ -31,9 +31,8 @@ type RecreateInput struct {
 	Path       string
 	Header     Header
 	Extensions []Extension
-	Records    []*Record
-	// RecordBytes, when set, is the records section as it goes to disk, in
-	// the layout of Extensions, written instead of encoding Records.
+	// RecordBytes is the records section as it goes to disk, in the layout of
+	// Extensions.
 	RecordBytes []byte
 	KeepBackup  bool
 	Fsync       bool
@@ -107,19 +106,6 @@ func Recreate(in RecreateInput) (backupPath string, err error) {
 		if _, err := f.Write(in.RecordBytes); err != nil {
 			cleanup(true)
 			return "", fmt.Errorf("mailindex/recreate: write records: %w", err)
-		}
-	} else if layout.RecordSize > 0 && len(in.Records) > 0 {
-		stride := int(layout.RecordSize)
-		buf := make([]byte, stride)
-		for i, rec := range in.Records {
-			if err := EncodeRecord(buf, layout, rec); err != nil {
-				cleanup(true)
-				return "", fmt.Errorf("mailindex/recreate: encode rec %d: %w", i, err)
-			}
-			if _, err := f.Write(buf); err != nil {
-				cleanup(true)
-				return "", fmt.Errorf("mailindex/recreate: write rec %d: %w", i, err)
-			}
 		}
 	}
 	if in.Fsync {
