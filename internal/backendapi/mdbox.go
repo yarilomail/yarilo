@@ -40,6 +40,7 @@ type mdboxPurgeResponse struct {
 // zero-ref records; the map rewrite is atomic so live map_uids
 // stay valid.
 func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
+	noWriteDeadline(w)
 	var req mdboxPurgeRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -77,6 +78,12 @@ func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiJSON(w, purgeResponse(stats))
+}
+
+// noWriteDeadline lifts the server's write timeout: a purge takes as long as
+// the store needs, and its answer must still reach the caller (#2672).
+func noWriteDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 }
 
 type purger interface {
@@ -117,6 +124,7 @@ type mdboxAltMoveResponse struct {
 // (Reverse=true for alt→primary), filtered by InternalDate < Before.
 // Mark + purge in one atomic call per file.
 func (s *Server) handleMdboxAltMove(w http.ResponseWriter, r *http.Request) {
+	noWriteDeadline(w)
 	var req mdboxAltMoveRequest
 	if !decodeJSON(w, r, &req) {
 		return
