@@ -183,8 +183,8 @@ func TestARefusedRowSkipsOneMessageNotTheBatch(t *testing.T) {
 
 // A reconcile ending between the rows and the records leaves rows below the
 // index's next uid, which read like expunged ones. Unlike the reference, whose
-// list hands out the uids, they heal in two passes under new uids, and the
-// second pass runs on its own, with no change in the folder (#1745, #2663).
+// list hands out the uids, they heal under new uids: one open, whose reconcile
+// waits in its first pass and decides in its second (#1745, #2663).
 func TestRowsWrittenWithoutRecordsHealOnTheNextSync(t *testing.T) {
 	box, idx, f, root := openMaildir(t, "u3@example.com")
 	rec := mailbox.Driver(box).(reconciler)
@@ -200,34 +200,19 @@ func TestRowsWrittenWithoutRecordsHealOnTheNextSync(t *testing.T) {
 		t.Fatal("the seam did not end the reconcile")
 	}
 	stop()
-
-	session := mailboxbase.Open(box, idx)
-	open := func() {
-		t.Helper()
-		if _, err := session.Folder("INBOX", f.UIDValidity); err != nil {
-			t.Fatal(err)
-		}
+	if msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{}); err != nil || len(msgs) != 0 {
+		t.Fatalf("the stopped reconcile left %d records, %v; want none", len(msgs), err)
 	}
-	open()
+
+	if _, err := mailboxbase.Open(box, idx).Folder("INBOX", f.UIDValidity); err != nil {
+		t.Fatal(err)
+	}
 	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ents, err := os.ReadDir(filepath.Join(root, "cur"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(msgs) != 0 || len(ents) != 3 {
-		t.Fatalf("after the first pass: %d records and %d files, want none and the three", len(msgs), len(ents))
-	}
-
-	open() // nothing in the folder changed since
-	msgs, err = idx.GetMessages(f.ID, mailbox.SeqSet{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if len(msgs) != 3 {
-		t.Fatalf("the folder holds %d records after the second pass, want 3: it did not run", len(msgs))
+		t.Fatalf("the folder holds %d records after the open, want 3: its second pass did not run", len(msgs))
 	}
 	for _, m := range msgs {
 		if m.UID <= 3 {

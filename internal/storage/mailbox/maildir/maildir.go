@@ -808,9 +808,6 @@ type userMailbox struct {
 	pending map[string][16]byte
 	// received holds a save's INTERNALDATE until AssignUID publishes it (#2175).
 	received map[string]time.Time
-	// racing holds, per folder, the listed files the last reconcile found with
-	// no record under a uid the index gave up; guarded by mu (#2663).
-	racing map[string]map[string]uint32
 }
 
 // withMailboxLockSite serialises this pod's own sessions. A second process is
@@ -1742,7 +1739,28 @@ func (u *userMailbox) ReconcileArrivals(box mailbox.Box, idx mailbox.UserIndex, 
 }
 
 func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool) (mailbox.SyncStats, error) {
+	st, racing, err := u.reconcileOnce(idx, folder, arrivalsOnly, nil)
+	if err != nil || len(racing) == 0 {
+		return st, err
+	}
+	// A listed file with no record under its uid is decided by a second, whole
+	// pass in the same call, as the reference's sync runs again: no session has
+	// to come back for it, and an arrivals pass would not see the file (#2663).
+	again, _, err := u.reconcileOnce(idx, folder, false, racing)
+	st.Imported += again.Imported
+	st.Expunged += again.Expunged
+	st.Updated += again.Updated
+	st.Relinked += again.Relinked
+	st.Deferred = again.Deferred
+	st.Changed = st.Changed || again.Changed
+	return st, err
+}
+
+// reconcileOnce is one pass; wasRacing is what the pass before it in the same
+// call left waiting, and it returns what this one left.
+func (u *userMailbox) reconcileOnce(idx mailbox.UserIndex, folder *mailbox.Folder, arrivalsOnly bool, wasRacing map[string]uint32) (mailbox.SyncStats, map[string]uint32, error) {
 	var st mailbox.SyncStats
+	nowRacing := map[string]uint32{}
 	// The pass reads the list against its file: a window left open since the
 	// last pass hides the rows other processes wrote meanwhile (#2181).
 	u.folderCacheFor(folder.Name).closeWindow("reconcile")
@@ -1769,7 +1787,7 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		// never opened mail lies.
 		release, cerr := u.sharedCrypt(folder.Name, lockSiteReconcileMove)
 		if cerr != nil {
-			return st, cerr
+			return st, nil, cerr
 		}
 		err := u.withMailboxLockSite(folder.Name, lockSiteReconcileMove, func() error {
 			var merr error
@@ -1778,7 +1796,7 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		})
 		release()
 		if err != nil {
-			return st, err
+			return st, nowRacing, err
 		}
 	}
 
@@ -1796,7 +1814,7 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		scanned, err = u.Scan(folder.Name)
 	}
 	if err != nil {
-		return st, fmt.Errorf("maildir/sync: scan: %w", err)
+		return st, nil, fmt.Errorf("maildir/sync: scan: %w", err)
 	}
 	if afterScan != nil {
 		afterScan()
@@ -1809,10 +1827,10 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		// Nothing arrived, and absence is not this pass's business: the whole
 		// cost was one readdir of an empty new/ (#1952).
 		metricPartialEmpty.Inc()
-		return st, nil
+		return st, nil, nil
 	}
 	if !arrivalsOnly && u.reconcileIsClean(idx, folder, scanned) {
-		return st, nil
+		return st, nil, nil
 	}
 
 	// The list for the whole apply, taken before the mailbox: another process's
@@ -1820,7 +1838,7 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 	// two in this order (#2184).
 	releaseList, err := u.holdList(folder.Name, lockSiteReconcileApply)
 	if err != nil {
-		return st, err
+		return st, nowRacing, err
 	}
 	defer releaseList()
 	err = u.withMailboxLockSite(folder.Name, lockSiteReconcileApply, func() (rerr error) {
@@ -1856,18 +1874,6 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 				if !p.done {
 					mailbox.ReleaseUID(idx, folder.ID, p.meta.UID)
 				}
-			}
-		}()
-		wasRacing := u.racing[folder.Name]
-		nowRacing := map[string]uint32{}
-		defer func() {
-			if u.racing == nil {
-				u.racing = map[string]map[string]uint32{}
-			}
-			if len(nowRacing) == 0 {
-				delete(u.racing, folder.Name)
-			} else {
-				u.racing[folder.Name] = nowRacing
 			}
 		}()
 		var reissue map[string]struct{}
@@ -2168,7 +2174,7 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		return nil
 	})
 	st.Changed = st.Imported > 0 || st.Expunged > 0 || st.Updated > 0 || st.Relinked > 0
-	return st, err
+	return st, nowRacing, err
 }
 
 // testAfterImportRows runs when an import's rows are written and its records

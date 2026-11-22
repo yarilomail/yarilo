@@ -666,8 +666,8 @@ type SyncStats struct {
 	// Relinked counts records whose list row was written back rather than
 	// their message being imported a second time (#1785).
 	Relinked int
-	// Deferred counts files left for the next pass to decide on: it must run
-	// without a change in the folder to start it (#2663).
+	// Deferred counts files a pass left to the second pass of the same call;
+	// none is left once the call returns (#2663).
 	Deferred int
 	Changed  bool
 }

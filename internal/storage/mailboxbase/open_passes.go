@@ -286,13 +286,7 @@ func (b *Box) reconcile(folder string, f *mailbox.Folder) bool {
 		after = token
 	}
 	hotAfter, dirtyAfter, _ := b.syncDirtiness(ps, folder)
-	if st.Deferred > 0 {
-		// A pass that left a file to decide on owes the next one, as the
-		// reference resets the cur/ check time: no token, so it walks again.
-		syncTokens.forget(key)
-	} else {
-		syncTokens.put(key, after, time.Now(), dirtyAfter || hotAfter)
-	}
+	syncTokens.put(key, after, time.Now(), dirtyAfter || hotAfter)
 	if !st.Changed {
 		return false
 	}

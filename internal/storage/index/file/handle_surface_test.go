@@ -120,8 +120,8 @@ func TestTheAltTierMarkFollowsTheMovedNames(t *testing.T) {
 	home := t.TempDir()
 	a, b := process(t, home, dial()), process(t, home, dial())
 	f := inbox(t, a)
-	for uid, mapUID := range map[uint32]uint32{1: 5, 2: 6} {
-		if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uid, Size: 10, MapUID: mapUID}); err != nil {
+	for _, r := range []struct{ uid, mapUID uint32 }{{1, 5}, {2, 6}} { // in uid order: a lower uid after a higher one is refused
+		if err := a.AppendMessage(f.ID, &mailbox.MessageMeta{UID: r.uid, Size: 10, MapUID: r.mapUID}); err != nil {
 			t.Fatal(err)
 		}
 	}

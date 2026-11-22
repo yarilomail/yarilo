@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	fileidx "github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -73,28 +75,58 @@ func uidsOf(t *testing.T, idx mailbox.UserIndex, folderID uint64) map[uint32]boo
 }
 
 // A record expunged in one process while its file and row are still there is
-// an expunge another process's reconcile must not undo: once it waits, twice
-// the file takes a new uid, and the expunged uid never returns (#2663).
+// an expunge another process's reconcile must not undo. One call decides it in
+// two passes, as the reference's sync runs again: the file takes a new uid,
+// and the expunged uid never returns (#2663).
 func TestAnExpungedUIDDoesNotComeBack(t *testing.T) {
 	r := newRaceFolder(t)
 	if err := r.ia.ExpungeMessage(r.fa.ID, 2); err != nil {
 		t.Fatal(err)
 	}
-	if st := r.reconcileB(t); st.Imported != 0 {
-		t.Fatalf("the first pass imported %d; it waits for the expunge to finish", st.Imported)
+	waited := testutil.ToFloat64(metricExpungeRace.WithLabelValues("wait"))
+	renamed := testutil.ToFloat64(metricExpungeRace.WithLabelValues("new-uid"))
+	if st := r.reconcileB(t); st.Imported != 1 || st.Deferred != 0 {
+		t.Fatalf("the call imported %d and left %d waiting; want the file under a new uid, nothing left", st.Imported, st.Deferred)
 	}
-	if uidsOf(t, r.ib, r.fb.ID)[2] {
-		t.Fatal("the first pass brought uid 2 back")
-	}
-	if st := r.reconcileB(t); st.Imported != 1 {
-		t.Fatalf("the second pass imported %d, want the file under a new uid", st.Imported)
+	if w, n := testutil.ToFloat64(metricExpungeRace.WithLabelValues("wait"))-waited,
+		testutil.ToFloat64(metricExpungeRace.WithLabelValues("new-uid"))-renamed; w != 1 || n != 1 {
+		t.Fatalf("one call waited %v and renamed %v times; want one of each, both passes in it", w, n)
 	}
 	uids := uidsOf(t, r.ib, r.fb.ID)
 	if uids[2] || len(uids) != 3 {
-		t.Fatalf("after the second pass the folder holds %v; want 1, 3 and one new uid, never 2", uids)
+		t.Fatalf("the folder holds %v; want 1, 3 and one new uid, never 2", uids)
 	}
 	if st := r.reconcileB(t); st.Imported != 0 || st.Expunged != 0 {
-		t.Fatalf("a third pass changed %+v", st)
+		t.Fatalf("the next call changed %+v", st)
+	}
+}
+
+// An arrivals pass that meets such a file in new/ hands it to a whole second
+// pass: one over new/ alone would find it already moved and decide nothing.
+func TestAnArrivalsPassDecidesItsWaitingFile(t *testing.T) {
+	r := newRaceFolder(t)
+	msgs, err := r.ia.GetMessages(r.fa.ID, mailbox.SeqSet{{From: 2, To: 2}})
+	if err != nil || len(msgs) != 1 {
+		t.Fatal(err)
+	}
+	name, err := mailboxbase.Open(r.a, r.ia).MessagePath("INBOX", msgs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := r.a.folderPath("INBOX")
+	if err := os.Rename(filepath.Join(dir, "cur", name), filepath.Join(dir, "new", maildirBase(name))); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ia.ExpungeMessage(r.fa.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	st, err := r.b.ReconcileArrivals(mailboxbase.Open(r.b, r.ib), r.ib, r.fb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uids := uidsOf(t, r.ib, r.fb.ID)
+	if st.Imported != 1 || uids[2] || len(uids) != 3 {
+		t.Fatalf("the call imported %d and the folder holds %v; want the file under a new uid, never 2", st.Imported, uids)
 	}
 }
 
