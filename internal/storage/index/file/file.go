@@ -467,10 +467,6 @@ func (h *userHandle) GetPOP3UIDLsUnlocked(folderID uint64) (map[uint32]string, e
 	return h.stamped(folderID).GetPOP3UIDLsUnlocked(folderID)
 }
 
-func (h *userHandle) VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	return h.stamped(folderID).VanishedUnlocked(folderID, sinceModSeq)
-}
-
 func (h *userHandle) KeywordsUnlocked(folderID uint64) ([]string, error) {
 	return h.stamped(folderID).KeywordsUnlocked(folderID)
 }
@@ -497,7 +493,7 @@ func (h *userHandle) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error 
 func (h *userHandle) ExpungeMessage(folderID uint64, uid uint32) error {
 	return h.stamped(folderID).ExpungeMessage(folderID, uid)
 }
-func (h *userHandle) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
+func (h *userHandle) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, bool, error) {
 	return h.stamped(folderID).Vanished(folderID, sinceModSeq)
 }
 func (h *userHandle) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([]mailbox.ExpungedCopy, bool, error) {

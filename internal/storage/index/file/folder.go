@@ -2074,25 +2074,17 @@ func (u *userIndex) getMessages(folderID uint64, uids mailbox.SeqSet) ([]*mailbo
 }
 
 // Vanished returns every UID expunged with modseq above sinceModSeq, driving
-// the QRESYNC VANISHED response (RFC 7162).
-func (u *userIndex) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	return u.vanished(folderID, sinceModSeq)
-}
-
-// VanishedUnlocked is Vanished for a caller whose answer goes to the client and
-// decides nothing on disk - QRESYNC on SELECT, CHANGEDSINCE on FETCH (#1249).
-func (u *userIndex) VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	return u.vanished(folderID, sinceModSeq)
-}
-
-func (u *userIndex) vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	var out []uint32
-	err := u.withFolderROUnlocked(folderID, func(fs *folderState) error {
-		return fs.scanExpungeRecordsOf(sinceModSeq, func(uid uint32, _ [16]byte) {
-			out = append(out, uid)
+// the QRESYNC VANISHED response (RFC 7162); reaches is false when the history
+// no longer goes back that far, and the list is then not the whole answer.
+func (u *userIndex) Vanished(folderID uint64, sinceModSeq uint64) (uids []uint32, reaches bool, err error) {
+	err = u.withFolderSite(folderID, lockSiteVanishedGuids, func(fs *folderState) error {
+		var herr error
+		reaches, herr = fs.historyLocked(sinceModSeq, func(uid uint32, _ [16]byte) {
+			uids = append(uids, uid)
 		})
+		return herr
 	})
-	return out, err
+	return uids, reaches, err
 }
 
 // Keywords returns the current keyword registry.
@@ -2371,13 +2363,17 @@ func (u *userIndex) OptimizeIndex(folderID uint64) error {
 func (u *userIndex) VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []mailbox.ExpungedCopy, complete bool, err error) {
 	complete = true
 	err = u.withFolderSite(folderID, lockSiteVanishedGuids, func(fs *folderState) error {
-		return fs.scanExpungeRecordsOf(sinceModSeq, func(uid uint32, g [16]byte) {
+		reaches, herr := fs.historyLocked(sinceModSeq, func(uid uint32, g [16]byte) {
 			if g == fs.hdr.MailboxGUID || g == ([16]byte{}) {
 				complete = false
 				return
 			}
 			copies = append(copies, mailbox.ExpungedCopy{UID: uid, GUID: g})
 		})
+		if !reaches {
+			complete = false
+		}
+		return herr
 	})
 	return copies, complete, err
 }
@@ -2562,24 +2558,34 @@ func scanExpungeRecords(indexPath string, sinceModSeq uint64, fn func(uint32, [1
 	return scanLogExpunges(lg, sinceModSeq, fn)
 }
 
-// scanExpungeRecordsOf is scanExpungeRecords over fs's history: the kept log
-// first when the asked state is older than the current log's start.
-func (fs *folderState) scanExpungeRecordsOf(sinceModSeq uint64, fn func(uint32, [16]byte)) error {
+// historyLocked decides and reads under the one hold its caller has: the floor
+// and the expunges come from the same kept log, which no fold or ageing can
+// replace in between. reaches false says the floor is above sinceModSeq, and
+// nothing is scanned.
+func (fs *folderState) historyLocked(sinceModSeq uint64, fn func(uint32, [16]byte)) (bool, error) {
+	fs.pruneKeptLogLocked(fs.log2MaxAge)
+	kept, keptOK := fs.keptLog(fs.log2MaxAge)
+	if keptOK {
+		defer kept.close()
+	}
+	floor := fs.stampedFloorLocked()
+	if keptOK && kept.hdr.InitialModSeq != 0 && kept.hdr.InitialModSeq < floor {
+		floor = kept.hdr.InitialModSeq
+	}
+	if floor > sinceModSeq {
+		return false, nil
+	}
 	lg, err := openLogRead(fs.indexPath)
 	if err != nil {
-		return fmt.Errorf("fileindex/log scan: open: %w", err)
+		return false, fmt.Errorf("fileindex/log scan: open: %w", err)
 	}
 	defer lg.close()
-	if !lg.ok || lg.hdr.InitialModSeq == 0 || sinceModSeq < lg.hdr.InitialModSeq {
-		if kept, ok := fs.keptLog(fs.log2MaxAge); ok {
-			serr := scanLogExpunges(kept, sinceModSeq, fn)
-			kept.close()
-			if serr != nil {
-				return serr
-			}
+	if keptOK && (!lg.ok || lg.hdr.InitialModSeq == 0 || sinceModSeq < lg.hdr.InitialModSeq) {
+		if err := scanLogExpunges(kept, sinceModSeq, fn); err != nil {
+			return false, err
 		}
 	}
-	return scanLogExpunges(lg, sinceModSeq, fn)
+	return true, scanLogExpunges(lg, sinceModSeq, fn)
 }
 
 func scanLogExpunges(lg *logReader, sinceModSeq uint64, fn func(uint32, [16]byte)) error {
@@ -3730,16 +3736,24 @@ func (fs *folderState) stampExpungeFloorLocked() error {
 // expungeFloorLocked reads the folder's floor. Zero means nothing has ever been
 // folded away, so the log is the whole history.
 func (fs *folderState) expungeFloorLocked() uint64 {
-	ext := findExt(fs.file.Extensions, extNameExpungeFloor)
-	if ext == nil {
+	floor := fs.stampedFloorLocked()
+	if floor == 0 {
 		return 0
 	}
-	floor := decodeExpungeFloor(ext.HdrData)
 	// The kept log holds the history from its start to the last fold.
 	if kept := fs.keptFloorLocked(fs.log2MaxAge); kept != 0 && kept < floor {
 		return kept
 	}
 	return floor
+}
+
+// stampedFloorLocked is the floor the last fold stamped, before the kept log.
+func (fs *folderState) stampedFloorLocked() uint64 {
+	ext := findExt(fs.file.Extensions, extNameExpungeFloor)
+	if ext == nil {
+		return 0
+	}
+	return decodeExpungeFloor(ext.HdrData)
 }
 
 // freezeReload holds every folder view where it is. Test seam: two racing

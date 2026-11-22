@@ -158,7 +158,7 @@ func TestReadersTakeTheLockTheirClassificationSays(t *testing.T) {
 		read func() error
 	}{
 		{"messages", func() error { _, e := ui.GetMessages(f.ID, mailbox.SeqSet{}); return e }},
-		{"vanished", func() error { _, e := ui.Vanished(f.ID, 0); return e }},
+		{"vanished", func() error { _, _, e := ui.Vanished(f.ID, 0); return e }},
 		{"keywords", func() error { _, e := ui.Keywords(f.ID); return e }},
 		{"sizeless uids", func() error { _, e := ui.SizelessUIDs(f.ID); return e }},
 		{"pop3 uidls", func() error { _, e := ui.pop3UIDLs(f.ID); return e }},

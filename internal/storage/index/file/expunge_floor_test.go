@@ -109,7 +109,7 @@ func TestEveryFoldRaisesTheExpungeFloor(t *testing.T) {
 				t.Fatalf("floor is %d before anything was folded, want 0", before)
 			}
 			// The history is there while the log is.
-			if uids, err := u.Vanished(folderID, 0); err != nil || len(uids) == 0 {
+			if uids, _, err := u.Vanished(folderID, 0); err != nil || len(uids) == 0 {
 				t.Fatalf("expunge history missing before the fold: %v %v", uids, err)
 			}
 

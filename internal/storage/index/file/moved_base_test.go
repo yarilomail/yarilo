@@ -284,7 +284,7 @@ func TestEveryReadAnswersTheSameThroughALazyView(t *testing.T) {
 		must("sizeless", sl, err)
 		kw, err := hu.Keywords(f.ID)
 		must("keywords", kw, err)
-		gone, err := hu.Vanished(f.ID, 0)
+		gone, _, err := hu.Vanished(f.ID, 0)
 		must("vanished", gone, err)
 		need, err := hu.GUIDBackfillNeeded(f.ID)
 		must("guid backfill", need, err)

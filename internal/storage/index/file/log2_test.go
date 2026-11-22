@@ -50,14 +50,11 @@ func highestOf(t *testing.T, u *userIndex, folderID uint64) uint64 {
 }
 
 // answers says whether a state is still answered, as Email/changes and
-// VANISHED decide it, and what vanished since.
+// VANISHED each decide it under the lock they read with, and what vanished
+// since; the two must agree.
 func answers(t *testing.T, u *userIndex, folderID, state uint64) (bool, []uint32, []uint32) {
 	t.Helper()
-	floor, err := u.ExpungeFloor(folderID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	copies, _, err := u.VanishedGUIDs(folderID, state)
+	copies, complete, err := u.VanishedGUIDs(folderID, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,11 +62,17 @@ func answers(t *testing.T, u *userIndex, folderID, state uint64) (bool, []uint32
 	for _, c := range copies {
 		byGUID = append(byGUID, c.UID)
 	}
-	vanished, err := u.Vanished(folderID, state)
+	vanished, reaches, err := u.Vanished(folderID, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return floor <= state, byGUID, vanished
+	if complete != reaches {
+		t.Fatalf("Email/changes decided %v and VANISHED %v for one state", complete, reaches)
+	}
+	if !reaches && (len(byGUID) != 0 || len(vanished) != 0) {
+		t.Fatalf("a state past the history was answered with %v and %v", byGUID, vanished)
+	}
+	return reaches, byGUID, vanished
 }
 
 func indexPathOf(t *testing.T, u *userIndex, folderID uint64) string {

@@ -820,13 +820,17 @@ type UserIndex interface {
 	ExpungeMessage(folderID uint64, uid uint32) error
 	// Vanished returns UIDs expunged from folderID with modseq strictly
 	// greater than sinceModSeq. Drives QRESYNC (RFC 7162) SELECT and
-	// UID FETCH (CHANGEDSINCE N VANISHED) responses.
-	Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error)
+	// UID FETCH (CHANGEDSINCE N VANISHED) responses. reaches is false when
+	// the history no longer goes back to sinceModSeq, decided under the same
+	// lock as the read: the caller then answers from the folder itself.
+	Vanished(folderID uint64, sinceModSeq uint64) (uids []uint32, reaches bool, err error)
 	// VanishedGUIDs answers the same question as Vanished by message identity:
 	// a protocol that addresses messages by GUID cannot report a UID, and the
 	// message is gone, so its GUID can be read from nowhere else afterwards.
-	// complete is false when a record in range cannot be named, and the caller
-	// must degrade rather than report a shorter list as the whole truth.
+	// complete is false when a record in range cannot be named, or when the
+	// history no longer goes back to sinceModSeq, decided under the same lock
+	// as the read; the caller must degrade rather than report a shorter list
+	// as the whole truth.
 	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
 	// FolderStamp describes the folder's files without opening it: the sizes
 	// and modification times of the base index and its log. It is a proof of

@@ -166,7 +166,7 @@ func TestReconcile_VanishedFileWritesTombstone(t *testing.T) {
 	if st.Expunged != 1 || st.Imported != 0 {
 		t.Fatalf("stats = %+v, want expunged=1", st)
 	}
-	vanished, err := idx.Vanished(folder.ID, 0)
+	vanished, _, err := idx.Vanished(folder.ID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
