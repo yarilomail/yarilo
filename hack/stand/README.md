@@ -229,7 +229,7 @@ failure; recorded in docs-internal `stand-runs.md` and on the issue.
 
 | Criterion | How |
 |:---|:---|
-| clock in sync | ntpd offset under `ACCEPT_CLOCK_MAX_MS` (1000) |
+| clock in sync | chronyd offset (ntpd when chronyd does not run) under `ACCEPT_CLOCK_MAX_MS` (1000) |
 | port builds, check-plist clean, only the libxapian stage-qa note, port installs | `make BATCH=yes clean makesum build stage check-plist stage-qa`, then `deinstall install`, with `DISTVERSION` set and the module fetched from the Go proxy |
 | installed version | `pkg info` names the module version |
 | processes running | `service yarilo status` after a restart on the installed binaries: `ACCEPT_PROCS` (17) |
