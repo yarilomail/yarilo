@@ -66,6 +66,7 @@ var metricRecordWithoutRow = promauto.NewCounter(prometheus.CounterOpts{
 
 const (
 	lockSiteSave           = "save"            // a delivery or APPEND
+	lockSiteAlignUIDSpace  = "align-uid-space" // an open taking rows the index lacks
 	lockSiteSweepTemps     = "sweep-temps"     // clearing what a save never published
 	lockSiteWriteFlags     = "write-flags"     // one message's flags reaching its name
 	lockSiteWriteFlagsBulk = "write-flags-all" // a whole STORE's worth at once
@@ -145,3 +146,11 @@ var (
 		Help: "Saves whose UID space the index answered alone, the uid list matching the stamp it recorded.",
 	})
 )
+
+// metricExpungeRace counts listed files found with no record under a uid the
+// index gave up: "wait" leaves one for the next pass, "new-uid" gives it a new
+// one when it is still there (#2663).
+var metricExpungeRace = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_expunge_race_total",
+	Help: "Listed files a reconcile found with no record under a uid the index already gave up, by what it did: wait for the next pass, or give the file a new uid.",
+}, []string{"outcome"})

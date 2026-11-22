@@ -1,7 +1,9 @@
 package integration_test
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -100,6 +102,8 @@ func uidsOf(msgs []*mailbox.MessageMeta) []uint32 {
 
 // A file the list names keeps its uid when the index no longer holds it: a
 // fresh one invalidates a client's cache for a message that never moved (#1593).
+// The index is lost the way a rebuild starts, its files gone: an expunge would
+// be one the uid may not come back from.
 func TestAnImportedFileKeepsTheUIDTheListGivesIt(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}
@@ -109,32 +113,56 @@ func TestAnImportedFileKeepsTheUIDTheListGivesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	idx := indexfile.New().OpenUser(info)
-	defer idx.Close() //nolint:errcheck
 	f, err := idx.OpenFolder("INBOX", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	const body = "From: a@b\r\nSubject: keeps its uid\r\n\r\nbody\r\n"
-	saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
-	if err != nil {
-		t.Fatal(err)
+	var metas []*mailbox.MessageMeta
+	for i := 0; i < 3; i++ {
+		body := fmt.Sprintf("From: a@b\r\nSubject: keeps its uid %d\r\n\r\nbody\r\n", i)
+		saved, vsize, guid, err := box.Save("INBOX", strings.NewReader(body), 0, int64(len(body)), nil, nil, [16]byte{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
+		if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
+			t.Fatal(err)
+		}
+		metas = append(metas, m)
 	}
-	m := &mailbox.MessageMeta{Size: uint32(len(body)), VSize: vsize, GUID: guid}
-	if err := mailboxbase.RecordSaved(idx, box, f.ID, "INBOX", saved, m); err != nil {
-		t.Fatal(err)
+	// Two go for good, so the one left is not the first uid a fresh index hands out.
+	b := mailboxbase.Open(box, idx)
+	if _, failed, err := b.ExpungeMarked(f, "INBOX", metas[:2]); err != nil || failed != 0 {
+		t.Fatalf("expunge: %d failed, %v", failed, err)
 	}
-	written := m.UID
-
-	// The index loses the record; the file and its row stay, which is what an
-	// index rebuilt from storage starts from.
-	if err := idx.ExpungeMessage(f.ID, written); err != nil {
-		t.Fatal(err)
-	}
-
 	rec := mailbox.Driver(box).(interface {
 		ReconcileIndex(mailbox.Box, mailbox.UserIndex, *mailbox.Folder) (mailbox.SyncStats, error)
 	})
+	if _, err := rec.ReconcileIndex(b, idx, f); err != nil {
+		t.Fatal(err)
+	}
+	written := metas[2].UID
+	if err := idx.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The folder's own index; the per-user stores beside it stay, as for a
+	// rebuild of one folder.
+	gone, err := filepath.Glob(filepath.Join(home, "yarilo.index*"))
+	if err != nil || len(gone) == 0 {
+		t.Fatalf("no index files to lose: %v", err)
+	}
+	for _, p := range gone {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	idx = indexfile.New().OpenUser(info)
+	defer idx.Close() //nolint:errcheck
+	f, err = idx.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), idx, f); err != nil {
 		t.Fatal(err)
 	}

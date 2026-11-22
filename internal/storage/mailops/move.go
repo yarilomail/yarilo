@@ -92,6 +92,21 @@ func (o *Ops) moveCopy(req MoveRequest, m *mailbox.MessageMeta) (Moved, error) {
 // ExpungeMoved expunges the sources through tx, the transaction they were read
 // in (#1805), and answers the uids another session changed meanwhile.
 func (o *Ops) ExpungeMoved(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map[uint32]bool {
+	if bf, ok := mailbox.Driver(req.Src.Store()).(mailbox.BodyFirstExpunger); ok && bf.ExpungesBodyFirst() && copiedBodies(moved) {
+		var kept map[uint32]bool
+		herr := req.Src.HoldFolder(req.SrcName, "move", func() error {
+			kept = o.expungeMovedBodyFirst(req, tx, moved)
+			return nil
+		})
+		if herr != nil {
+			slog.Warn(o.cfg.Protocol+": MOVE could not hold the source, so it was not expunged", "folder", req.SrcName, "err", herr)
+			kept = make(map[uint32]bool, len(moved))
+			for _, mv := range moved {
+				kept[mv.Src.UID] = true
+			}
+		}
+		return kept
+	}
 	kept := o.expungeSource(req, tx, moved)
 	for _, mv := range moved {
 		if kept[mv.Src.UID] {
@@ -104,6 +119,46 @@ func (o *Ops) ExpungeMoved(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map
 			}
 		}
 		o.CommittedIn(req.Src, req.SrcFolder, locks.EventExpunged, mv.Src.UID, UsageDelta(mv.Src), mv.Src.GUID)
+	}
+	return kept
+}
+
+// copiedBodies says whether a source body is still where it was: only a copy
+// between stores leaves one.
+func copiedBodies(moved []Moved) bool {
+	for _, mv := range moved {
+		if !mv.relocated && mv.srcFile != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// expungeMovedBodyFirst removes the copied source bodies under the source's
+// hold, then the records of those that went: a body that stays keeps its
+// record, and a stop between leaves a record with no file (#2663).
+func (o *Ops) expungeMovedBodyFirst(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map[uint32]bool {
+	kept := make(map[uint32]bool)
+	going := make([]Moved, 0, len(moved))
+	for _, mv := range moved {
+		if !mv.relocated && mv.srcFile != "" {
+			if err := req.Src.RemoveHeld(req.SrcName, mv.srcFile); err != nil {
+				slog.Warn(o.cfg.Protocol+": moved message's source body not removed, so its record stays",
+					"folder", req.SrcName, "uid", mv.Src.UID, "err", err)
+				kept[mv.Src.UID] = true
+				continue
+			}
+			mv.relocated = true // its body is gone from the source now
+		}
+		going = append(going, mv)
+	}
+	for uid := range o.expungeSource(req, tx, going) {
+		kept[uid] = true
+	}
+	for _, mv := range going {
+		if !kept[mv.Src.UID] {
+			o.CommittedIn(req.Src, req.SrcFolder, locks.EventExpunged, mv.Src.UID, UsageDelta(mv.Src), mv.Src.GUID)
+		}
 	}
 	return kept
 }

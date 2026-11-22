@@ -395,6 +395,16 @@ func (h *userHandle) ClaimRecent(folderID uint64) (uint32, uint32, error) {
 func (h *userHandle) AllocateUID(folderID uint64) (uint32, error) {
 	return h.stamped(folderID).AllocateUID(folderID)
 }
+
+var _ mailbox.UIDReleaser = (*userHandle)(nil)
+
+func (h *userHandle) ReleaseUID(folderID uint64, uid uint32) { h.ui.ReleaseUID(folderID, uid) }
+
+var _ mailbox.NextUIDReader = (*userHandle)(nil)
+
+func (h *userHandle) NextUIDHeld(folderID uint64, want uint32) (uint32, error) {
+	return h.stamped(folderID).NextUIDHeld(folderID, want)
+}
 func (h *userHandle) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) error {
 	return h.stamped(folderID).AllocateAndAppend(folderID, m)
 }
@@ -564,6 +574,14 @@ type userIndex struct {
 	open  map[uint64]*folderState // folderID → state
 	byDir map[string]uint64       // index dir path → folderID (dedup OpenFolder)
 	guid  guidStore               // the per-user GUID store, opened by name (#1711)
+
+	issuedMu sync.Mutex
+	issued   map[issuedUID]struct{} // handed out by AllocateUID, not yet appended
+}
+
+type issuedUID struct {
+	folderID uint64
+	uid      uint32
 }
 
 // folderState is one folder's fileindex in memory: mutations append to the log

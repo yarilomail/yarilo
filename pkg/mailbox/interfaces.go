@@ -68,10 +68,18 @@ type UIDSpaceAligner interface {
 	AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) (current uint32, reset bool, err error)
 }
 
+// NextUIDReader reads a folder's next uid as a writer deciding on it sees it,
+// whenever it is below want.
+type NextUIDReader interface {
+	NextUIDHeld(folderID uint64, want uint32) (uint32, error)
+}
+
 // UIDSpaceAligningStore is a store that names its own UID space, aligned with the
 // index before a uid is handed out; it answers the index's UIDVALIDITY after.
 type UIDSpaceAligningStore interface {
 	AlignUIDSpace(idx UserIndex, folderID uint64, folder string) (uint32, error)
+	// AlignUIDSpaceHeld is AlignUIDSpace inside the store's save section.
+	AlignUIDSpaceHeld(idx UserIndex, folderID uint64, folder string) (uint32, error)
 }
 
 // SaveSectioner runs a save's naming and record under the store's own locks,
@@ -91,6 +99,32 @@ type ReceivedStamper interface {
 
 // ErrUIDInUse says the folder already holds a record for this uid.
 var ErrUIDInUse = errors.New("the folder already holds this uid")
+
+// ErrUIDNotIssued says a record was offered under a uid below the folder's
+// next one that this process did not hand out: a uid the folder gave up once
+// stays given up (RFC 9051 §2.3.1.1).
+var ErrUIDNotIssued = errors.New("the uid is below the folder's next uid and was not handed out for this record")
+
+// ErrUIDSpaceFull says the folder has handed out its last uid: uids stay below
+// 2^32-1, as the reference keeps them, and a new UIDVALIDITY starts another
+// space.
+var ErrUIDSpaceFull = errors.New("the folder has no uid left to hand out")
+
+// MaxUID is the highest uid a record may carry.
+const MaxUID = 1<<32 - 2
+
+// UIDReleaser takes back a uid AllocateUID handed out whose record will never
+// be appended, so the index stops holding it open for one.
+type UIDReleaser interface {
+	ReleaseUID(folderID uint64, uid uint32)
+}
+
+// ReleaseUID releases uid through idx when the index keeps such uids.
+func ReleaseUID(idx UserIndex, folderID uint64, uid uint32) {
+	if r, ok := idx.(UIDReleaser); ok {
+		r.ReleaseUID(folderID, uid)
+	}
+}
 
 // GUIDRecord is one copy of one message, as the per-user GUID store keeps it:
 // the id a JMAP client names, and where that copy lives (INTERNALS.md §35).
@@ -632,6 +666,9 @@ type SyncStats struct {
 	// Relinked counts records whose list row was written back rather than
 	// their message being imported a second time (#1785).
 	Relinked int
+	// Deferred counts files left for the next pass to decide on: it must run
+	// without a change in the folder to start it (#2663).
+	Deferred int
 	Changed  bool
 }
 
@@ -1002,6 +1039,12 @@ type SaveDiscarder interface {
 // holds, from wherever the destination's cycle left it.
 type MoveRestorer interface {
 	RestoreMoved(srcFolder, orig, dstFolder, moved string, m *MessageMeta) error
+}
+
+// BodyFirstExpunger is a store whose expunge removes the body before the
+// record: a file left behind without its record would come back under a uid.
+type BodyFirstExpunger interface {
+	ExpungesBodyFirst() bool
 }
 
 // BatchRemover unlinks several bodies as one operation. A driver whose removal

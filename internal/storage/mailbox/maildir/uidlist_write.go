@@ -124,7 +124,8 @@ func parseUIDListRecord(line string) (uidRecord, bool) {
 		return uidRecord{}, false
 	}
 	uid, err := strconv.ParseUint(fields[0], 10, 32)
-	if err != nil {
+	if err != nil || uid == 0 || uid > mailbox.MaxUID {
+		// The reference reads a uid of 2^32-1 or above as a corrupt list.
 		return uidRecord{}, false
 	}
 	rec.uid = uint32(uid)

@@ -1375,6 +1375,9 @@ func (u *userIndex) AppendMessage(folderID uint64, m *mailbox.MessageMeta) error
 		// counter advanced past this UID since AllocateUID ran.
 		slog.Debug("fileindex: committing pre-allocated uid", "trace_id", fs.traceID,
 			"user", u.username, "folder", fs.folder, "uid", m.UID, "next_uid_before", fs.file.Header.NextUID)
+		if err := u.claimIssued(fs, folderID, m.UID); err != nil {
+			return err
+		}
 		rec, err := fs.appendLockedWith(m, nil)
 		if err != nil {
 			return err
@@ -1482,6 +1485,9 @@ func (u *userIndex) AllocateUID(folderID uint64) (uint32, error) {
 		if uid == 0 {
 			uid = 1
 		}
+		if uid > mailbox.MaxUID {
+			return fmt.Errorf("fileindex/allocate: next uid %d: %w", uid, mailbox.ErrUIDSpaceFull)
+		}
 		fs.file.Header.NextUID = uid + 1
 		assigned = uid
 		// Pairs with the "committing pre-allocated uid" log in AppendMessage;
@@ -1489,6 +1495,9 @@ func (u *userIndex) AllocateUID(folderID uint64) (uint32, error) {
 		slog.Debug("fileindex: uid allocated", "trace_id", fs.traceID, "user", u.username, "folder", fs.folder, "uid", assigned)
 		return fs.appendMutLog(encU32Update(28, fs.file.Header.NextUID))
 	})
+	if err == nil {
+		u.issue(folderID, assigned)
+	}
 	return assigned, err
 }
 
@@ -1516,6 +1525,9 @@ func (u *userIndex) AllocateAndAppendStamped(folderID uint64, m *mailbox.Message
 		next := fs.file.Header.NextUID
 		if next == 0 {
 			next = 1
+		}
+		if next > mailbox.MaxUID {
+			return fmt.Errorf("fileindex/append: next uid %d: %w", next, mailbox.ErrUIDSpaceFull)
 		}
 		fs.file.Header.NextUID = next + 1
 		m.UID = next
@@ -1580,6 +1592,9 @@ func (fs *folderState) appendLocked(m *mailbox.MessageMeta) error {
 func (fs *folderState) appendLockedWith(m *mailbox.MessageMeta, extra map[string][]byte) ([]byte, error) {
 	if m.UID == 0 {
 		return nil, fmt.Errorf("fileindex/append: UID=0 (use AllocateUID first)")
+	}
+	if m.UID > mailbox.MaxUID {
+		return nil, fmt.Errorf("fileindex/append: uid %d: %w", m.UID, mailbox.ErrUIDSpaceFull)
 	}
 	// One uid, one record: a second one hides a message from every client (#2083).
 	if taken, err := fs.uidTaken(m.UID); err != nil {

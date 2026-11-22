@@ -15,8 +15,8 @@ import (
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
-// An open between the record and the body finds a file no record names, so the
-// expunge holds the folder and the open waits (#1794).
+// An open between the body and the record finds a record whose file is going,
+// so the expunge holds the folder and the open waits (#1794).
 func TestAnOpenCannotEnterTheExpungeWindow(t *testing.T) {
 	home := t.TempDir()
 	info := &mailbox.UserInfo{Username: "u@x.com", Home: home, Driver: "maildir"}
@@ -53,7 +53,7 @@ func TestAnOpenCannotEnterTheExpungeWindow(t *testing.T) {
 	entered := make(chan struct{})
 	var opened sync.WaitGroup
 	opened.Add(1)
-	restore := mailboxbase.SetTestAfterRecordExpunged(func() {
+	restore := mailboxbase.SetTestAfterBodyRemoved(func() {
 		close(entered)
 		// Long enough that an unheld open would finish inside the window.
 		time.Sleep(200 * time.Millisecond)

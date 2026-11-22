@@ -181,11 +181,14 @@ func TestARefusedRowSkipsOneMessageNotTheBatch(t *testing.T) {
 	}
 }
 
-// A reconcile ending between the rows and the records leaves rows naming no
-// record; the next one imports them at the uid the list gives (#1745).
+// A reconcile ending between the rows and the records leaves rows below the
+// index's next uid, which read like expunged ones. Unlike the reference, whose
+// list hands out the uids, they heal in two passes under new uids, and the
+// second pass runs on its own, with no change in the folder (#1745, #2663).
 func TestRowsWrittenWithoutRecordsHealOnTheNextSync(t *testing.T) {
 	box, idx, f, root := openMaildir(t, "u3@example.com")
 	rec := mailbox.Driver(box).(reconciler)
+	t.Cleanup(mailboxbase.SetTestSyncTokens(8))
 
 	for i := 0; i < 3; i++ {
 		b := fmt.Sprintf("From: a@b\r\nSubject: dropped %d\r\n\r\nbody\r\n", i)
@@ -197,30 +200,50 @@ func TestRowsWrittenWithoutRecordsHealOnTheNextSync(t *testing.T) {
 		t.Fatal("the seam did not end the reconcile")
 	}
 	stop()
+
+	session := mailboxbase.Open(box, idx)
+	open := func() {
+		t.Helper()
+		if _, err := session.Folder("INBOX", f.UIDValidity); err != nil {
+			t.Fatal(err)
+		}
+	}
+	open()
 	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 0 {
-		t.Fatalf("the interrupted reconcile left %d records; the rows go first", len(msgs))
-	}
-
-	if _, err := rec.ReconcileIndex(mailboxbase.Open(box, idx), idx, f); err != nil {
+	ents, err := os.ReadDir(filepath.Join(root, "cur"))
+	if err != nil {
 		t.Fatal(err)
 	}
+	if len(msgs) != 0 || len(ents) != 3 {
+		t.Fatalf("after the first pass: %d records and %d files, want none and the three", len(msgs), len(ents))
+	}
+
+	open() // nothing in the folder changed since
 	msgs, err = idx.GetMessages(f.ID, mailbox.SeqSet{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(msgs) != 3 {
-		t.Fatalf("the folder holds %d records after the healing sync, want 3", len(msgs))
+		t.Fatalf("the folder holds %d records after the second pass, want 3: it did not run", len(msgs))
+	}
+	for _, m := range msgs {
+		if m.UID <= 3 {
+			t.Errorf("uid %d was handed out again; the stopped pass burned 1 to 3", m.UID)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "yarilo-uidlist"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(raw), "\n")[1:] {
+		if uid, _, ok := strings.Cut(line, " "); ok && (uid == "1" || uid == "2" || uid == "3") {
+			t.Errorf("the list still holds the burned row %q", line)
+		}
 	}
 	if bad := namelessRecords(t, box, idx, f); len(bad) != 0 {
 		t.Fatalf("%d records the list cannot name after the heal: %v", len(bad), bad)
-	}
-	for _, m := range msgs {
-		if m.UID == 0 || m.UID > 3 {
-			t.Errorf("record uid %d did not come from the rows the first pass wrote", m.UID)
-		}
 	}
 }

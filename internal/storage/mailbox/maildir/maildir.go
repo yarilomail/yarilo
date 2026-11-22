@@ -412,44 +412,87 @@ func (u *userMailbox) cachedUIDOwner(folder string, uid uint32) (string, bool) {
 }
 
 // AlignUIDSpace brings the index to the list's UID space before a delivery hands
-// out a uid, as the reference syncs the folder before every save.
+// out a uid, as the reference syncs the folder before every save. A list the
+// index already recorded is not read and nothing is held.
 func (u *userMailbox) AlignUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) (uint32, error) {
+	if current, done, err := u.alignedByStamp(idx, folderID, folder); done || err != nil {
+		return current, err
+	}
+	release, err := u.holdList(folder, lockSiteAlignUIDSpace)
+	if err != nil {
+		return 0, fmt.Errorf("maildir: align uid space: %w", err)
+	}
+	defer release()
+	var current uint32
+	err = u.withMailboxLockSite(folder, lockSiteAlignUIDSpace, func() error {
+		var aerr error
+		current, aerr = u.AlignUIDSpaceHeld(idx, folderID, folder)
+		return aerr
+	})
+	return current, err
+}
+
+// AlignUIDSpaceHeld is AlignUIDSpace inside a save section the caller holds.
+func (u *userMailbox) AlignUIDSpaceHeld(idx mailbox.UserIndex, folderID uint64, folder string) (uint32, error) {
 	current, seed, err := u.alignIndexUIDSpace(idx, folderID, folder)
 	if err != nil || seed == 0 {
 		return current, err
 	}
-	return current, u.seedUIDValidity(folder, lockSiteSave, seed)
+	return current, u.seedUIDValidityHeld(folder, seed)
+}
+
+// alignedByStamp answers the index's UIDVALIDITY when the index recorded the
+// list as it is now: the list is not read (#2643).
+func (u *userMailbox) alignedByStamp(idx mailbox.UserIndex, folderID uint64, folder string) (uint32, bool, error) {
+	a, ok := idx.(mailbox.UIDSpaceAligner)
+	if !ok {
+		return 0, true, nil
+	}
+	now, listed := u.uidListStamp(folder)
+	st, can := idx.(mailbox.MaildirStamped)
+	if !can || !listed || now.UIDListSize == 0 {
+		return 0, false, nil
+	}
+	if was, known := st.MaildirStamp(folderID); !known || was != now {
+		return 0, false, nil
+	}
+	metricListStampAligned.Inc()
+	current, _, err := a.AlignUIDSpace(folderID, 0, 0)
+	if err != nil {
+		return 0, true, fmt.Errorf("maildir: align uid space: %w", err)
+	}
+	u.agreeList(folder, now)
+	return current, true, nil
 }
 
 // alignIndexUIDSpace gives the index the list's UID space and answers the index's
 // after. A list without one gets the index's: the seed, for the next list write.
+// The caller holds the list and the mailbox: the rows the index lacks go in, in
+// uid order, before its next uid moves to the list's, as the reference's sync
+// does, so a row below the index's next uid without a record is an expunge.
 func (u *userMailbox) alignIndexUIDSpace(idx mailbox.UserIndex, folderID uint64, folder string) (current, seed uint32, err error) {
 	a, ok := idx.(mailbox.UIDSpaceAligner)
 	if !ok {
 		return 0, 0, nil
 	}
-	now, listed := u.uidListStamp(folder)
-	// The list as the index recorded it: the index's own UID space answers,
-	// and the list is not read (#2643).
-	if st, can := idx.(mailbox.MaildirStamped); can && listed && now.UIDListSize != 0 {
-		if was, known := st.MaildirStamp(folderID); known && was == now {
-			metricListStampAligned.Inc()
-			current, _, err := a.AlignUIDSpace(folderID, 0, 0)
-			if err != nil {
-				return 0, 0, fmt.Errorf("maildir: align uid space: %w", err)
-			}
-			u.agreeList(folder, now)
-			return current, 0, nil
-		}
+	if current, done, err := u.alignedByStamp(idx, folderID, folder); done || err != nil {
+		return current, 0, err
 	}
+	now, listed := u.uidListStamp(folder)
 	uidValidity, nextUID, have := u.UIDSpace(folder)
-	current, reset, err := a.AlignUIDSpace(folderID, uidValidity, nextUID)
+	current, reset, err := a.AlignUIDSpace(folderID, uidValidity, 0)
 	if err != nil {
 		return 0, 0, fmt.Errorf("maildir: align uid space: %w", err)
 	}
 	if reset {
 		// Another generation: rows remembered from this one name nothing now.
 		u.folderCacheFor(folder).invalidateUIDs("uid-space-reset")
+	}
+	if err := u.importListRowsHeld(idx, folderID, folder, nextUID); err != nil {
+		return 0, 0, err
+	}
+	if _, _, err := a.AlignUIDSpace(folderID, 0, nextUID); err != nil {
+		return 0, 0, fmt.Errorf("maildir: align uid space: %w", err)
 	}
 	if have {
 		if listed {
@@ -500,17 +543,8 @@ func (u *userMailbox) AppendedListStamp(folder string) (mailbox.MaildirStamp, bo
 	return s, s.UIDListSize != 0
 }
 
-// seedUIDValidity writes the index's UIDVALIDITY into a list that has none.
-func (u *userMailbox) seedUIDValidity(folder, site string, v uint32) error {
-	release, err := u.holdList(folder, site)
-	if err != nil {
-		return fmt.Errorf("maildir: seed uidvalidity: %w", err)
-	}
-	defer release()
-	return u.seedUIDValidityHeld(folder, v)
-}
-
-// seedUIDValidityHeld is seedUIDValidity for a caller holding the list.
+// seedUIDValidityHeld writes the index's UIDVALIDITY into a list that has
+// none; the caller holds the list.
 func (u *userMailbox) seedUIDValidityHeld(folder string, v uint32) error {
 	if err := u.withUIDListHeld(folder, func(l *uidList) error {
 		if l.uidValidity == 0 {
@@ -774,6 +808,9 @@ type userMailbox struct {
 	pending map[string][16]byte
 	// received holds a save's INTERNALDATE until AssignUID publishes it (#2175).
 	received map[string]time.Time
+	// racing holds, per folder, the listed files the last reconcile found with
+	// no record under a uid the index gave up; guarded by mu (#2663).
+	racing map[string]map[string]uint32
 }
 
 // withMailboxLockSite serialises this pod's own sessions. A second process is
@@ -1572,34 +1609,42 @@ func (u *userMailbox) scanNamed(folder string, names []string) []mailbox.ScanRec
 	curDir := filepath.Join(u.folderPath(folder), "cur")
 	out := make([]mailbox.ScanRecord, 0, len(names))
 	for _, name := range names {
-		info, err := statPath(filepath.Join(curDir, name))
-		if err != nil {
-			continue // moved on by another process between the rename and here
+		if rec, ok := u.scanFile(folder, filepath.Join(curDir, name), name, kwNames); ok {
+			out = append(out, rec)
 		}
-		phys, virt, hasPhys, _ := parseSizeInfo(name)
-		size := phys
-		if !hasPhys {
-			size = u.plainSize(filepath.Join(curDir, name), info.Size())
-		}
-		if virt == 0 {
-			// As in Scan: a name with no W= says nothing about the RFC822 form,
-			// and the index keeps one number for both (#1962).
-			if _, measured, merr := measureSizes(u.b.crypt, filepath.Join(curDir, name)); merr == nil {
-				virt = measured
-			}
-		}
-		flags, keywords := decodeFlagsWith(name, kwNames)
-		out = append(out, mailbox.ScanRecord{
-			Filename:     name,
-			Size:         size,
-			VSize:        virt,
-			InternalDate: info.ModTime(),
-			Flags:        append([]string(nil), flags...),
-			Keywords:     append([]string(nil), keywords...),
-			GUID:         u.guidFor(folder, name),
-		})
 	}
 	return out
+}
+
+// scanFile builds the record for one message file at path, named name; false
+// when it is gone.
+func (u *userMailbox) scanFile(folder, path, name string, kwNames map[byte]string) (mailbox.ScanRecord, bool) {
+	info, err := statPath(path)
+	if err != nil {
+		return mailbox.ScanRecord{}, false
+	}
+	phys, virt, hasPhys, _ := parseSizeInfo(name)
+	size := phys
+	if !hasPhys {
+		size = u.plainSize(path, info.Size())
+	}
+	if virt == 0 {
+		// As in Scan: a name with no W= says nothing about the RFC822 form,
+		// and the index keeps one number for both (#1962).
+		if _, measured, merr := measureSizes(u.b.crypt, path); merr == nil {
+			virt = measured
+		}
+	}
+	flags, keywords := decodeFlagsWith(name, kwNames)
+	return mailbox.ScanRecord{
+		Filename:     name,
+		Size:         size,
+		VSize:        virt,
+		InternalDate: info.ModTime(),
+		Flags:        append([]string(nil), flags...),
+		Keywords:     append([]string(nil), keywords...),
+		GUID:         u.guidFor(folder, name),
+	}, true
 }
 
 // Close lets go of the list descriptors the folder caches hold.
@@ -1804,6 +1849,28 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 		}()
 		var recorded []listEntry
 		var pending []pendingImport
+		// An allocated uid whose record never lands is released, so the
+		// index stops holding it open.
+		defer func() {
+			for _, p := range pending {
+				if !p.done {
+					mailbox.ReleaseUID(idx, folder.ID, p.meta.UID)
+				}
+			}
+		}()
+		wasRacing := u.racing[folder.Name]
+		nowRacing := map[string]uint32{}
+		defer func() {
+			if u.racing == nil {
+				u.racing = map[string]map[string]uint32{}
+			}
+			if len(nowRacing) == 0 {
+				delete(u.racing, folder.Name)
+			} else {
+				u.racing[folder.Name] = nowRacing
+			}
+		}()
+		var reissue map[string]struct{}
 		onDisk := make(map[string]*mailbox.ScanRecord, len(scanned))
 		for i := range scanned {
 			if scanned[i].Filename != "" {
@@ -2003,20 +2070,53 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 			// returned uid, allocated before the append, so expunges drop the row (#2176).
 			if uid, known := u.UIDFor(folder.Name, rec.Filename); known {
 				m.UID = uid
-				if err := idx.AppendMessage(folder.ID, m); err != nil {
+				err := idx.AppendMessage(folder.ID, m)
+				if err == nil {
+					st.Imported++
+					continue
+				}
+				if !errors.Is(err, mailbox.ErrUIDNotIssued) {
 					return fmt.Errorf("maildir/sync: append %s at its recorded uid %d: %w",
 						rec.Filename, uid, err)
 				}
-				st.Imported++
-				continue
+				// A row below the next uid with no record is an expunge still
+				// finishing or a reconcile stopped between rows and records: once
+				// it waits, twice the file takes a new uid, as the reference's sync
+				// decides; the old uid is not handed out again.
+				if was, seen := wasRacing[base]; !seen || was != uid {
+					nowRacing[base] = uid
+					st.Deferred++
+					metricExpungeRace.WithLabelValues("wait").Inc()
+					slog.Info("maildir: a listed file has no record under its uid, from an expunge still finishing or a reconcile that stopped before its records; the next pass decides",
+						"user", u.username, "folder", folder.Name, "uid", uid, "file", rec.Filename)
+					continue
+				}
+				metricExpungeRace.WithLabelValues("new-uid").Inc()
+				slog.Warn("maildir: a listed file still has no record under its uid, left by an expunge whose file stayed or by a reconcile that stopped before its records; it takes a new uid",
+					"user", u.username, "folder", folder.Name, "was_uid", uid, "file", rec.Filename)
+				if reissue == nil {
+					reissue = map[string]struct{}{}
+				}
+				reissue[base] = struct{}{}
 			}
 			uid, err := idx.AllocateUID(folder.ID)
+			if errors.Is(err, mailbox.ErrUIDSpaceFull) {
+				// One file with no uid left stops no other change the pass makes.
+				slog.Error("maildir: a file has no uid left to take; it stays out of the folder until UIDVALIDITY is reset",
+					"user", u.username, "folder", folder.Name, "file", rec.Filename)
+				continue
+			}
 			if err != nil {
 				return fmt.Errorf("maildir/sync: allocate uid for %s: %w", rec.Filename, err)
 			}
 			m.UID = uid
 			pending = append(pending, pendingImport{meta: m, filename: rec.Filename})
 			recorded = append(recorded, listEntry{uid: uid, filename: rec.Filename})
+		}
+		if len(reissue) > 0 {
+			if err := u.dropRowsHeld(folder.Name, reissue); err != nil {
+				return err
+			}
 		}
 		if len(pending) > 0 {
 			// The row first: a record older than its row is a message the
@@ -2044,10 +2144,12 @@ func (u *userMailbox) reconcile(idx mailbox.UserIndex, folder *mailbox.Folder, a
 				slog.Warn("maildir: the list already names these files under other uids; they stay with their owners",
 					"user", u.username, "folder", folder.Name, "count", len(taken))
 			}
-			for _, p := range pending {
+			for i := range pending {
+				p := &pending[i]
 				if _, no := refused[p.meta.UID]; no {
 					continue
 				}
+				p.done = true
 				if err := idx.AppendMessage(folder.ID, p.meta); err != nil {
 					return fmt.Errorf("maildir/sync: append %s: %w", p.filename, err)
 				}
@@ -2101,6 +2203,7 @@ func SetTestStopAfterRows() func() {
 type pendingImport struct {
 	meta     *mailbox.MessageMeta
 	filename string
+	done     bool // its append was made: the uid is no longer this pass's to release
 }
 
 // sameFlags reports whether two flag sets are equal ignoring order.
@@ -2387,8 +2490,8 @@ func parseUIDRows(r io.Reader, m map[string]uint32, guids map[string][16]byte) (
 			continue
 		}
 		uid64, err := strconv.ParseUint(parts[0], 10, 32)
-		if err != nil {
-			continue
+		if err != nil || uid64 == 0 || uid64 > mailbox.MaxUID {
+			continue // corrupt, as the reference reads a uid of 2^32-1 or above
 		}
 		// The key is the base name: it survives a flag change, and it is what
 		// the other implementation writes. Normalising on read keeps the files
@@ -2987,7 +3090,7 @@ func (u *userMailbox) UIDSpace(folder string) (uidValidity, nextUID uint32, ok b
 	// reads past it to the last uid, and so does this.
 	if m, cached := u.folderCacheFor(folder).snapshotUIDs(u.listStampNow(folder)); cached {
 		for _, uid := range m {
-			if uid >= nextUID {
+			if uid >= nextUID && uid <= mailbox.MaxUID {
 				nextUID = uid + 1
 			}
 		}
@@ -2999,7 +3102,7 @@ func (u *userMailbox) UIDSpace(folder string) (uidValidity, nextUID uint32, ok b
 		if sp <= 0 {
 			continue
 		}
-		if uid, perr := strconv.ParseUint(line[:sp], 10, 32); perr == nil && uint32(uid) >= nextUID {
+		if uid, perr := strconv.ParseUint(line[:sp], 10, 32); perr == nil && uint32(uid) >= nextUID && uid <= mailbox.MaxUID {
 			nextUID = uint32(uid) + 1
 		}
 	}
@@ -3185,6 +3288,13 @@ func (u *userMailbox) HoldFolder(folder, site string, fn func() error) error {
 		return err
 	}
 	defer release()
+	// The list too: it is what keeps another process's reconcile out, which
+	// would read a file whose record this hold is taking (#2663).
+	releaseList, err := u.holdList(folder, lockSiteExpunge)
+	if err != nil {
+		return err
+	}
+	defer releaseList()
 	return u.withMailboxLockSite(folder, site, fn)
 }
 
@@ -3199,6 +3309,10 @@ var _ mailbox.MoveRestorer = (*userMailbox)(nil)
 func (u *userMailbox) RemoveHeld(folder, filename string) error {
 	return u.removeFile(folder, filename, true)
 }
+
+// ExpungesBodyFirst: a file here is a message the reconcile reads back, so it
+// goes before its record, as in the reference.
+func (u *userMailbox) ExpungesBodyFirst() bool { return true }
 
 // DriverName is the label this driver's messages are counted under.
 func (u *userMailbox) DriverName() string { return driverName }
