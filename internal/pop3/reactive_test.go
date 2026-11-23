@@ -35,6 +35,12 @@ type fakeMarkIdx struct {
 func (f *fakeMarkIdx) OpenFolder(string, uint32) (*mailbox.Folder, error) {
 	return &mailbox.Folder{ID: 1, Name: "INBOX"}, nil
 }
+
+// GetMessages still has the record the read asks about: the body is gone and
+// the record is not, which is corruption, not an expunge.
+func (f *fakeMarkIdx) GetMessages(_ uint64, set mailbox.SeqSet) ([]*mailbox.MessageMeta, error) {
+	return []*mailbox.MessageMeta{{UID: set[0].From}}, nil
+}
 func (f *fakeMarkIdx) MarkFolderCorrupt(uint64) error  { f.marks++; return nil }
 func (f *fakeMarkIdx) ClearFolderCorrupt(uint64) error { return nil }
 
