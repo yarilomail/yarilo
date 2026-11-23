@@ -268,3 +268,44 @@ func TestCryptAllLeavesOnASecondInterrupt(t *testing.T) {
 		t.Fatalf("output %q", out)
 	}
 }
+
+// --all asks the backend to skip an account without a mail home and counts it
+// apart: the run ends 0 and names no failure (#2675).
+func TestCryptAllCountsAnAccountWithoutAHomeApart(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/backend/user/iterate":
+			_, _ = io.WriteString(w, `{"users":["a@x","new@x"]}`)
+		case "/api/backend/crypt/reencrypt":
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req["skip_no_home"] != true {
+				t.Errorf("job for %v without skip_no_home", req["user"])
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, `{}`)
+		case "/api/backend/crypt/job":
+			if r.URL.Query().Get("user") == "new@x" {
+				_, _ = io.WriteString(w, `{"kind":"reencrypt","user":"new@x","state":"skipped","error":"no mail home for this user","totals":{}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"kind":"reencrypt","user":"a@x","state":"done","totals":{"current":3}}`)
+		}
+	}))
+	defer ts.Close()
+	oldRoute, oldBackend, oldFmt := routeByUser, backendAPIURL, outputFormat
+	defer func() { routeByUser, backendAPIURL, outputFormat = oldRoute, oldBackend, oldFmt }()
+	routeByUser, backendAPIURL, outputFormat = false, ts.URL, "json"
+	out, err := captureStd(t, func() error { return cryptAll("reencrypt", map[string]any{}, 1, 0, "") })
+	if err != nil {
+		t.Fatalf("err %v, want exit 0", err)
+	}
+	i := strings.Index(out, "{\n")
+	var sum allSummary
+	if i < 0 || json.Unmarshal([]byte(out[i:strings.LastIndex(out, "}")+1]), &sum) != nil {
+		t.Fatalf("no summary in %q", out)
+	}
+	if len(sum.FailedUsers) != 0 || strings.Join(sum.NoHomeUsers, ",") != "new@x" || sum.Totals["current"] != 3 {
+		t.Fatalf("summary %+v", sum)
+	}
+}

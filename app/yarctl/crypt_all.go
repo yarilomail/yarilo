@@ -27,6 +27,7 @@ type allSummary struct {
 	Kind          string         `json:"kind"`
 	Users         int            `json:"users"`
 	FailedUsers   []string       `json:"failed_users"`
+	NoHomeUsers   []string       `json:"no_home_users"`
 	Totals        map[string]int `json:"totals"`
 	Rewritten     int            `json:"rewritten"`
 	NoKey         int            `json:"no_key"`
@@ -106,7 +107,7 @@ func cryptAll(kind string, base map[string]any, jobs, rate int, publicNS string)
 		close(results)
 	}()
 
-	sum := allSummary{Kind: kind, Users: len(list.Users), FailedUsers: []string{}, Totals: map[string]int{}}
+	sum := allSummary{Kind: kind, Users: len(list.Users), FailedUsers: []string{}, NoHomeUsers: []string{}, Totals: map[string]int{}}
 	for res := range results {
 		sum.add(res)
 		fmt.Fprintf(os.Stderr, "%s: %s\n", res.User, res.line())
@@ -221,6 +222,7 @@ func runOneJob(kind, user string, base map[string]any, rate int, ns string, star
 		req[k] = v
 	}
 	req["user"] = user
+	req["skip_no_home"] = true
 	if ns != "" {
 		req["namespace"] = ns
 	}
@@ -255,8 +257,11 @@ func runOneJob(kind, user string, base map[string]any, rate int, ns string, star
 
 func (s *allSummary) add(r allResult) {
 	s.Results = append(s.Results, r)
-	if r.Err != "" {
+	switch {
+	case r.Err != "":
 		s.FailedUsers = append(s.FailedUsers, r.User)
+	case r.Job.State == "skipped":
+		s.NoHomeUsers = append(s.NoHomeUsers, r.User)
 	}
 	for k, v := range r.Job.Totals {
 		s.Totals[k] += v
@@ -303,6 +308,9 @@ func printAllSummary(data []byte) error {
 	}
 	if s.Kind == "reencrypt" {
 		fmt.Printf("rewritten %d, no key %d", s.Rewritten, s.NoKey)
+	}
+	if len(s.NoHomeUsers) > 0 {
+		fmt.Printf("; %d without a mail home, skipped", len(s.NoHomeUsers))
 	}
 	if len(s.FailedUsers) > 0 {
 		fmt.Printf("; failed: %s", strings.Join(s.FailedUsers, ", "))

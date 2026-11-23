@@ -59,6 +59,9 @@ type cryptRequest struct {
 	To        string   `json:"to"`
 	// Rate is the most messages a second this job rewrites; 0 is no bound.
 	Rate int `json:"rate"`
+	// SkipNoHome ends the job as skipped for an account that has no mail home
+	// yet: a run over many users counts it apart from the failures (#2675).
+	SkipNoHome bool `json:"skip_no_home"`
 }
 
 // cryptFolder is one folder's messages counted by state.
@@ -79,7 +82,7 @@ type cryptJob struct {
 	Namespace string
 	DryRun    bool
 	To        string
-	State     string // running, done, failed, cancelled
+	State     string // running, done, skipped, failed, cancelled
 	Error     string
 	Started   time.Time
 	Finished  *time.Time
@@ -263,6 +266,8 @@ func (s *Server) runCryptJob(ctx context.Context, job *cryptJob, req cryptReques
 	switch {
 	case errors.Is(err, context.Canceled):
 		job.State = "cancelled"
+	case req.SkipNoHome && errors.Is(err, errNoMailHome):
+		job.State, job.Error = "skipped", err.Error()
 	case err != nil:
 		job.State, job.Error = "failed", err.Error()
 	default:
