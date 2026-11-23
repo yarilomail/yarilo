@@ -22,7 +22,8 @@
 # Every account a scenario fills is wiped at the start and the wipe checked.
 # The accounts the userdb lists without a home are left as they are: rotate's
 # --all must finish over them. The kill row saves the lease, the job on each
-# pod, events and backend-api logs in kill/ as it goes.
+# pod, events and backend-api logs in kill/ as it goes, from before the job
+# starts; its progress mid-run is read from the job, not from a status.
 #
 # The keys are mounted for the run only. They are removed only when status
 # --all shows no encrypted message; otherwise the stand stays on its keys with
@@ -290,6 +291,8 @@ echo "== pod killed mid-run"
 fill_to "$KILL_USER" "$KILL_N"
 crypt reencrypt "$KILL_USER" --to plain --rate 0 >> "$OUT/kill.log" 2>&1
 before=$(status_of "$KILL_USER")
+# Who holds the user's lease before the job starts: nobody should.
+evidence before-start
 crypt reencrypt "$KILL_USER" --rate 50 --detach >> "$OUT/kill.log" 2>&1
 for _ in $(seq 1 60); do
   crypt job "$KILL_USER" 2>&1 | grep -q 'running, [1-9]' && break
@@ -298,7 +301,11 @@ done
 ip=$(kube exec "$(kube get pods -l app.kubernetes.io/component=director -o name | head -1 | cut -d/ -f2)" -- \
   yarctl -O json director map --user "$KILL_USER" 2>/dev/null | sed -n 's/.*"backend": *"\([^":]*\).*/\1/p')
 victim=$(kube get pods -l app.kubernetes.io/component=backend -o jsonpath='{range .items[*]}{.metadata.name} {.status.podIP}{"\n"}{end}' | awk -v ip="$ip" '$2 == ip { print $1 }')
-mid=$(status_of "$KILL_USER")
+# A status is a job behind the same lease, refused while this one runs: the
+# progress comes from the running job itself.
+mid=$(crypt job "$KILL_USER" 2>&1 | tee -a "$OUT/kill.log" |
+  sed -n 's/.*: \([a-z]*\), \([0-9]*\) messages, rewritten \([0-9]*\).*/state=\1 seen=\2 rewritten=\3/p' | tail -1)
+mid=${mid:-unread}
 if [ -z "$victim" ]; then
   row FAIL kill "no backend pod holds $KILL_USER (director answered '${ip:-nothing}')"
 else
@@ -317,7 +324,8 @@ else
   rerun=$?
   evidence after-rerun
   after=$(status_of "$KILL_USER")
-  if [ "$rerun" = 0 ] && [ "$(field "$mid" plain)" -gt 0 ] && [ "$(field "$mid" current)" -gt 0 ] &&
+  if [ "$rerun" = 0 ] && [ "$(field "$mid" state)" = running ] && [ "$(field "$mid" rewritten)" -gt 0 ] &&
+    [ "$(field "$mid" rewritten)" -lt "$KILL_N" ] &&
     [ "$(field "$after" plain)" = 0 ] && [ "$(field "$after" failed)" = 0 ]; then
     row PASS kill "$KILL_USER $victim deleted mid-run; before[$before] mid[$mid] after[$after]; down $(tr '\n' ' ' < "$OUT/kill/backend-downtime.txt")"
   else
