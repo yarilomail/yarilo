@@ -22,7 +22,8 @@ type mdboxPurgeRequest struct {
 	Namespace string `json:"namespace"`
 	// SkipOthers answers a store other than mdbox with skipped instead of the
 	// refusal: a purge over many users counts it apart from the failures.
-	SkipOthers bool `json:"skip_other_drivers"`
+	SkipOthers bool `json:"skip_other_drivers"` // SkipNoHome answers an account without a mail home with skipped (#2675).
+	SkipNoHome bool `json:"skip_no_home"`
 }
 
 type mdboxPurgeResponse struct {
@@ -58,6 +59,10 @@ func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if bundle == nil {
+		if req.SkipNoHome {
+			apiJSON(w, mdboxPurgeResponse{Skipped: errNoMailHome.Error()})
+			return
+		}
 		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 		return
 	}

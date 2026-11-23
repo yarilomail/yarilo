@@ -34,6 +34,11 @@ func purgeAPI(t *testing.T, users []string, answers map[string]string) *httptest
 			case "fail":
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = io.WriteString(w, `{"error":"purge: disk full"}`)
+			case "nohome":
+				if req["skip_no_home"] != true {
+					t.Errorf("purge of %s without skip_no_home", user)
+				}
+				_, _ = io.WriteString(w, `{"skipped":"no mail home for this user"}`)
 			case "unknown":
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = io.WriteString(w, `{"error":"no such user"}`)
@@ -79,16 +84,19 @@ func TestMdboxPurgeOverManyUsers(t *testing.T) {
 		wantErr     string // "" = exit 0
 		purged      int
 		skipped     []string
+		noHome      []string
 		failed      []string
 		wantExpunge int
 		wantBytes   int64
 	}{
 		{"an sdbox user is skipped, the totals are the sum", []string{"--all"},
-			map[string]string{"bb@x": "skip"}, "", 2, []string{"bb@x"}, []string{}, 30 + 50, 3000 + 5000},
+			map[string]string{"bb@x": "skip"}, "", 2, []string{"bb@x"}, []string{}, []string{}, 30 + 50, 3000 + 5000},
+		{"an account without a home is counted apart, exit 0", []string{"--all"},
+			map[string]string{"bb@x": "nohome"}, "", 2, []string{}, []string{"bb@x"}, []string{}, 80, 8000},
 		{"one failure does not stop the rest and is named", []string{"--all", "--jobs", "2"},
-			map[string]string{"bb@x": "fail"}, "bb@x", 2, []string{}, []string{"bb@x"}, 80, 8000},
+			map[string]string{"bb@x": "fail"}, "bb@x", 2, []string{}, []string{}, []string{"bb@x"}, 80, 8000},
 		{"an unknown user in the file fails, the rest run", []string{"--user-file", userFile},
-			map[string]string{"ghost@x": "unknown"}, "ghost@x", 2, []string{}, []string{"ghost@x"}, 30 + 50, 3000 + 5000},
+			map[string]string{"ghost@x": "unknown"}, "ghost@x", 2, []string{}, []string{}, []string{"ghost@x"}, 30 + 50, 3000 + 5000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			purgeAPI(t, []string{"a@x", "bb@x", "ccc@x"}, tc.answers)
@@ -102,6 +110,7 @@ func TestMdboxPurgeOverManyUsers(t *testing.T) {
 			sum := purgeSummaryOf(t, out)
 			if sum.Users != 3 || sum.Purged != tc.purged ||
 				strings.Join(sum.SkippedUsers, ",") != strings.Join(tc.skipped, ",") ||
+				strings.Join(sum.NoHomeUsers, ",") != strings.Join(tc.noHome, ",") || sum.NoHome != len(tc.noHome) ||
 				strings.Join(sum.FailedUsers, ",") != strings.Join(tc.failed, ",") ||
 				sum.Totals.RecordsExpunged != tc.wantExpunge || sum.Totals.BytesReclaimed != tc.wantBytes {
 				t.Fatalf("summary %+v", sum)

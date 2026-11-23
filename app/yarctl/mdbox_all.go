@@ -34,8 +34,10 @@ type purgeSummary struct {
 	Users        int           `json:"users"`
 	Purged       int           `json:"purged"`
 	Skipped      int           `json:"skipped"`
+	NoHome       int           `json:"no_home"`
 	FailedUsers  []string      `json:"failed_users"`
 	SkippedUsers []string      `json:"skipped_users"`
+	NoHomeUsers  []string      `json:"no_home_users"`
 	Totals       purgeStats    `json:"totals"`
 	Results      []purgeResult `json:"results"`
 }
@@ -101,13 +103,14 @@ func purgeMany(users []string, ns string, jobs int) error {
 		close(results)
 	}()
 
-	sum := purgeSummary{Users: len(users), FailedUsers: []string{}, SkippedUsers: []string{}}
+	sum := purgeSummary{Users: len(users), FailedUsers: []string{}, SkippedUsers: []string{}, NoHomeUsers: []string{}}
 	for res := range results {
 		sum.add(res)
 		fmt.Fprintf(os.Stderr, "%s: %s\n", res.User, res.line())
 	}
 	sort.Strings(sum.FailedUsers)
 	sort.Strings(sum.SkippedUsers)
+	sort.Strings(sum.NoHomeUsers)
 	sort.Slice(sum.Results, func(i, j int) bool { return sum.Results[i].User < sum.Results[j].User })
 	out, _ := json.Marshal(sum)
 	if err := printOutput(out, nil, printPurgeSummary); err != nil {
@@ -119,11 +122,14 @@ func purgeMany(users []string, ns string, jobs int) error {
 	return nil
 }
 
+// noMailHome is the backend's skipped reason for an account without a home.
+const noMailHome = "no mail home for this user"
+
 // purgeWorkerStarted is a test seam: it runs once a purge worker starts.
 var purgeWorkerStarted = func() {}
 
 func purgeOne(user, ns string) purgeResult {
-	data, err := backendAPIPost("/api/backend/mdbox/purge", map[string]any{"user": user, "namespace": ns, "skip_other_drivers": true})
+	data, err := backendAPIPost("/api/backend/mdbox/purge", map[string]any{"user": user, "namespace": ns, "skip_other_drivers": true, "skip_no_home": true})
 	if err != nil {
 		return purgeResult{User: user, Err: err.Error()}
 	}
@@ -139,6 +145,9 @@ func (s *purgeSummary) add(r purgeResult) {
 	switch {
 	case r.Err != "":
 		s.FailedUsers = append(s.FailedUsers, r.User)
+	case r.Stats.Skipped == noMailHome:
+		s.NoHome++
+		s.NoHomeUsers = append(s.NoHomeUsers, r.User)
 	case r.Stats.Skipped != "":
 		s.Skipped++
 		s.SkippedUsers = append(s.SkippedUsers, r.User)
@@ -170,8 +179,8 @@ func printPurgeSummary(data []byte) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "\nUSERS\tPURGED\tSKIPPED\tFAILED\tREWRITTEN\tUNLINKED\tEXPUNGED\tRECLAIMED")
-	fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d B\n", s.Users, s.Purged, s.Skipped, len(s.FailedUsers),
+	fmt.Fprintln(tw, "\nUSERS\tPURGED\tNOT MDBOX\tNO HOME\tFAILED\tREWRITTEN\tUNLINKED\tEXPUNGED\tRECLAIMED")
+	fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d B\n", s.Users, s.Purged, s.Skipped, s.NoHome, len(s.FailedUsers),
 		s.Totals.FilesRewritten, s.Totals.FilesUnlinked, s.Totals.RecordsExpunged, s.Totals.BytesReclaimed)
 	if err := tw.Flush(); err != nil {
 		return err
