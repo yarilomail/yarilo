@@ -23,8 +23,11 @@ type Box interface {
 	Readable(m *MessageMeta) bool
 	// MessagePath is the file a record names.
 	MessagePath(folder string, m *MessageMeta) (string, error)
-	// OpenMessage opens the body a record names.
+	// OpenMessage opens the body a record names. A body gone with its record
+	// (expunged after the caller read the record) is ErrExpunged.
 	OpenMessage(folder string, m *MessageMeta) (io.ReadCloser, error)
+	// RawMessage is the body as stored, under the same rule.
+	RawMessage(folder string, m *MessageMeta) (RawBody, error)
 	// RFC822Size is the size a client is told.
 	RFC822Size(folder string, m *MessageMeta) uint32
 	// MessageSize is both numbers a record reports.

@@ -61,13 +61,16 @@ kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 
 crypt() { kube exec yarilo-backend-0 -c yarilo-backend-api -- yarctl backend crypt "$@"; }
 
-# save_logs keeps every backend pod's backend-api log in $OUT/logs/$1, before
-# a restart takes it: a failed message is named only there.
+# save_logs keeps every container's log of every backend pod in
+# $OUT/logs/$1, before a restart takes it: a failed message is named only in
+# backend-api's, a client's error only in its protocol's.
 save_logs() {
-  local pod
+  local pod c
   mkdir -p "$OUT/logs/$1"
   for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
-    kube logs "$pod" -c yarilo-backend-api --timestamps > "$OUT/logs/$1/backend-api-$pod.log" 2>&1
+    for c in $(kube get pod "$pod" -o jsonpath='{.spec.containers[*].name}'); do
+      kube logs "$pod" -c "$c" --timestamps > "$OUT/logs/$1/$c-$pod.log" 2>&1
+    done
   done
 }
 

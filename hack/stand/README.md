@@ -149,9 +149,10 @@ The six rows of MAILCRYPT §13.12, each a PASS or FAIL line in
 | `plain` | `--all --to plain` leaves no encrypted message |
 | `cleanup` | the stand is back on its values and the Secret is gone; a restore or a delete that did not finish, or encrypted mail left, is a FAIL and the run exits 1 |
 
-After each row, and before each deploy and restart, every backend pod's
-backend-api log goes to `logs/<row or step>/`: a message a job failed is named
-only there, and a restart takes the log with it.
+After each row, and before each deploy and restart, every container's log of
+every backend pod goes to `logs/<row or step>/<container>-<pod>.log`: a message
+a job failed is named only in backend-api's, a client's error only in its
+protocol's, and a restart takes the logs with it.
 
 Before the rows, the run checks the stand live: backend-api answers `crypt
 keys`, a hybrid key is the one new mail is sealed to, and a delivery under

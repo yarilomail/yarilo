@@ -6,6 +6,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // metricCommandSeconds times a client command end to end, on the server side.
@@ -98,7 +100,7 @@ const (
 // an index that still references it has diverged from the store -- so this
 // looks underneath for the original fs.ErrNotExist rather than at the sentinel.
 func unreadableReason(err error) string {
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, mailbox.ErrExpunged) {
 		return reasonGone
 	}
 	return reasonUnreadable
