@@ -136,39 +136,72 @@ func (b *Box) RawMessage(folder string, m *mailbox.MessageMeta) (mailbox.RawBody
 
 // expungedMeanwhile decides a read that found no body. The store and the index
 // meet here, so this is where it is decided, once for every reader: the index
-// is asked once, for the record by its uid and GUID (a uid alone is reused). A
+// is asked for the record by its uid and GUID (a uid alone is reused). A
 // record it no longer has was expunged after the caller read it: ErrExpunged,
 // with nothing in the chain that marks the folder corrupt. A record still
 // there keeps the store's error. A store says "no body" as a missing file, or
 // as corruption (maildir: a uid in no list entry; sdbox: a vanished u.<uid>);
 // any other error is returned as it is, without asking.
+//
+// A store that removes the body before the record (maildir, #2667) does both
+// under its folder hold, so a read between the two finds no file and the
+// record still there. That record is asked about once more under the hold,
+// after the expunge in progress has finished, as the reference syncs the
+// folder under its list lock before it decides. A reader never holds the
+// folder when it reads a body (ExpungeMarked and ExpungeMoved read names, not
+// bodies), so the hold does not wait on itself.
 func (b *Box) expungedMeanwhile(folder string, m *mailbox.MessageMeta, err error) error {
 	if errors.Is(err, mailbox.ErrExpunged) ||
 		!(errors.Is(err, fs.ErrNotExist) || errors.Is(err, mailbox.ErrCorruptStorage)) {
 		return err
 	}
+	gone, ok := b.recordGone(folder, m)
+	if ok && !gone {
+		if bf, isBF := mailbox.Driver(b.store).(mailbox.BodyFirstExpunger); isBF && bf.ExpungesBodyFirst() {
+			if testBeforeHeldRecheck != nil {
+				testBeforeHeldRecheck()
+			}
+			_ = b.HoldFolder(folder, "read-recheck", func() error {
+				gone, ok = b.recordGone(folder, m)
+				return nil
+			})
+		}
+	}
+	if !ok || !gone {
+		return err
+	}
+	return fmt.Errorf("mailbox: %q uid %d: %w (the store said: %v)", folder, m.UID, mailbox.ErrExpunged, err)
+}
+
+// recordGone asks the index whether the record m was is gone; ok is false when
+// the index could not answer, which is never taken for an expunge.
+func (b *Box) recordGone(folder string, m *mailbox.MessageMeta) (gone, ok bool) {
 	if testBeforeExpungeCheck != nil {
 		testBeforeExpungeCheck()
 	}
 	f, ferr := b.index.OpenFolder(folder, 0)
 	if ferr != nil {
-		return err
+		return false, false
 	}
 	recs, gerr := b.index.GetMessages(f.ID, mailbox.SeqSet{{From: m.UID, To: m.UID}})
 	if gerr != nil {
-		return err
+		return false, false
 	}
 	for _, r := range recs {
 		if r.UID == m.UID && (m.GUID == [16]byte{} || r.GUID == m.GUID) {
-			return err
+			return false, true
 		}
 	}
-	return fmt.Errorf("mailbox: %q uid %d: %w (the store said: %v)", folder, m.UID, mailbox.ErrExpunged, err)
+	return true, true
 }
 
-// testBeforeExpungeCheck runs before the index is asked about a vanished
-// body. Test seam: it counts the asks.
+// testBeforeExpungeCheck runs before each index ask about a vanished body.
+// Test seam: it counts the asks.
 var testBeforeExpungeCheck func()
+
+// testBeforeHeldRecheck runs before the hold is taken for the second ask.
+// Test seam: a reader signals it is about to wait on an expunge in progress.
+var testBeforeHeldRecheck func()
 
 // RFC822Size is the size a client is told: the record's own, or the driver's
 // answer from storage when it has none (#1726).

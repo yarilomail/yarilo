@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/dboxv2"
@@ -148,8 +149,69 @@ func TestTheIndexIsAskedOncePerVanishedBody(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = readers["OpenMessage"](box, m)
-			if asks != 1 {
-				t.Errorf("one vanished body asked the index %d times, want 1", asks)
+			// A store that removes the body first asks once more, under the hold.
+			want := map[string]int{"maildir": 2, "sdbox": 1}[driver]
+			if asks != want {
+				t.Errorf("one vanished body asked the index %d times, want %d", asks, want)
+			}
+		})
+	}
+}
+
+// On maildir an expunge removes the body, then the record, under the folder
+// hold. A read between the two finds no file and the record still there; it
+// is asked about again under the hold, after the expunge, and is ErrExpunged.
+func TestAReadInsideAnExpungeOnMaildirIsExpunged(t *testing.T) {
+	for name := range readers {
+		t.Run(name, func(t *testing.T) {
+			box, f := boxOn(t, "maildir")
+			m := deliverOne(t, box, f)
+			waiting := make(chan struct{}, 1)
+			defer mailboxbase.SetBeforeHeldRecheck(func() { waiting <- struct{}{} })()
+			got := make(chan error, 1)
+			defer mailboxbase.SetAfterBodyRemoved(func() {
+				go func() { got <- readers[name](box, m) }()
+				select {
+				case <-waiting:
+				case <-time.After(5 * time.Second):
+					t.Error("the read did not reach the second ask")
+				}
+			})()
+			if _, failed, err := box.ExpungeMarked(f, "INBOX", []*mailbox.MessageMeta{m}); err != nil || failed != 0 {
+				t.Fatalf("expunge: failed %d, %v", failed, err)
+			}
+			select {
+			case err := <-got:
+				if !errors.Is(err, mailbox.ErrExpunged) {
+					t.Fatalf("a read inside the expunge = %v, want ErrExpunged", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the read did not return")
+			}
+		})
+	}
+}
+
+// The second ask is only for a store that removes the body first: sdbox
+// removes the record first and never takes the hold for a read.
+func TestOnlyABodyFirstStoreAsksUnderTheHold(t *testing.T) {
+	for _, tc := range []struct {
+		driver string
+		held   int
+	}{{"maildir", 1}, {"sdbox", 0}} {
+		t.Run(tc.driver, func(t *testing.T) {
+			held := 0
+			defer mailboxbase.SetBeforeHeldRecheck(func() { held++ })()
+			box, f := boxOn(t, tc.driver)
+			m := deliverOne(t, box, f)
+			if err := box.RemoveMessage("INBOX", m); err != nil {
+				t.Fatal(err)
+			}
+			if err := readers["OpenMessage"](box, m); err == nil || errors.Is(err, mailbox.ErrExpunged) {
+				t.Fatalf("read = %v, want the store's error", err)
+			}
+			if held != tc.held {
+				t.Errorf("asked under the hold %d times, want %d", held, tc.held)
 			}
 		})
 	}
