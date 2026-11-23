@@ -181,6 +181,18 @@ terminations() {
 # imaptest ranges and the MAILCRYPT scenarios, and is used by nothing else.
 # Prints "<user> <files>", or "prep: <why>" when it could not be made.
 AGED_N=30
+
+# aged_target reads one "<what aged_prepare printed>:<type>": the type after
+# the last colon, since a preparation's reason holds colons of its own. Prints
+# "<type> user <user>", or "<type> fail <reason>".
+aged_target() {
+  local acct="${1%:*}" type="${1##*:}"
+  case "$acct" in
+    "prep: "* | "") echo "$type fail ${acct#prep: }" ;;
+    *) echo "$type user ${acct%% *}" ;;
+  esac
+}
+
 aged_prepare() {
   local user="$1" type="$2" dom="${1#*@}" home dir n pattern pod
   home="/var/mail/vhosts/$dom/$user"
@@ -590,13 +602,12 @@ kube delete job imaptest --ignore-not-found > /dev/null
 
 echo "== aged mailboxes after an open"
 for spec in "${SDBOX_AGED:-}:sdbox" "${MAILDIR_AGED:-}:maildir"; do
-  acct=${spec%%:*}; type=${spec#*:}
-  case "$acct" in
-    "prep: "* | "")
-      verdict "aged $type mailbox survives an open" fail "the aged account was not made: ${acct#prep: }"
-      continue ;;
-  esac
-  user=${acct%% *}
+  read -r type what rest <<< "$(aged_target "$spec")"
+  if [ "$what" = fail ]; then
+    verdict "aged $type mailbox survives an open" fail "the aged account was not made: $rest"
+    continue
+  fi
+  user=$rest
   # Counted right before the open: the smoketest appends to these accounts.
   before=$(disk_messages "$user" "$type")
   imap_session "a LOGIN $user $PASSWORD\r\nb SELECT INBOX\r\nc LOGOUT\r\n" > /dev/null
