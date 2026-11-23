@@ -896,6 +896,19 @@ kube exec "$authpod" -- sh -c \
   'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep -E "^yarilo_auth_request_seconds_(bucket|count|sum)\{.*verb=\"AUTH\""' \
   > "$OUT/auth-$ARM-after.txt"
 
+# Every container's log of every backend pod, kept before the next arm's
+# deploy replaces the pods: an imaptest error that did not fail the arm is
+# named only in its protocol's log, and only until then.
+step "logs"
+mkdir -p "$OUT/logs-$ARM"
+for po in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+  for c in $(kube get pod "$po" -o jsonpath='{.spec.containers[*].name}'); do
+    kube logs "$po" -c "$c" --timestamps > "$OUT/logs-$ARM/$c-$po.log" 2>&1 || true
+    kube logs "$po" -c "$c" --timestamps --previous > "$OUT/logs-$ARM/$c-$po.previous.log" 2>/dev/null ||
+      rm -f "$OUT/logs-$ARM/$c-$po.previous.log"
+  done
+done
+
 # What the next arm must find if it carries this state over.
 message_inventory > "$OUT/messages-last-arm.txt"
 echo "-- this arm ends on $(cat "$OUT/messages-last-arm.txt")" | tee "$OUT/messages-$ARM-end.txt"
