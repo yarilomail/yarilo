@@ -20,7 +20,7 @@ require (
 	github.com/foxcpp/go-sieve v0.0.0-20260703081245-75bf8d082267
 	github.com/go-sql-driver/mysql v1.10.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/google/pprof v0.0.0-20261111200114-fac431ef4d26
+	github.com/google/pprof v0.0.0-20261118010117-084b33a85f63
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/file v1.2.1
@@ -35,13 +35,13 @@ require (
 	golang.org/x/sys v0.50.0
 	golang.org/x/text v0.44.0
 	golang.org/x/time v0.16.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	filippo.io/hpke v0.4.0 // indirect
-	github.com/MicahParks/jwkset v0.11.4 // indirect
+	github.com/MicahParks/jwkset v0.12.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
