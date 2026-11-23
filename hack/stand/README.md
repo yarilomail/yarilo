@@ -70,12 +70,15 @@ KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/release-window.sh <cut-tag> <last-r
 A1 (the last release, its own chart from a `stand-v<last-release>` worktree
 beside the checkout) / B (the cut image) / A2 (the last release, same slot as
 B), `store-parallel.sh` after each, and the stand goes back to the cut through
-`stand_deploy`. Each A arm runs on a store its own release filled: before A1
+`stand_deploy`. Each arm keeps every container's log of every backend pod in
+`logs-<arm>/` before the next arm's deploy replaces the pods, whether the arm
+passed or not. Each A arm runs on a store its own release filled: before A1
 the window empties every account of the test domains and the public namespace,
 which the scenarios write with the cut, and each arm empties the mailbox its
 seed fills. No arm runs the last release on a store the cut wrote: the old
-release is not meant to read it (#2685); the report says so in one line. `progress.txt` holds a line a step; a failed arm leaves
-`snap-<arm>/` and stops the window.
+release is not meant to read it (#2685); the report says so in one line.
+`progress.txt` holds a line a step; a failed arm leaves `snap-<arm>/` and
+stops the window.
 
 ### Overlays
 
