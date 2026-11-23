@@ -285,6 +285,9 @@ func TestCryptAllCountsAnAccountWithoutAHomeApart(t *testing.T) {
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = io.WriteString(w, `{}`)
 		case "/api/backend/crypt/job":
+			if k := r.URL.Query().Get("kind"); k != "reencrypt" {
+				t.Errorf("job polled with kind %q, want reencrypt: a status beside it would answer instead", k)
+			}
 			if r.URL.Query().Get("user") == "new@x" {
 				_, _ = io.WriteString(w, `{"kind":"reencrypt","user":"new@x","state":"skipped","error":"no mail home for this user","totals":{}}`)
 				return

@@ -59,7 +59,7 @@ func cryptAll(kind string, base map[string]any, jobs, rate int, publicNS string)
 		perJob = max(1, rate/jobs)
 	}
 
-	run := &allRun{running: map[string]bool{}}
+	run := &allRun{kind: kind, running: map[string]bool{}}
 	stop := make(chan os.Signal, 2)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
@@ -143,6 +143,7 @@ func cryptAll(kind string, base map[string]any, jobs, rate int, publicNS string)
 // allRun is what an interrupt needs: the users whose job may be running, and
 // whether the run was interrupted.
 type allRun struct {
+	kind        string
 	mu          sync.Mutex
 	running     map[string]bool
 	interrupted bool
@@ -151,8 +152,8 @@ type allRun struct {
 // exitAll ends yarctl on a second interrupt. Test seam.
 var exitAll = os.Exit
 
-func cancelJob(user string) {
-	_, _ = backendAPIDelete("/api/backend/crypt/job?user=" + url.QueryEscape(user))
+func cancelJob(user, kind string) {
+	_, _ = backendAPIDelete("/api/backend/crypt/job?user=" + url.QueryEscape(user) + "&kind=" + kind)
 }
 
 // begin claims user for a job, false once the run was interrupted.
@@ -172,7 +173,7 @@ func (r *allRun) started(user string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.interrupted {
-		cancelJob(user)
+		cancelJob(user, r.kind)
 	}
 }
 
@@ -192,7 +193,7 @@ func (r *allRun) interrupt() bool {
 	}
 	r.interrupted = true
 	for u := range r.running {
-		cancelJob(u)
+		cancelJob(u, r.kind)
 	}
 	return true
 }
@@ -235,7 +236,7 @@ func runOneJob(kind, user string, base map[string]any, rate int, ns string, star
 	if started != nil {
 		started(user)
 	}
-	path := "/api/backend/crypt/job?user=" + url.QueryEscape(user) + "&wait=30s"
+	path := "/api/backend/crypt/job?user=" + url.QueryEscape(user) + "&kind=" + kind + "&wait=30s"
 	for {
 		data, err := backendAPIGet(path)
 		if err != nil {

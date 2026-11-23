@@ -14,6 +14,7 @@ import (
 // purgeStats is the backend's answer for one user.
 type purgeStats struct {
 	Skipped         string `json:"skipped,omitempty"`
+	SkipReason      string `json:"skip_reason,omitempty"`
 	FilesScanned    int    `json:"files_scanned"`
 	FilesRewritten  int    `json:"files_rewritten"`
 	FilesUnlinked   int    `json:"files_unlinked"`
@@ -122,9 +123,6 @@ func purgeMany(users []string, ns string, jobs int) error {
 	return nil
 }
 
-// noMailHome is the backend's skipped reason for an account without a home.
-const noMailHome = "no mail home for this user"
-
 // purgeWorkerStarted is a test seam: it runs once a purge worker starts.
 var purgeWorkerStarted = func() {}
 
@@ -145,7 +143,7 @@ func (s *purgeSummary) add(r purgeResult) {
 	switch {
 	case r.Err != "":
 		s.FailedUsers = append(s.FailedUsers, r.User)
-	case r.Stats.Skipped == noMailHome:
+	case r.Stats.SkipReason == "no_home":
 		s.NoHome++
 		s.NoHomeUsers = append(s.NoHomeUsers, r.User)
 	case r.Stats.Skipped != "":

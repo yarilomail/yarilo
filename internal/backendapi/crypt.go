@@ -103,10 +103,14 @@ type cryptJob struct {
 	done   chan struct{} // closed when the job ends
 }
 
+// cryptJobs holds one job of each kind a user: a status reads while a
+// re-encryption runs.
 type cryptJobs struct {
 	mu     sync.Mutex
-	byUser map[string]*cryptJob
+	byUser map[string]*cryptJob // by jobKey
 }
+
+func jobKey(user string, kind cryptKind) string { return user + "\x00" + string(kind) }
 
 func (j *cryptJob) snapshot() map[string]any {
 	j.mu.Lock()
@@ -180,7 +184,7 @@ func (s *Server) handleCryptStart(kind cryptKind) http.HandlerFunc {
 // handleCryptJob answers at once, or with ?wait=<duration> when the job ends
 // or the wait runs out, whichever is first.
 func (s *Server) handleCryptJob(w http.ResponseWriter, r *http.Request) {
-	job := s.cryptJobFor(r.URL.Query().Get("user"))
+	job := s.cryptJobFor(r.URL.Query().Get("user"), cryptKind(r.URL.Query().Get("kind")))
 	if job == nil {
 		apiError(w, "no crypt job for this user on this pod", http.StatusNotFound)
 		return
@@ -202,7 +206,7 @@ func (s *Server) handleCryptJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCryptCancel(w http.ResponseWriter, r *http.Request) {
-	job := s.cryptJobFor(r.URL.Query().Get("user"))
+	job := s.cryptJobFor(r.URL.Query().Get("user"), cryptKind(r.URL.Query().Get("kind")))
 	if job == nil {
 		apiError(w, "no crypt job for this user on this pod", http.StatusNotFound)
 		return
@@ -211,21 +215,31 @@ func (s *Server) handleCryptCancel(w http.ResponseWriter, r *http.Request) {
 	apiJSON(w, job.snapshot())
 }
 
-func (s *Server) cryptJobFor(user string) *cryptJob {
+// cryptJobFor is the user's job of kind; with no kind, the one started last.
+func (s *Server) cryptJobFor(user string, kind cryptKind) *cryptJob {
 	s.crypt.mu.Lock()
 	defer s.crypt.mu.Unlock()
-	return s.crypt.byUser[user]
+	if kind != "" {
+		return s.crypt.byUser[jobKey(user, kind)]
+	}
+	var last *cryptJob
+	for _, k := range []cryptKind{cryptStatus, cryptReencrypt} {
+		if j := s.crypt.byUser[jobKey(user, k)]; j != nil && (last == nil || j.Started.After(last.Started)) {
+			last = j
+		}
+	}
+	return last
 }
 
-// startCryptJob refuses a second job for a user this process is running; the
-// lease refuses one another process runs.
+// startCryptJob refuses a second job of the same kind for a user this process
+// is running; the lease refuses a second writing job another process runs.
 func (s *Server) startCryptJob(kind cryptKind, req cryptRequest) (*cryptJob, error) {
 	s.crypt.mu.Lock()
 	defer s.crypt.mu.Unlock()
 	if s.crypt.byUser == nil {
 		s.crypt.byUser = map[string]*cryptJob{}
 	}
-	if old := s.crypt.byUser[req.User]; old != nil {
+	if old := s.crypt.byUser[jobKey(req.User, kind)]; old != nil {
 		old.mu.Lock()
 		running := old.State == "running"
 		old.mu.Unlock()
@@ -239,7 +253,7 @@ func (s *Server) startCryptJob(kind cryptKind, req cryptRequest) (*cryptJob, err
 		State: "running", Started: time.Now(), Totals: map[string]int{}, cancel: cancel,
 		done: make(chan struct{}),
 	}
-	s.crypt.byUser[req.User] = job
+	s.crypt.byUser[jobKey(req.User, kind)] = job
 	go s.runCryptJob(ctx, job, req)
 	return job, nil
 }
@@ -249,7 +263,9 @@ func (s *Server) runCryptJob(ctx context.Context, job *cryptJob, req cryptReques
 	started := false
 	run := func(ctx context.Context) error { started = true; return s.walkCrypt(ctx, job, req) }
 	var err error
-	if s.opts.Locker != nil {
+	// Only a job that rewrites takes the lease: a status or a dry run reads, as
+	// a session does, and never keeps a rewrite waiting (#2591).
+	if s.opts.Locker != nil && job.Kind == cryptReencrypt && !req.DryRun {
 		// Waits one term for the lease: a pod that died holding it lets it
 		// expire, a job running elsewhere keeps renewing it.
 		err = locks.WithLockWaiting(locks.WithSite(ctx, "crypt-job"), s.opts.Locker, locks.CryptJobKey(req.User), locks.Owner(req.User, "backend-api-crypt"),
@@ -286,8 +302,8 @@ func (s *Server) runCryptJob(ctx context.Context, job *cryptJob, req cryptReques
 	time.AfterFunc(cryptJobKeep, func() {
 		s.crypt.mu.Lock()
 		defer s.crypt.mu.Unlock()
-		if s.crypt.byUser[job.User] == job {
-			delete(s.crypt.byUser, job.User)
+		if k := jobKey(job.User, job.Kind); s.crypt.byUser[k] == job {
+			delete(s.crypt.byUser, k)
 		}
 	})
 }

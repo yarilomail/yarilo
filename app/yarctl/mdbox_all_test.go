@@ -30,7 +30,7 @@ func purgeAPI(t *testing.T, users []string, answers map[string]string) *httptest
 			}
 			switch answers[user] {
 			case "skip":
-				_, _ = io.WriteString(w, `{"skipped":"not an mdbox store"}`)
+				_, _ = io.WriteString(w, `{"skipped":"not an mdbox store","skip_reason":"not_mdbox"}`)
 			case "fail":
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = io.WriteString(w, `{"error":"purge: disk full"}`)
@@ -38,7 +38,7 @@ func purgeAPI(t *testing.T, users []string, answers map[string]string) *httptest
 				if req["skip_no_home"] != true {
 					t.Errorf("purge of %s without skip_no_home", user)
 				}
-				_, _ = io.WriteString(w, `{"skipped":"no mail home for this user"}`)
+				_, _ = io.WriteString(w, `{"skipped":"an account that never logged in","skip_reason":"no_home"}`)
 			case "unknown":
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = io.WriteString(w, `{"error":"no such user"}`)

@@ -127,16 +127,16 @@ func cryptStart(kind string, args []string) error {
 		fmt.Fprintf(os.Stderr, "crypt %s for %s started; 'yarctl backend crypt job %s' reads it\n", kind, user, user)
 		return nil
 	}
-	return cryptFollow(user)
+	return cryptFollow(user, kind)
 }
 
 // cryptFollow waits for the user's job, printing progress to stderr; an
 // interrupt cancels the job before returning.
-func cryptFollow(user string) error {
+func cryptFollow(user, kind string) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
-	path := "/api/backend/crypt/job?user=" + url.QueryEscape(user)
+	path := "/api/backend/crypt/job?user=" + url.QueryEscape(user) + "&kind=" + kind
 	for {
 		select {
 		case <-stop:
