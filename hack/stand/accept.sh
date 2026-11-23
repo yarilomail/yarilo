@@ -125,8 +125,6 @@ disk_messages() {
   esac
 }
 
-# aged_account finds an account of the domain whose INBOX holds at least 20
-# message files modified over a day ago: the class #2172's sweep judged by mtime.
 # The imaptest accounts of each type, wiped and filled at the start: runs that
 # start from whatever the last one left are not comparable (#2661).
 IMAPTEST_RANGES="d00001.test:3:20 d00002.test:53:70 d00003.test:103:120"
@@ -174,10 +172,49 @@ terminations() {
   done
 }
 
-aged_account() {
-  local dom="$1" sub="$2" pattern="$3"
+# aged_prepare makes the account the aged row opens, rather than hoping the
+# stand kept one: the row guards #2172's class, a sweep that judged message
+# files by mtime and lost some on the open of a mailbox whose files were old.
+# What it needs is old mtimes, not an old account, so the files are set two
+# days back by hand; an account the stand happened to keep is gone after every
+# window, which empties the test domains (#2686). The account is outside the
+# imaptest ranges and the MAILCRYPT scenarios, and is used by nothing else.
+# Prints "<user> <files>", or "prep: <why>" when it could not be made.
+AGED_N=30
+
+# aged_target reads one "<what aged_prepare printed>:<type>": the type after
+# the last colon, since a preparation's reason holds colons of its own. Prints
+# "<type> user <user>", or "<type> fail <reason>".
+aged_target() {
+  local acct="${1%:*}" type="${1##*:}"
+  case "$acct" in
+    "prep: "* | "") echo "$type fail ${acct#prep: }" ;;
+    *) echo "$type user ${acct%% *}" ;;
+  esac
+}
+
+aged_prepare() {
+  local user="$1" type="$2" dom="${1#*@}" home dir n pattern pod
+  home="/var/mail/vhosts/$dom/$user"
+  case "$type" in
+    sdbox) dir="$home/sdbox/mailboxes/INBOX/dbox-Mails"; pattern='u.*' ;;
+    maildir) dir="$home/Maildir/cur"; pattern='*' ;;
+  esac
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    kube exec "$pod" -c yarilo-imap -- rm -rf "$home" > /dev/null
+  done
+  n=${user%%@*}; n=${n#u}
+  YARILO_NS="$NS" YARILO_FILL_DOMAIN="$dom"     bash "$REPO/hack/stand/fill-mailboxes.sh" "$n" "$n" "$AGED_N" >> "$OUT/fill-aged.txt" 2>&1 ||
+    { echo "prep: the fill of $user did not take ($OUT/fill-aged.txt)"; return; }
+  # One open first, so maildir moves new/ into cur/, where the sweep looked.
+  imap_session "a LOGIN $user $PASSWORD\r\nb SELECT INBOX\r\nc LOGOUT\r\n" > /dev/null
   kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
-    "cd /var/mail/vhosts/$dom 2>/dev/null && for u in *; do n=\$(find \"\$u/$sub\" -maxdepth 1 -type f -name '$pattern' -mmin +1440 2>/dev/null | wc -l); [ \"\$n\" -ge 20 ] && echo \"\$u \$n\" && break; done" 2>/dev/null || true
+    "t=\$(date -u -d @\$((\$(date +%s) - 172800)) +%Y%m%d%H%M.%S) && find '$dir' -maxdepth 1 -type f -name '$pattern' -exec touch -t \$t {} +" > /dev/null 2>&1 ||
+    { echo "prep: the mtimes of $user could not be set"; return; }
+  n=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
+    "find '$dir' -maxdepth 1 -type f -name '$pattern' -mmin +1440 2>/dev/null | wc -l" 2>/dev/null | tr -d ' ')
+  [ "${n:-0}" -ge 20 ] || { echo "prep: $user has ${n:-an unreadable count of} files older than a day, want 20 or more"; return; }
+  echo "$user $n"
 }
 
 # uid_pairs prints "user uid" for every UID both vanished and present, for the
@@ -433,9 +470,9 @@ fill_start
 store_sizes | tee "$OUT/store-start.txt"
 
 echo "== aged mailboxes before"
-SDBOX_AGED=$(aged_account d00003.test sdbox/mailboxes/INBOX/dbox-Mails 'u.*')
-MAILDIR_AGED=$(aged_account d00002.test Maildir/cur '*')
-echo "sdbox: ${SDBOX_AGED:-none}; maildir: ${MAILDIR_AGED:-none}" | tee "$OUT/aged-before.txt"
+SDBOX_AGED=$(aged_prepare u149@d00003.test sdbox)
+MAILDIR_AGED=$(aged_prepare u98@d00002.test maildir)
+echo "sdbox: $SDBOX_AGED; maildir: $MAILDIR_AGED" | tee "$OUT/aged-before.txt"
 
 uid_pairs | sort > "$OUT/uid-pairs-before.txt"
 
@@ -565,12 +602,12 @@ kube delete job imaptest --ignore-not-found > /dev/null
 
 echo "== aged mailboxes after an open"
 for spec in "${SDBOX_AGED:-}:sdbox" "${MAILDIR_AGED:-}:maildir"; do
-  acct=${spec%%:*}; type=${spec#*:}
-  if [ -z "$acct" ]; then
-    verdict "aged $type mailbox survives an open" fail "no $type account with 20+ files older than a day on the stand"
+  read -r type what rest <<< "$(aged_target "$spec")"
+  if [ "$what" = fail ]; then
+    verdict "aged $type mailbox survives an open" fail "the aged account was not made: $rest"
     continue
   fi
-  user=${acct%% *}
+  user=$rest
   # Counted right before the open: the smoketest appends to these accounts.
   before=$(disk_messages "$user" "$type")
   imap_session "a LOGIN $user $PASSWORD\r\nb SELECT INBOX\r\nc LOGOUT\r\n" > /dev/null

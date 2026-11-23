@@ -698,3 +698,26 @@ func TestTheMergeSummaryFailsARunWithAFailedDelivery(t *testing.T) {
 		t.Errorf("the summary does not count it:\n%s", out)
 	}
 }
+
+// A preparation that did not take fails the aged row with its reason: the
+// reason holds colons, so the type is read after the last one, never the first.
+func TestAFailedAgedPreparationFailsTheRow(t *testing.T) {
+	fn := regexp.MustCompile(`(?ms)^aged_target\(\) \{.*?^\}`).FindString(acceptSource(t))
+	if fn == "" {
+		t.Fatal("accept.sh lost aged_target")
+	}
+	for _, tc := range []struct{ spec, want string }{
+		{"prep: the fill of u98@d00002.test did not take (/w/acc/fill-aged.txt):maildir", "maildir fail the fill of u98@d00002.test did not take (/w/acc/fill-aged.txt)"},
+		{"prep: u149@d00003.test has 3 files older than a day, want 20 or more:sdbox", "sdbox fail u149@d00003.test has 3 files older than a day, want 20 or more"},
+		{":sdbox", "sdbox fail "},
+		{"u98@d00002.test 30:maildir", "maildir user u98@d00002.test"},
+	} {
+		out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\naged_target \"$1\"", "-", tc.spec).CombinedOutput()
+		if err != nil {
+			t.Fatalf("aged_target: %v\n%s", err, out)
+		}
+		if got := strings.TrimRight(string(out), "\n"); got != tc.want {
+			t.Errorf("aged_target %q = %q, want %q", tc.spec, got, tc.want)
+		}
+	}
+}
