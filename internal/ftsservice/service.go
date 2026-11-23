@@ -1203,8 +1203,8 @@ func (s *Service) runIndex(j job) error {
 			// window for every message after it.
 			fetch.release(int64(m.Size))
 			// A read that failed because the message was expunged meanwhile is
-			// an expunge, not a hole or corruption (#2257).
-			gone := err != nil && s.expungedMidJob(h, folder.ID, m)
+			// an expunge, not a hole or corruption (#2257); the box decides it.
+			gone := errors.Is(err, mailbox.ErrExpunged)
 			if err != nil && !gone {
 				var buildErr *buildError
 				if errors.As(err, &buildErr) {

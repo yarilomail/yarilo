@@ -365,8 +365,7 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 		return nil // its folders name messages that live in other folders
 	}
 	driver := mailbox.DriverNameOf(bundle.box)
-	rr, ok := mailbox.Driver(bundle.box).(mailbox.RawReader)
-	if !ok {
+	if _, ok := mailbox.Driver(bundle.box).(mailbox.RawReader); !ok {
 		return fmt.Errorf("crypt: driver %s reads no raw records", driver)
 	}
 	writing := job.Kind == cryptReencrypt && !req.DryRun
@@ -411,9 +410,16 @@ func (s *Server) walkCryptNamespace(ctx context.Context, job *cryptJob, req cryp
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			b, err := rr.RawRecord(e.Name, m)
+			if testBeforeCryptRead != nil {
+				testBeforeCryptRead(e.Name, m)
+			}
+			b, err := bundle.mbox.RawMessage(e.Name, m)
 			if err != nil {
 				if errors.Is(err, mailbox.ErrExpunged) {
+					// Expunged after the list was read: the box decided it.
+					if writing {
+						job.rewrote(row, rewriteSkipped)
+					}
 					continue
 				}
 				slog.Warn("backendapi/crypt: message unreadable", "user", req.User, "namespace", ns, "folder", e.Name, "uid", m.UID, "err", err)
@@ -554,3 +560,7 @@ func (j *cryptJob) count(f *cryptFolder, st mailcrypt.State, err error, to strin
 		j.WouldRewrite++
 	}
 }
+
+// testBeforeCryptRead runs between the list of a folder and the read of one of
+// its messages. Test seam: another session expunges it there.
+var testBeforeCryptRead func(folder string, m *mailbox.MessageMeta)

@@ -47,8 +47,13 @@ func startTestServer(t *testing.T) *imapclient.Client {
 
 func startTestServerIn(t *testing.T, dir string) *imapclient.Client {
 	t.Helper()
+	return startTestServerInWith(t, dir, maildir.New())
+}
 
-	mb := maildir.New()
+// startTestServerInWith is startTestServerIn on the given store.
+func startTestServerInWith(t *testing.T, dir string, mb mailbox.MailboxBackend) *imapclient.Client {
+	t.Helper()
+
 	idx := file.New()
 	resolver := &mailbox.Resolver{Root: dir, HomeTemplate: "%d/%n"}
 

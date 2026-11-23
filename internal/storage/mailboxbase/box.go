@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"time"
 
@@ -109,10 +110,65 @@ func (b *Box) MessagePath(folder string, m *mailbox.MessageMeta) (string, error)
 	return MessagePath(b.store, folder, m)
 }
 
-// OpenMessage opens the body a record names.
+// OpenMessage opens the body a record names. A body the store no longer has,
+// for a record the index no longer has either, is an expunge (ErrExpunged).
 func (b *Box) OpenMessage(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
-	return OpenMessage(b.store, folder, m)
+	rc, err := OpenMessage(b.store, folder, m)
+	if err != nil {
+		return nil, b.expungedMeanwhile(folder, m, err)
+	}
+	return rc, nil
 }
+
+// RawMessage is OpenMessage without decryption and CRLF: the bytes as stored,
+// for re-encryption, under the same rule for a vanished body.
+func (b *Box) RawMessage(folder string, m *mailbox.MessageMeta) (mailbox.RawBody, error) {
+	rr, ok := mailbox.Driver(b.store).(mailbox.RawReader)
+	if !ok {
+		return nil, fmt.Errorf("mailbox: %T reads no raw records", mailbox.Driver(b.store))
+	}
+	raw, err := rr.RawRecord(folder, m)
+	if err != nil {
+		return nil, b.expungedMeanwhile(folder, m, err)
+	}
+	return raw, nil
+}
+
+// expungedMeanwhile decides a read that found no body. The store and the index
+// meet here, so this is where it is decided, once for every reader: the index
+// is asked once, for the record by its uid and GUID (a uid alone is reused). A
+// record it no longer has was expunged after the caller read it: ErrExpunged,
+// with nothing in the chain that marks the folder corrupt. A record still
+// there keeps the store's error. A store says "no body" as a missing file, or
+// as corruption (maildir: a uid in no list entry; sdbox: a vanished u.<uid>);
+// any other error is returned as it is, without asking.
+func (b *Box) expungedMeanwhile(folder string, m *mailbox.MessageMeta, err error) error {
+	if errors.Is(err, mailbox.ErrExpunged) ||
+		!(errors.Is(err, fs.ErrNotExist) || errors.Is(err, mailbox.ErrCorruptStorage)) {
+		return err
+	}
+	if testBeforeExpungeCheck != nil {
+		testBeforeExpungeCheck()
+	}
+	f, ferr := b.index.OpenFolder(folder, 0)
+	if ferr != nil {
+		return err
+	}
+	recs, gerr := b.index.GetMessages(f.ID, mailbox.SeqSet{{From: m.UID, To: m.UID}})
+	if gerr != nil {
+		return err
+	}
+	for _, r := range recs {
+		if r.UID == m.UID && (m.GUID == [16]byte{} || r.GUID == m.GUID) {
+			return err
+		}
+	}
+	return fmt.Errorf("mailbox: %q uid %d: %w (the store said: %v)", folder, m.UID, mailbox.ErrExpunged, err)
+}
+
+// testBeforeExpungeCheck runs before the index is asked about a vanished
+// body. Test seam: it counts the asks.
+var testBeforeExpungeCheck func()
 
 // RFC822Size is the size a client is told: the record's own, or the driver's
 // answer from storage when it has none (#1726).
