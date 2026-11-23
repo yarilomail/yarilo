@@ -61,10 +61,21 @@ kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 
 crypt() { kube exec yarilo-backend-0 -c yarilo-backend-api -- yarctl backend crypt "$@"; }
 
+# save_logs keeps every backend pod's backend-api log in $OUT/logs/$1, before
+# a restart takes it: a failed message is named only there.
+save_logs() {
+  local pod
+  mkdir -p "$OUT/logs/$1"
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    kube logs "$pod" -c yarilo-backend-api --timestamps > "$OUT/logs/$1/backend-api-$pod.log" 2>&1
+  done
+}
+
 failed=0
 row() {
   echo "$1 $2 image=$TAG $3" | tee -a "$ROWS"
   [ "$1" = PASS ] || failed=1
+  save_logs "$2"
 }
 
 # counts reads a status table's TOTAL row, or for --all its ALL USERS line, as
@@ -140,12 +151,14 @@ deploy() {
   local name="$1" set=("${RUN_SET[@]}")
   shift
   case "$name" in restore | keys-kept) set=() ;; esac
+  save_logs "before-deploy-$name"
   mkdir -p "$OUT/deploy-$name"
   stand_deploy "$OUT/deploy-$name" "$TAG" "$REPO/helm" -f "$VALUES/values-sandbox.yaml" "$@" ${set[@]+"${set[@]}"} ||
     { echo "crypt-scenarios: the $name deploy did not settle" >&2; return 1; }
 }
 
 restart_backend() {
+  save_logs "before-restart-$1"
   mkdir -p "$OUT/restart-$1"
   stand_watch_backend "$OUT/restart-$1/backend-downtime.txt" &
   local w=$!

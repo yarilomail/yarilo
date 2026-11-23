@@ -570,6 +570,11 @@ for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut 
       "for n in \$(seq $2 $3); do rm -rf \"/var/mail/vhosts/$1/u\${n}@$1\"; done" >/dev/null
   done
 done
+# The seed fills this mailbox again; left from the arm before, it is a store
+# another release wrote (#2685).
+for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+  kube exec "$pod" -c yarilo-imap -- rm -rf "/var/mail/vhosts/$MDBOX_DOMAIN/over@$MDBOX_DOMAIN" >/dev/null
+done
 
 
 
