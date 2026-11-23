@@ -59,7 +59,7 @@ func TestAnAccountWithoutAHomeIsSkippedOnlyWhenAsked(t *testing.T) {
 				map[string]any{"user": user, "skip_no_home": tc.skip})
 			var resp mdboxPurgeResponse
 			_ = json.Unmarshal(body, &resp)
-			skipped := status == http.StatusOK && resp.Skipped == errNoMailHome.Error()
+			skipped := status == http.StatusOK && resp.SkipReason == "no_home"
 			if skipped != tc.wantSkip || (tc.wantStatus != 0 && status != tc.wantStatus) {
 				t.Errorf("purge: %d %s, want status %d skipped %v", status, body, tc.wantStatus, tc.wantSkip)
 			}

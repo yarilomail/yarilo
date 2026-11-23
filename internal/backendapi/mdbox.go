@@ -22,13 +22,16 @@ type mdboxPurgeRequest struct {
 	Namespace string `json:"namespace"`
 	// SkipOthers answers a store other than mdbox with skipped instead of the
 	// refusal: a purge over many users counts it apart from the failures.
-	SkipOthers bool `json:"skip_other_drivers"` // SkipNoHome answers an account without a mail home with skipped (#2675).
+	SkipOthers bool `json:"skip_other_drivers"`
+	// SkipNoHome answers an account without a mail home with skipped (#2675).
 	SkipNoHome bool `json:"skip_no_home"`
 }
 
 type mdboxPurgeResponse struct {
-	// Skipped names why nothing ran, asked for with skip_other_drivers.
+	// Skipped says why nothing ran, SkipReason the same as a code a caller
+	// counts by: no_home or not_mdbox.
 	Skipped         string `json:"skipped,omitempty"`
+	SkipReason      string `json:"skip_reason,omitempty"`
 	FilesScanned    int    `json:"files_scanned"`
 	FilesRewritten  int    `json:"files_rewritten"`
 	FilesUnlinked   int    `json:"files_unlinked"`
@@ -60,7 +63,7 @@ func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
 	}
 	if bundle == nil {
 		if req.SkipNoHome {
-			apiJSON(w, mdboxPurgeResponse{Skipped: errNoMailHome.Error()})
+			apiJSON(w, mdboxPurgeResponse{Skipped: errNoMailHome.Error(), SkipReason: "no_home"})
 			return
 		}
 		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
@@ -70,7 +73,7 @@ func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
 	p, ok := mailbox.Driver(bundle.box).(purger)
 	if !ok {
 		if req.SkipOthers {
-			apiJSON(w, mdboxPurgeResponse{Skipped: "not an mdbox store"})
+			apiJSON(w, mdboxPurgeResponse{Skipped: "not an mdbox store", SkipReason: "not_mdbox"})
 			return
 		}
 		apiError(w, "purge: storage driver does not implement mdbox purge (only mdbox does)", http.StatusBadRequest)
