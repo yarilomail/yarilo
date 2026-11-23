@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # The release window on the cut image: A1 (the last release with its own chart
 # and values) / B (the cut) / A2 (last release, same slot as B), store-parallel
-# after each arm; then the rollback: Bw writes, A2c (last release on Bw's
-# store) judged with that release's smoketest and disk = index, and back to B.
+# after each arm, and back to B. Each A arm runs on a store its own release
+# filled: before A1 every account of the test domains and the public
+# namespace is emptied, since the scenarios before a window write them with
+# the cut, and each arm empties the mailbox its seed fills. A rollback arm (the
+# last release reading a store the cut wrote) is not run: the old release is
+# not meant to read what the new one writes (#2685).
 #
 # Usage:
 #   KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/release-window.sh <cut-tag> <last-release> <out-dir>
@@ -64,43 +68,32 @@ store() {
   p "arm $1 store-parallel"
   bash "$HERE/store-parallel.sh" "$1" "$W" > "$W/store-$1.out" 2>&1 || { p "arm $1 store FAILED"; snap "store-$1"; }
 }
-index_messages() {
-  kube exec yarilo-backend-0 -c yarilo-backend-api -- yarctl backend folder info "$1" INBOX 2>/dev/null |
-    sed -n 's/.*"messages": *\([0-9]*\).*/\1/p'
-}
-disk_messages() {
-  local user="$1" type="$2" home="/var/mail/vhosts/${1#*@}/$1"
-  case "$type" in
-    sdbox) kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "ls $home/sdbox/mailboxes/INBOX/dbox-Mails 2>/dev/null | grep -c '^u\.' || true" ;;
-    maildir) kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "ls $home/Maildir/cur $home/Maildir/new 2>/dev/null | grep -vc -e '^\$' -e ':\$' || true" ;;
-  esac
-}
 . "$HERE/deploy.sh"
+
+# reset_store empties every account of the test domains and the public
+# namespace, and stops the window when anything is left.
+reset_store() {
+  local pod left
+  pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
+  kube exec "$pod" -c yarilo-imap -- sh -c '
+    for d in /var/mail/vhosts/d00001.test /var/mail/vhosts/d00002.test /var/mail/vhosts/d00003.test /var/mail/vhosts/public; do
+      [ -d "$d" ] && find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    done' > "$W/reset-store.txt" 2>&1
+  left=$(kube exec "$pod" -c yarilo-imap -- sh -c 'find /var/mail/vhosts/d00001.test /var/mail/vhosts/d00002.test /var/mail/vhosts/d00003.test /var/mail/vhosts/public -mindepth 1 2>/dev/null | wc -l')
+  [ "$left" = 0 ] || { p "store reset left ${left:-unreadable} entries"; snap reset; }
+  p "store reset: the test domains and the public namespace are empty"
+}
 
 git -C "$REPO" diff --quiet HEAD || { echo "release-window: the checkout is not clean" >&2; exit 1; }
 [ -d "$A" ] || git -C "$REPO" worktree add -q --detach "$A" "v$REL" || { echo "release-window: no worktree at v$REL" >&2; exit 1; }
 M0=$(master)
 p "start cut=$TAG release=$REL tooling=$(git -C "$REPO" rev-parse --short HEAD) $A at $(git -C "$A" describe --tags) valkey master=$M0"
 
+reset_store
 run_arm A1 "$REL" "$A"; store A1
 run_arm B "$TAG" "$REPO"; store B
 run_arm A2 "$REL" "$A"; store A2
-p "rollback: Bw writes"
-run_arm Bw "$TAG" "$REPO"
-p "rollback: A2c $REL on Bw's store"
-run_arm A2c "$REL" "$A" 1
-for user in u1@d00001.test u51@d00002.test u101@d00003.test; do
-  d=$(mktemp -d)
-  cp "$A/hack/smoketest/run.sh" "$d/"
-  sed "s/u1@d00001\.test/$user/g" "$A/hack/smoketest/job.yaml" > "$d/job.yaml"
-  NAMESPACE="$NS" bash "$d/run.sh" "$REL" > "$W/a2c-smoke-$user.log" 2>&1
-  p "A2c smoke $user rc=$? $(grep -o '"checks":[0-9]*,"passed":[0-9]*,"failed":[0-9]*,"skipped":[0-9]*' "$W/a2c-smoke-$user.log" | tail -1)"
-  rm -rf "$d"
-done
-for spec in u51@d00002.test:maildir u101@d00003.test:sdbox; do
-  user=${spec%%:*}
-  p "A2c disk = index $user disk=$(disk_messages "$user" "${spec##*:}") index=$(index_messages "$user")"
-done
+p "rollback: not run; the last release is not meant to read a store the cut wrote (#2685)"
 p "back to $TAG"
 mkdir -p "$W/deploy-back"
 stand_deploy "$W/deploy-back" "$TAG" "$REPO/helm" -f "$REPO/helm_values/values-sandbox.yaml" > "$W/back.txt" 2>&1 || p "back FAILED"

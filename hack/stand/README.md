@@ -69,10 +69,12 @@ KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/release-window.sh <cut-tag> <last-r
 
 A1 (the last release, its own chart from a `stand-v<last-release>` worktree
 beside the checkout) / B (the cut image) / A2 (the last release, same slot as
-B), `store-parallel.sh` after each; then the rollback: Bw writes on the cut,
-A2c runs the last release on Bw's store and is judged with that release's
-smoketest and disk = index, and the stand goes back to the cut through
-`stand_deploy`. `progress.txt` holds a line a step; a failed arm leaves
+B), `store-parallel.sh` after each, and the stand goes back to the cut through
+`stand_deploy`. Each A arm runs on a store its own release filled: before A1
+the window empties every account of the test domains and the public namespace,
+which the scenarios write with the cut, and each arm empties the mailbox its
+seed fills. No arm runs the last release on a store the cut wrote: the old
+release is not meant to read it (#2685); the report says so in one line. `progress.txt` holds a line a step; a failed arm leaves
 `snap-<arm>/` and stops the window.
 
 ### Overlays
@@ -146,6 +148,10 @@ The six rows of MAILCRYPT §13.12, each a PASS or FAIL line in
 | `rotate` | a new key beside the old (`mailcrypt-keys.sh rotate-add`), `--all`: other_key 0 and reference 0; the old key removed (`rotate-drop`): no_key 0 |
 | `plain` | `--all --to plain` leaves no encrypted message |
 | `cleanup` | the stand is back on its values and the Secret is gone; a restore or a delete that did not finish, or encrypted mail left, is a FAIL and the run exits 1 |
+
+After each row, and before each deploy and restart, every backend pod's
+backend-api log goes to `logs/<row or step>/`: a message a job failed is named
+only there, and a restart takes the log with it.
 
 Before the rows, the run checks the stand live: backend-api answers `crypt
 keys`, a hybrid key is the one new mail is sealed to, and a delivery under
