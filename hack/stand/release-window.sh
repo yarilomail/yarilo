@@ -71,17 +71,18 @@ store() {
 . "$HERE/deploy.sh"
 
 # reset_store empties every account of the test domains and the public
-# namespace, and stops the window when anything is left.
+# namespace on each backend pod, and stops the window when any pod has
+# anything left, naming it.
 reset_store() {
-  local pod left
-  pod=$(kube get pods -l app.kubernetes.io/component=backend -o name | head -1 | cut -d/ -f2)
-  kube exec "$pod" -c yarilo-imap -- sh -c '
-    for d in /var/mail/vhosts/d00001.test /var/mail/vhosts/d00002.test /var/mail/vhosts/d00003.test /var/mail/vhosts/public; do
-      [ -d "$d" ] && find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-    done' > "$W/reset-store.txt" 2>&1
-  left=$(kube exec "$pod" -c yarilo-imap -- sh -c 'find /var/mail/vhosts/d00001.test /var/mail/vhosts/d00002.test /var/mail/vhosts/d00003.test /var/mail/vhosts/public -mindepth 1 2>/dev/null | wc -l')
-  [ "$left" = 0 ] || { p "store reset left ${left:-unreadable} entries"; snap reset; }
-  p "store reset: the test domains and the public namespace are empty"
+  local pod left dirs="/var/mail/vhosts/d00001.test /var/mail/vhosts/d00002.test /var/mail/vhosts/d00003.test /var/mail/vhosts/public"
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    kube exec "$pod" -c yarilo-imap -- sh -c "for d in $dirs; do [ -d \$d ] && find \$d -mindepth 1 -maxdepth 1 -exec rm -rf {} +; done" >> "$W/reset-store.txt" 2>&1
+  done
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    left=$(kube exec "$pod" -c yarilo-imap -- sh -c "find $dirs -mindepth 1 2>/dev/null | wc -l")
+    [ "$left" = 0 ] || { p "store reset left ${left:-unreadable} entries on $pod"; snap reset; }
+  done
+  p "store reset: the test domains and the public namespace are empty on every backend pod"
 }
 
 git -C "$REPO" diff --quiet HEAD || { echo "release-window: the checkout is not clean" >&2; exit 1; }
