@@ -70,7 +70,7 @@ func (fs *folderState) recountHeaderLocked() error {
 // already at zero says the header was wrong before the expunge: it stays at
 // zero, is counted as a correction, and is marked unknown, so the end of the
 // replay recounts it from the records, as the reference sends a wrong counter
-// to its check (mail_index_header_update_counts).
+// to its check.
 func (fs *folderState) takeOne(n *uint32, field string, unknown uint8) {
 	if *n > 0 {
 		*n--

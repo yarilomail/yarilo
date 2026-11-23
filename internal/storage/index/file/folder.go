@@ -1197,7 +1197,7 @@ func (fs *folderState) reloadLocked() error {
 	logReplaced := false
 	if fs.logFD != nil && logStat != nil && !fdMatchesFile(fs.logFD, logStat) {
 		logReplaced = true
-		slog.Warn("fileindex: .log replaced under open fd, dropping stale handle",
+		slog.Debug("fileindex: .log replaced under open fd, dropping stale handle",
 			"folder", fs.folder)
 		fs.closeFDs()
 	}

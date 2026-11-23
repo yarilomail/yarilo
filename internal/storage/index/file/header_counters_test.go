@@ -110,12 +110,12 @@ func TestAnExpungeOnACounterAtZeroRecountsFirst(t *testing.T) {
 	}
 }
 
-// A journal expunge of a \Deleted record replayed on a header that counts
-// none: the counter stays at zero, the replay says so, and the header comes
-// out of the records.
+// A journal expunge of one of two \Deleted records replayed on a header that
+// counts none: the counter stays at zero, the replay says so, and the recount
+// brings it to the one \Deleted record left.
 func TestAReplayedExpungeNeverWrapsACounter(t *testing.T) {
 	dir := t.TempDir()
-	base := seedBase(t, dir, [][]string{nil, {`\Deleted`}, nil})
+	base := seedBase(t, dir, [][]string{nil, {`\Deleted`}, {`\Deleted`}})
 	rewriteBaseHeader(t, base, func(h *mailindex.Header) { h.DeletedMessagesCount = 0 })
 	logWithout(t, dir, isHeaderUpdate, func(t *testing.T, fs *folderState) [][]byte {
 		return [][]byte{encLogRec(mailindex.TxTypeExpungeGUID, mailindex.TxExpungeProt, make28(2))}
@@ -130,8 +130,8 @@ func TestAReplayedExpungeNeverWrapsACounter(t *testing.T) {
 		}
 		h = headerOf(t, u, f.ID)
 	})
-	if h.DeletedMessagesCount != 0 || h.MessagesCount != 2 {
-		t.Errorf("header messages=%d deleted=%d, want 2/0", h.MessagesCount, h.DeletedMessagesCount)
+	if h.DeletedMessagesCount != 1 || h.MessagesCount != 2 {
+		t.Errorf("header messages=%d deleted=%d, want 2/1", h.MessagesCount, h.DeletedMessagesCount)
 	}
 	if !strings.Contains(out, "below zero") || !strings.Contains(out, "field=deleted") {
 		t.Errorf("the replay did not say the counter was wrong:\n%s", out)
