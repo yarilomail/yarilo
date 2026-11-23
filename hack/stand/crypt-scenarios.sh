@@ -19,6 +19,11 @@
 #             age back to plain), and the time of status on a user holding
 #             CRYPT_BIG (10000) messages; nothing is said of larger mailboxes
 #
+# Every account a scenario fills is wiped at the start and the wipe checked.
+# The accounts the userdb lists without a home are left as they are: rotate's
+# --all must finish over them. The kill row saves the lease, the job on each
+# pod, events and backend-api logs in kill/ as it goes.
+#
 # The keys are mounted for the run only. They are removed only when status
 # --all shows no encrypted message; otherwise the stand stays on its keys with
 # write off, the Secret is kept, and the users holding encrypted mail are named.
@@ -83,6 +88,48 @@ fill_to() {
 messages() { kube exec yarilo-backend-0 -c yarilo-backend-api -- yarctl -O json backend quota show "$1" 2>/dev/null |
   awk -F'[:,]' '/"message_value"/ { gsub(/[^0-9-]/, "", $2); print $2 + 0; exit }'; }
 
+# wipe_user removes the account's home on every backend pod and checks that
+# nothing is left: each scenario starts from its own known state, not from what
+# an earlier run left (2026-11-23: a 600-message leftover sank mixed-mdbox).
+wipe_user() {
+  local user="$1" home="/var/mail/vhosts/${1#*@}/$1" pod left
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    kube exec "$pod" -c yarilo-imap -- rm -rf "$home" > /dev/null
+  done
+  left=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c "find '$home' -type f 2>/dev/null | wc -l" 2>/dev/null | tr -d ' ')
+  [ "$left" = 0 ] && return 0
+  echo "crypt-scenarios: the wipe of $user left ${left:-an unreadable count of} files" >&2
+  return 1
+}
+
+# lock_holder prints the yarilo-locks entries for a user's crypt job, with the
+# time each has left: read-only, from the Valkey master.
+LOCK_PREFIX="${CRYPT_LOCK_PREFIX:-yarilo-sb:locks:}"
+lock_holder() {
+  kubectl --kubeconfig="$KCFG" -n redis --request-timeout=60s exec valkey-probe -- sh -c '
+    m=$(REDISCLI_AUTH=$(cat /auth/sentinel/sentinel) valkey-cli --no-auth-warning --user sentinel -h valkey-sentinel -p 26379 SENTINEL get-master-addr-by-name mymaster | head -1)
+    export REDISCLI_AUTH="$(cat /auth/users/default)"
+    valkey-cli --no-auth-warning -h "$m" --scan --pattern "$1*" | while read -r k; do
+      v=$(valkey-cli --no-auth-warning -h "$m" GET "$k" 2>/dev/null)
+      case "$v" in "crypt:$2|"*) echo "$k $v pttl_ms=$(valkey-cli --no-auth-warning -h "$m" PTTL "$k")" ;; esac
+    done' sh "$LOCK_PREFIX" "$1" 2>&1
+}
+
+# evidence saves what the kill row is judged by, at the moment, before any later
+# step restarts the pods: the lease, the job as each pod reports it, pods, events.
+evidence() {
+  local d="$OUT/kill/$1" pod
+  mkdir -p "$d"
+  date -u +%FT%TZ > "$d/at.txt"
+  lock_holder "$KILL_USER" > "$d/lease.txt"
+  kube get pods -o wide > "$d/pods.txt" 2>&1
+  kube get events --sort-by=.lastTimestamp > "$d/events.txt" 2>&1
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    kube exec "$pod" -c yarilo-backend-api -- yarctl backend crypt job "$KILL_USER" > "$d/job-$pod.txt" 2>&1
+    kube logs "$pod" -c yarilo-backend-api --timestamps > "$d/backend-api-$pod.log" 2>&1
+  done
+}
+
 # The run's deploys lift the per-recipient delivery limit, which a fill of one
 # user past a thousand messages a minute meets by design; the restore and the
 # keys-kept fallback put the stand back on its own values, limit included.
@@ -142,6 +189,11 @@ finish() {
 }
 
 echo "-- tooling: $(git -C "$REPO" log --oneline -1) tag=$TAG n=$N kill_n=$KILL_N big=$BIG"
+
+echo "== a known start: every account a scenario fills is wiped"
+for u in $(for t in $TYPES; do user_of "$t"; set -- $(load_of "$t"); echo "$1"; done) "$KILL_USER" "$BIG_USER"; do
+  wipe_user "$u" || exit 1
+done
 
 echo "== keys and plaintext mail"
 bash "$HERE/mailcrypt-keys.sh" create || exit 1
@@ -251,14 +303,19 @@ if [ -z "$victim" ]; then
   row FAIL kill "no backend pod holds $KILL_USER (director answered '${ip:-nothing}')"
 else
   mkdir -p "$OUT/kill"
+  echo "$victim $ip" > "$OUT/kill/victim.txt"
+  evidence before-delete
   stand_watch_backend "$OUT/kill/backend-downtime.txt" &
   w=$!
   kube delete pod "$victim" --wait=true > /dev/null
+  date -u +%FT%TZ > "$OUT/kill/deleted-at.txt"
   kube rollout status sts/yarilo-backend --timeout=600s > /dev/null
   kill "$w" 2>/dev/null
   wait "$w" 2>/dev/null
+  evidence before-rerun
   crypt reencrypt "$KILL_USER" --rate 0 >> "$OUT/kill.log" 2>&1
   rerun=$?
+  evidence after-rerun
   after=$(status_of "$KILL_USER")
   if [ "$rerun" = 0 ] && [ "$(field "$mid" plain)" -gt 0 ] && [ "$(field "$mid" current)" -gt 0 ] &&
     [ "$(field "$after" plain)" = 0 ] && [ "$(field "$after" failed)" = 0 ]; then
