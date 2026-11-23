@@ -414,8 +414,10 @@ func (fs *folderState) deferRecord(kind mailindex.TxType, payload []byte, st *re
 }
 
 // applyPending applies the deferred records to the chunks now loaded, by the
-// one replay, and recounts the header from the records: applying a flag change
-// again moves a counter the absolute updates already moved.
+// one replay. The counters the journal's absolute updates set stay as they
+// set them: applying a deferred change again would move them a second time.
+// Only a counter no update named is counted from the records; a known one
+// that disagrees with them is drift, and the check logs it.
 func (fs *folderState) applyPending() error {
 	if len(fs.pending) == 0 && fs.countersUnknown == 0 {
 		return nil
@@ -424,8 +426,8 @@ func (fs *folderState) applyPending() error {
 	if err != nil {
 		return fmt.Errorf("fileindex/pending: layout: %w", err)
 	}
-	st := replayState{layout: layout}
-	saved := fs.file.Header
+	st := replayState{layout: layout, pending: true}
+	saved, unknown := fs.file.Header, fs.countersUnknown
 	for _, rec := range fs.pending {
 		hdr, herr := mailindex.DecodeTxHeader(rec)
 		if herr != nil {
@@ -438,6 +440,22 @@ func (fs *folderState) applyPending() error {
 	// What only the header knows stays as the journal left it.
 	fs.file.Header.NextUID = max(fs.file.Header.NextUID, saved.NextUID)
 	fs.file.Header.FirstRecentUID = saved.FirstRecentUID
+	_, seen, deleted := fs.countRecordsLocked()
+	h := &fs.file.Header
+	for _, c := range []struct {
+		bit           uint8
+		have          *uint32
+		journal, recs uint32
+	}{
+		{counterMessages, &h.MessagesCount, saved.MessagesCount, uint32(fs.recordCount())},
+		{counterSeen, &h.SeenMessagesCount, saved.SeenMessagesCount, seen},
+		{counterDeleted, &h.DeletedMessagesCount, saved.DeletedMessagesCount, deleted},
+	} {
+		*c.have = c.journal
+		if unknown&c.bit != 0 {
+			*c.have = c.recs
+		}
+	}
 	fs.pending, fs.pendingUIDs, fs.countersUnknown, fs.pendingExpunge = nil, nil, 0, false
 	fs.reconcileHeaderLocked()
 	// What a catch-up took off for pending expunges is counted again whole.
