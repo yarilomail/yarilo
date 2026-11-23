@@ -1197,7 +1197,7 @@ func (fs *folderState) reloadLocked() error {
 	logReplaced := false
 	if fs.logFD != nil && logStat != nil && !fdMatchesFile(fs.logFD, logStat) {
 		logReplaced = true
-		slog.Warn("fileindex: .log replaced under open fd, dropping stale handle",
+		slog.Debug("fileindex: .log replaced under open fd, dropping stale handle",
 			"folder", fs.folder)
 		fs.closeFDs()
 	}
@@ -1995,6 +1995,21 @@ func (fs *folderState) expungeLocked(uid uint32, modseq uint64) ([][]byte, error
 		return nil, nil // already expunged
 	}
 	flags := fs.recFlags(seq)
+	if h := fs.file.Header; h.MessagesCount == 0 ||
+		flags&mailindex.FlagSeen != 0 && h.SeenMessagesCount == 0 ||
+		flags&mailindex.FlagDeleted != 0 && h.DeletedMessagesCount == 0 {
+		// A counter the expunge would take below zero: the header was wrong
+		// before it. Recounted from the records first, as the reference
+		// sends a wrong counter to its check, so the journal never carries
+		// a wrapped count.
+		if err := fs.recountHeaderLocked(); err != nil {
+			return nil, err
+		}
+		if seq, ok = fs.recSeqOfUID(uid); !ok {
+			return nil, nil
+		}
+		flags = fs.recFlags(seq)
+	}
 	messages, seen, deleted := fs.file.Header.MessagesCount-1, fs.file.Header.SeenMessagesCount, fs.file.Header.DeletedMessagesCount
 	if flags&mailindex.FlagSeen != 0 {
 		seen--
@@ -3028,6 +3043,9 @@ type replayState struct {
 	lastIntro string
 	// checked says the writer already found the appended uids absent.
 	checked bool
+	// pending says the records are deferred ones applied again: their
+	// counter changes are already in the journal's absolute updates.
+	pending bool
 	// introReset and introSize are what the last EXT_INTRO said of the
 	// extension an EXT_REC_UPDATE writes: its generation and its data width.
 	introReset uint32
@@ -3090,15 +3108,20 @@ func (fs *folderState) applyRecord(kind mailindex.TxType, payload []byte, st *re
 			}
 			if seq, ok := fs.recSeqOfUID(uid); ok {
 				flags := fs.recFlags(seq)
-				if flags&mailindex.FlagSeen != 0 {
-					fs.file.Header.SeenMessagesCount--
-				}
-				if flags&mailindex.FlagDeleted != 0 {
-					fs.file.Header.DeletedMessagesCount--
+				h := &fs.file.Header
+				// applyPending keeps the journal's counters: a deferred
+				// expunge moves none.
+				if !st.pending {
+					if flags&mailindex.FlagSeen != 0 {
+						fs.takeOne(&h.SeenMessagesCount, "seen", counterSeen)
+					}
+					if flags&mailindex.FlagDeleted != 0 {
+						fs.takeOne(&h.DeletedMessagesCount, "deleted", counterDeleted)
+					}
+					fs.takeOne(&h.MessagesCount, "messages", counterMessages)
 				}
 				fs.vsizeForget(seq, uid)
 				fs.recExpunge(seq)
-				fs.file.Header.MessagesCount--
 			}
 		}
 

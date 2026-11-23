@@ -9,17 +9,7 @@ import (
 // reconcileHeaderLocked re-derives the header from the records it describes,
 // as the reference's fsck does (#1831). Caller holds fs.mu.
 func (fs *folderState) reconcileHeaderLocked() {
-	var maxUID, seen, deleted uint32
-	for i := range fs.recordCount() {
-		maxUID = max(maxUID, fs.recUID(i))
-		flags := fs.recFlags(i)
-		if flags&mailindex.FlagSeen != 0 {
-			seen++
-		}
-		if flags&mailindex.FlagDeleted != 0 {
-			deleted++
-		}
-	}
+	maxUID, seen, deleted := fs.countRecordsLocked()
 	h := &fs.file.Header
 	if h.NextUID <= maxUID {
 		fs.headerCorrected("next_uid", h.NextUID, maxUID+1)
@@ -46,6 +36,50 @@ func (fs *folderState) headerCorrected(field string, was, now uint32) {
 	metricHeaderCorrected.WithLabelValues(field).Inc()
 	slog.Warn("fileindex: header corrected from its records",
 		"trace_id", fs.traceID, "folder", fs.folder, "field", field, "was", was, "now", now)
+}
+
+// countRecordsLocked is the last uid and the \Seen and \Deleted counts of the
+// records loaded. Caller holds fs.mu.
+func (fs *folderState) countRecordsLocked() (maxUID, seen, deleted uint32) {
+	for i := range fs.recordCount() {
+		maxUID = max(maxUID, fs.recUID(i))
+		flags := fs.recFlags(i)
+		if flags&mailindex.FlagSeen != 0 {
+			seen++
+		}
+		if flags&mailindex.FlagDeleted != 0 {
+			deleted++
+		}
+	}
+	return maxUID, seen, deleted
+}
+
+// recountHeaderLocked loads every record and re-derives the header from them.
+// Caller holds fs.mu.
+func (fs *folderState) recountHeaderLocked() error {
+	if fs.recs != nil && !fs.recs.AllLoaded() {
+		if err := fs.loadWriterRecords(); err != nil {
+			return err
+		}
+	}
+	fs.reconcileHeaderLocked()
+	return nil
+}
+
+// takeOne lowers a counter by one for a record a replay expunged. A counter
+// already at zero says the header was wrong before the expunge: it stays at
+// zero, is counted as a correction, and is marked unknown, so the end of the
+// replay recounts it from the records, as the reference sends a wrong counter
+// to its check.
+func (fs *folderState) takeOne(n *uint32, field string, unknown uint8) {
+	if *n > 0 {
+		*n--
+		return
+	}
+	fs.countersUnknown |= unknown
+	metricHeaderCorrected.WithLabelValues(field).Inc()
+	slog.Warn("fileindex: an expunge took a counter below zero; recounting",
+		"trace_id", fs.traceID, "folder", fs.folder, "field", field)
 }
 
 // moveCount adjusts a flag count for one record whose flags went from old to now.
