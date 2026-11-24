@@ -815,35 +815,44 @@ func TestEveryArmReadsTheIndexCountersOfEveryService(t *testing.T) {
 	}
 }
 
-// The counters summary reads a scrape: two services, both results.
-func TestTheIndexCountersSummaryAddsEveryService(t *testing.T) {
+// The counters step on two pods and two ports, one of which does not answer:
+// the summary counts what was asked and what answered and marks the line, and
+// a clean read prints both equal with no mark.
+func TestTheIndexCountersSayWhatWasRead(t *testing.T) {
 	arm, err := os.ReadFile("ab-arm.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(arm)
-	i := strings.Index(s, "awk '\n  $3 ~ /^fileindex_header_corrected_total/")
-	if i < 0 {
-		t.Fatal("no counters summary")
-	}
-	prog := s[i:]
-	prog = prog[:strings.Index(prog, `"$OUT/index-counters-$ARM.txt"`)]
-	dir := t.TempDir()
-	in := filepath.Join(dir, "c.txt")
-	scrape := `p0 :8080 fileindex_header_corrected_total{field="seen"} 2
-p0 :8085 fileindex_header_corrected_total{field="messages"} 3
-p0 :8085 fileindex_stale_pair_total{path="open",result="retried"} 4
-p1 :8080 fileindex_stale_pair_total{path="reload",result="retried"} 1
-p1 :8080 fileindex_stale_pair_total{path="reload",result="failed"} 0
-`
-	if err := os.WriteFile(in, []byte(scrape), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.CommandContext(t.Context(), "bash", "-c", "ARM=B\n"+prog+" "+in).CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if want := "header_corrected=5 stale_pair_retried=5 stale_pair_failed=0"; !strings.Contains(string(out), want) {
-		t.Errorf("summary %q, want %q", out, want)
+	block := s[strings.Index(s, `step "index-counters"`):]
+	block = block[:strings.Index(block, "\n\n# What the next arm")]
+	page := `fileindex_header_corrected_total{field=\"seen\"} 2
+fileindex_stale_pair_total{path=\"open\",result=\"retried\"} 4
+fileindex_stale_pair_total{path=\"reload\",result=\"failed\"} 0
+other_total 9`
+	for _, tc := range []struct {
+		name, down, want string
+	}{
+		{"every port answered", "none", "-- index counters: ports=4 answered=4 header_corrected=8 stale_pair_retried=16 stale_pair_failed=0"},
+		{"a port did not answer", "8085", "-- index counters: INCOMPLETE ports=4 answered=2 header_corrected=4 stale_pair_retried=8 stale_pair_failed=0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := t.TempDir()
+			kube := `kube() {
+  case "$1 $2" in
+    "get pods") printf 'pod/p0\npod/p1\n' ;;
+    "get pod") echo "10143 8080 9106 8085 8086x" ;;
+    exec*) case "$*" in *":` + tc.down + `/"*) return 1 ;; esac; printf '%s\n' "` + page + `" ;;
+  esac
+}`
+			script := "set -euo pipefail\nOUT=" + out + "\nARM=B\nstep() { :; }\n" + kube + "\n" + block + "\necho arm-went-on\n"
+			got, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
+			if err != nil {
+				t.Fatalf("the step stopped the arm: %v\n%s", err, got)
+			}
+			if !strings.Contains(string(got), tc.want) || !strings.Contains(string(got), "arm-went-on") {
+				t.Errorf("want %q and the arm going on, got:\n%s", tc.want, got)
+			}
+		})
 	}
 }
