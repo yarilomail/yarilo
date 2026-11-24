@@ -920,3 +920,38 @@ func TestTwoCaptureKindsTakeTheirOwnPorts(t *testing.T) {
 		t.Errorf("profile on %s and block on %s overlap", p, b)
 	}
 }
+
+// store-parallel says what the imap process spent across the run, from the
+// same two pages as the latencies, per pod and in all.
+func TestStoreParallelPrintsThePodsCPU(t *testing.T) {
+	src, err := os.ReadFile("store-parallel.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	i := strings.Index(s, "store_cpu() {")
+	if i < 0 {
+		t.Fatal("no store_cpu")
+	}
+	fn := s[i:]
+	fn = fn[:strings.Index(fn, "\n}\n")+3]
+	if !strings.Contains(s, "process_cpu_seconds_total )") {
+		t.Error("the backend page does not keep the process CPU")
+	}
+	dir := t.TempDir()
+	before := filepath.Join(dir, "b")
+	after := filepath.Join(dir, "a")
+	if err := os.WriteFile(before, []byte("process_cpu_seconds_total{pod=\"p0\"} 100.5\nprocess_cpu_seconds_total{pod=\"p1\"} 50\nimap_command_seconds_bucket{x} 3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(after, []byte("process_cpu_seconds_total{pod=\"p0\"} 190.5\nprocess_cpu_seconds_total{pod=\"p1\"} 51.25\nimap_command_seconds_bucket{x} 9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\nstore_cpu \"$1\" \"$2\"", "-", before, after).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "p0=90.00s p1=1.25s imap_cpu=91.25s"; !strings.Contains(string(out), want) {
+		t.Errorf("store_cpu = %q, want %q", out, want)
+	}
+}
