@@ -307,7 +307,14 @@ func TestNoHelperIsDefinedInsideABranch(t *testing.T) {
 // cannot be profiled still stops the arm.
 func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 	src := armSource(t)
-	if !strings.Contains(src, "retry_capture") {
+	if !strings.Contains(src, `/pprof.sh"`) {
+		t.Fatal("ab-arm.sh does not source pprof.sh, where the capture lives")
+	}
+	lib, err := os.ReadFile("pprof.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lib), "retry_capture() {") {
 		t.Fatal("no retry around the capture; one flaky forward ends an arm")
 	}
 	for _, kind := range []string{"block_profile", "cpu_profile"} {
@@ -317,7 +324,7 @@ func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 	}
 	// The retry must tell the two causes apart, or a pod with no pprof at all
 	// is tried twice and still fails the arm twice as slowly.
-	if !strings.Contains(src, `[ "$rc" = 2 ] || return "$rc"`) {
+	if !strings.Contains(string(lib), `[ "$rc" = 2 ] || return "$rc"`) {
 		t.Error("the retry does not distinguish a forward that never came up from a capture that failed")
 	}
 }
@@ -854,5 +861,62 @@ other_total 9`
 				t.Errorf("want %q and the arm going on, got:\n%s", tc.want, got)
 			}
 		})
+	}
+}
+
+// store-parallel takes the captures it is asked for inside each type's run,
+// from the same helper as the arm, and fails when one is not taken.
+func TestStoreParallelProfilesInsideTheRun(t *testing.T) {
+	src, err := os.ReadFile("store-parallel.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	if !strings.Contains(s, `/pprof.sh"`) {
+		t.Fatal("store-parallel.sh does not source pprof.sh")
+	}
+	start := strings.Index(s, `for kind in $PROFILE; do`)
+	run := strings.Index(s, `hack/stand/run-job.sh" store-parallel`)
+	wait := strings.Index(s, `wait "$pid" || {`)
+	if start < 0 || run < 0 || wait < 0 || start >= run || run >= wait {
+		t.Fatal("the captures do not start before the run and get waited for after it")
+	}
+	if !strings.Contains(s, `retry_capture "$kind" "store-$LABEL-$t" "$PROFILE_SECS"`) {
+		t.Error("the capture does not go through retry_capture with the type in its label")
+	}
+	if !strings.Contains(s, "exit 1; }") {
+		t.Error("a capture not taken does not fail the run")
+	}
+}
+
+// Two kinds captured at once take ports of their own: on shared ports the
+// second rode the first's forward and lost it when the first closed it.
+func TestTwoCaptureKindsTakeTheirOwnPorts(t *testing.T) {
+	lib, err := os.ReadFile("pprof.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(lib)
+	body := src[strings.Index(src, "pprof_capture() {"):]
+	if strings.Contains(body, "18080") {
+		t.Error("pprof_capture still names a port of its own instead of its kind's")
+	}
+	fn := src[strings.Index(src, "pprof_port() {"):]
+	fn = fn[:strings.Index(fn, "\n}\n")+3]
+	ports := map[string]string{}
+	for _, kind := range []string{"profile", "block"} {
+		out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\npprof_port "+kind).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ports[kind] = strings.TrimSpace(string(out))
+	}
+	p, b := ports["profile"], ports["block"]
+	pi, _ := strconv.Atoi(p)
+	bi, _ := strconv.Atoi(b)
+	// Each kind forwards one port a pod: a hundred apart leaves room for every
+	// backend pod the stand runs.
+	if pi == 0 || bi == 0 || pi == bi || (bi-pi < 100 && pi-bi < 100) {
+		t.Errorf("profile on %s and block on %s overlap", p, b)
 	}
 }
