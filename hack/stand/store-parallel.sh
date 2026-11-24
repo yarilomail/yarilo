@@ -6,6 +6,10 @@
 #   KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/store-parallel.sh <label> <out-dir>
 #
 # Runs against whatever image is deployed, right after an ab-arm.sh arm.
+# YARILO_STORE_PROFILE="profile block" takes those pprof captures from every
+# backend pod while each type's run is under way, as store-<label>-<type> in
+# the file names; a block capture needs an arm deployed with the blockprofile
+# overlay. A capture asked for and not taken fails the run.
 
 set -euo pipefail
 
@@ -21,9 +25,15 @@ MSGS="${YARILO_STORE_MSGS:-100}"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
 PASS="${YARILO_STORE_PASS:-$(sandbox_password)}"
 IMAPTEST_IMAGE="${YARILO_IMAPTEST_IMAGE:-dovecot/imaptest:latest}"
+PROFILE="${YARILO_STORE_PROFILE:-}"
+# Inside the run: it starts PROFILE_AFTER seconds in and lasts PROFILE_SECS,
+# so neither the prepare nor the ramp-down is in the sample.
+PROFILE_AFTER=10
+PROFILE_SECS=$(( SECS > 30 ? SECS - 20 : SECS / 2 ))
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 mkdir -p "$OUT"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pprof.sh"
 
 # An account the arm fills but its imaptest runs never log in as.
 account() {
@@ -130,8 +140,16 @@ for t in $TYPES; do
   prepare "$user" "$t"
   backend_metrics > "$OUT/store-$LABEL-$t-before.txt"
   manifest "$user" > "$OUT/store-$LABEL-$t.yaml"
+  captures=()
+  for kind in $PROFILE; do
+    ( sleep "$PROFILE_AFTER"; retry_capture "$kind" "store-$LABEL-$t" "$PROFILE_SECS" ) &
+    captures+=($!)
+  done
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" store-parallel \
     "$OUT/store-$LABEL-$t.yaml" "$OUT/store-$LABEL-$t-job.log" $(( SECS + 300 ))
+  for pid in ${captures[@]+"${captures[@]}"}; do
+    wait "$pid" || { echo "store-parallel: a $PROFILE capture of $t was not taken" >&2; exit 1; }
+  done
   for box in pusha pushb; do
     kube logs job/store-parallel -c "$box" > "$OUT/store-$LABEL-$t-$box.log" 2>&1
   done

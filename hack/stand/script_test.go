@@ -307,7 +307,14 @@ func TestNoHelperIsDefinedInsideABranch(t *testing.T) {
 // cannot be profiled still stops the arm.
 func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 	src := armSource(t)
-	if !strings.Contains(src, "retry_capture") {
+	if !strings.Contains(src, `/pprof.sh"`) {
+		t.Fatal("ab-arm.sh does not source pprof.sh, where the capture lives")
+	}
+	lib, err := os.ReadFile("pprof.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lib), "retry_capture() {") {
 		t.Fatal("no retry around the capture; one flaky forward ends an arm")
 	}
 	for _, kind := range []string{"block_profile", "cpu_profile"} {
@@ -317,7 +324,7 @@ func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 	}
 	// The retry must tell the two causes apart, or a pod with no pprof at all
 	// is tried twice and still fails the arm twice as slowly.
-	if !strings.Contains(src, `[ "$rc" = 2 ] || return "$rc"`) {
+	if !strings.Contains(string(lib), `[ "$rc" = 2 ] || return "$rc"`) {
 		t.Error("the retry does not distinguish a forward that never came up from a capture that failed")
 	}
 }
@@ -854,5 +861,30 @@ other_total 9`
 				t.Errorf("want %q and the arm going on, got:\n%s", tc.want, got)
 			}
 		})
+	}
+}
+
+// store-parallel takes the captures it is asked for inside each type's run,
+// from the same helper as the arm, and fails when one is not taken.
+func TestStoreParallelProfilesInsideTheRun(t *testing.T) {
+	src, err := os.ReadFile("store-parallel.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	if !strings.Contains(s, `/pprof.sh"`) {
+		t.Fatal("store-parallel.sh does not source pprof.sh")
+	}
+	start := strings.Index(s, `for kind in $PROFILE; do`)
+	run := strings.Index(s, `hack/stand/run-job.sh" store-parallel`)
+	wait := strings.Index(s, `wait "$pid" || {`)
+	if start < 0 || run < 0 || wait < 0 || start >= run || run >= wait {
+		t.Fatal("the captures do not start before the run and get waited for after it")
+	}
+	if !strings.Contains(s, `retry_capture "$kind" "store-$LABEL-$t" "$PROFILE_SECS"`) {
+		t.Error("the capture does not go through retry_capture with the type in its label")
+	}
+	if !strings.Contains(s, "exit 1; }") {
+		t.Error("a capture not taken does not fail the run")
 	}
 }

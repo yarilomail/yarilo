@@ -288,6 +288,7 @@ that arm deployed, and in the same slot as the other arms of the window.
 | `YARILO_STORE_CLIENTS` | 5 | clients per folder |
 | `YARILO_STORE_SECS` | 60 | seconds per type |
 | `YARILO_STORE_MSGS` | 100 | messages copied from INBOX into each folder |
+| `YARILO_STORE_PROFILE` | empty | pprof kinds (`profile`, `block`) taken from every backend pod inside each type's run, from 10 s in for `SECS - 20` s, as `<kind>-store-<label>-<type>-<pod>-req<N>s.pprof`; `block` needs an arm deployed with `YARILO_ARM_BLOCKPROFILE=1` |
 
 Each type prints `store_parallel` (stores per second, from imaptest's totals)
 and `store_latency` (count, p50 and p99 bounds of `imap_command_seconds` for
