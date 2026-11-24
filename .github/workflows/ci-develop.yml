@@ -287,8 +287,8 @@ jobs:
     permissions:
       packages: write
     steps:
-      ## Keeps the newest dev tags with their child manifests; releases and
-      ## latest are excluded from every rule.
+      ## Keeps the newest dev tags with their child manifests; releases,
+      ## latest and rebuilds (rebuild-tag.yml) are excluded from every rule.
       - name: Prune
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
@@ -296,5 +296,5 @@ jobs:
           use-regex: true
           delete-tags: '-dev\.'
           keep-n-tagged: ${{ env.KEEP_DEV_TAGS }}
-          exclude-tags: '^(latest|\d+\.\d+\.\d+)$'
+          exclude-tags: '^(latest|\d+\.\d+\.\d+|\d+\.\d+\.\d+-rebuild(-[0-9a-f]{8})?)$'
           token: ${{ secrets.GITHUB_TOKEN }}
