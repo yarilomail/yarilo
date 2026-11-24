@@ -790,3 +790,69 @@ func TestAFailedIndexStepDoesNotStopTheArm(t *testing.T) {
 		})
 	}
 }
+
+// Every arm reads the index's counters from every service's telemetry port,
+// not only imap's: the header corrections came from fts.
+func TestEveryArmReadsTheIndexCountersOfEveryService(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	i := strings.Index(s, `step "index-counters"`)
+	if i < 0 {
+		t.Fatal("ab-arm.sh reads no index counters")
+	}
+	if j := strings.Index(s, `message_inventory > "$OUT/messages-last-arm.txt"`); j < i {
+		t.Error("the counters are read after the arm's end")
+	}
+	block := s[i:]
+	block = block[:strings.Index(block, "\n\n")]
+	for _, want := range []string{"containerPort", "808[0-9]", "fileindex_(stale_pair|header_corrected)_total", "stale_pair_failed=", "|| true"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the counters step does not carry %q", want)
+		}
+	}
+}
+
+// The counters step on two pods and two ports, one of which does not answer:
+// the summary counts what was asked and what answered and marks the line, and
+// a clean read prints both equal with no mark.
+func TestTheIndexCountersSayWhatWasRead(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	block := s[strings.Index(s, `step "index-counters"`):]
+	block = block[:strings.Index(block, "\n\n# What the next arm")]
+	page := `fileindex_header_corrected_total{field=\"seen\"} 2
+fileindex_stale_pair_total{path=\"open\",result=\"retried\"} 4
+fileindex_stale_pair_total{path=\"reload\",result=\"failed\"} 0
+other_total 9`
+	for _, tc := range []struct {
+		name, down, want string
+	}{
+		{"every port answered", "none", "-- index counters: ports=4 answered=4 header_corrected=8 stale_pair_retried=16 stale_pair_failed=0"},
+		{"a port did not answer", "8085", "-- index counters: INCOMPLETE ports=4 answered=2 header_corrected=4 stale_pair_retried=8 stale_pair_failed=0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := t.TempDir()
+			kube := `kube() {
+  case "$1 $2" in
+    "get pods") printf 'pod/p0\npod/p1\n' ;;
+    "get pod") echo "10143 8080 9106 8085 8086x" ;;
+    exec*) case "$*" in *":` + tc.down + `/"*) return 1 ;; esac; printf '%s\n' "` + page + `" ;;
+  esac
+}`
+			script := "set -euo pipefail\nOUT=" + out + "\nARM=B\nstep() { :; }\n" + kube + "\n" + block + "\necho arm-went-on\n"
+			got, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
+			if err != nil {
+				t.Fatalf("the step stopped the arm: %v\n%s", err, got)
+			}
+			if !strings.Contains(string(got), tc.want) || !strings.Contains(string(got), "arm-went-on") {
+				t.Errorf("want %q and the arm going on, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
