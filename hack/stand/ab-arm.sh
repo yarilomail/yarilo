@@ -909,6 +909,24 @@ for po in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -
   done
 done
 
+# The index of every account, base and journals, no bodies: the next arm
+# empties the accounts, and a header correction names only the folder, so the
+# journal that shows where it began is found only among all of them.
+# The backends are live: a fold may remove a file between find and tar. A
+# failure is said in the arm's output and never stops an arm that passed.
+step "index"
+idxrc=0
+idxpod=$(first_pod backend) || idxpod=
+kube exec "$idxpod" -c yarilo-imap -- sh -c \
+  'find /var/mail/vhosts -type f \( -name yarilo.index -o -name yarilo.index.log -o -name yarilo.index.log.2 \) | tar czf - -T -' \
+  > "$OUT/index-$ARM.tgz" 2> "$OUT/index-$ARM.err" || idxrc=$?
+idxn=$(( $( { tar tzf "$OUT/index-$ARM.tgz" 2>/dev/null || true; } | wc -l) ))
+if [ "$idxrc" != 0 ] || [ "$idxn" -eq 0 ]; then
+  echo "-- index of every account: FAILED rc=$idxrc, $idxn files in index-$ARM.tgz, see index-$ARM.err"
+else
+  echo "-- index of every account: $idxn files in index-$ARM.tgz"
+fi
+
 # What the next arm must find if it carries this state over.
 message_inventory > "$OUT/messages-last-arm.txt"
 echo "-- this arm ends on $(cat "$OUT/messages-last-arm.txt")" | tee "$OUT/messages-$ARM-end.txt"

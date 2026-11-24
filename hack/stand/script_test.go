@@ -721,3 +721,72 @@ func TestAFailedAgedPreparationFailsTheRow(t *testing.T) {
 		}
 	}
 }
+
+// Every arm keeps the index of every account, base and both journals, before
+// the next arm empties the accounts; a header correction names only the
+// folder, so a few chosen ones would miss it. No bodies are taken.
+func TestEveryArmKeepsTheIndexOfEveryAccount(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	i := strings.Index(s, `step "index"`)
+	if i < 0 {
+		t.Fatal("ab-arm.sh keeps no index")
+	}
+	if j := strings.Index(s, `message_inventory > "$OUT/messages-last-arm.txt"`); j < i {
+		t.Error("the index is kept after the arm's end, or not at all")
+	}
+	block := s[i:]
+	block = block[:strings.Index(block, "\n\n")]
+	if !strings.Contains(block, "first_pod backend") || strings.Contains(block, "| head") {
+		t.Error("the index step does not take its pod through first_pod (#1875)")
+	}
+	for _, name := range []string{"-name yarilo.index ", "-name yarilo.index.log ", "-name yarilo.index.log.2 ", "find /var/mail/vhosts ", `"$OUT/index-$ARM.tgz"`} {
+		if !strings.Contains(block, name) {
+			t.Errorf("the index step does not name %q", name)
+		}
+	}
+	for _, body := range []string{"Maildir/cur", "dbox-Mails", "storage/m."} {
+		if strings.Contains(block, body) {
+			t.Errorf("the index step takes bodies: %s", body)
+		}
+	}
+}
+
+// The index step on live backends: a tar that fails, or an archive with
+// nothing in it, is said in the arm's output, and the arm goes on under
+// set -euo pipefail to its summary.
+func TestAFailedIndexStepDoesNotStopTheArm(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	block := s[strings.Index(s, `step "index"`):]
+	block = block[:strings.Index(block, "\nfi\n")+4]
+	for _, tc := range []struct {
+		name, kube, want string
+	}{
+		{"tar fails", `kube() { echo "tar: vanished" >&2; return 1; }`, "FAILED rc=1, 0 files"},
+		{"empty archive", `kube() { tar czf - -T /dev/null; }`, "FAILED rc=0, 0 files"},
+		{"one file", `kube() { tar czf - -C "$OUT" -T <(echo f); }`, "-- index of every account: 1 files"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := t.TempDir()
+			if err := os.WriteFile(filepath.Join(out, "f"), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			script := "set -euo pipefail\nOUT=" + out + "\nARM=B\nstep() { :; }\nfirst_pod() { echo p; }\n" +
+				tc.kube + "\n" + block + "\necho arm-went-on\n"
+			got, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
+			if err != nil {
+				t.Fatalf("the step stopped the arm: %v\n%s", err, got)
+			}
+			if !strings.Contains(string(got), tc.want) || !strings.Contains(string(got), "arm-went-on") {
+				t.Errorf("want %q and the arm going on, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
