@@ -124,10 +124,11 @@ func replayStart(h lineageHdr, logLineage uint32) (offset int64, paired bool) {
 // replayed whole would put its old counters on a newer base. A base without a
 // lineage, a log without a header, and a pre-extension log under a base that
 // folded one without a lineage (a first fold after an upgrade stopped before
-// the rename) replay the log whole, as they always did.
-func staleWith(h lineageHdr, lg *logReader) bool {
+// the rename) replay the log whole, as they always did. A log of another
+// mailbox (another IndexID) is no pair at all: its reader resets it.
+func staleWith(h lineageHdr, indexID uint32, lg *logReader) bool {
 	l := lg.lineage()
-	if h.Lineage == lineageUnknown || l == lineageUnknown {
+	if h.Lineage == lineageUnknown || l == lineageUnknown || lg.hdr.IndexID != indexID {
 		return false
 	}
 	if l == legacyLogLineage && h.FoldedLineage == lineageUnknown {

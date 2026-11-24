@@ -26,9 +26,19 @@ func TestReloadFoldsHelper(t *testing.T) {
 	}
 	ui := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
 	defer ui.Close() //nolint:errcheck
-	f, err := ui.OpenFolder("INBOX", 0, "")
+	f, err := ui.OpenFolder("INBOX", 42, "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if n, _ := strconv.Atoi(os.Getenv("YARILO_TEST_RELOAD_INIT")); n > 0 {
+		for i := 1; i <= n; i++ {
+			if err := ui.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uint32(i), Size: 10}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if os.Getenv("YARILO_TEST_RELOAD_ROUNDS") == "" {
+		return
 	}
 	for _, round := range strings.Split(os.Getenv("YARILO_TEST_RELOAD_ROUNDS"), ",") {
 		round, keep := strings.CutSuffix(round, "!")
@@ -50,10 +60,10 @@ func TestReloadFoldsHelper(t *testing.T) {
 	}
 }
 
-func foldFromAnotherProcess(t *testing.T, home, rounds string) {
+func foldFromAnotherProcess(t *testing.T, home, rounds string, env ...string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestReloadFoldsHelper$", "-test.v")
-	cmd.Env = append(os.Environ(), "YARILO_TEST_RELOAD_HOME="+home, "YARILO_TEST_RELOAD_ROUNDS="+rounds)
+	cmd.Env = append(append(os.Environ(), "YARILO_TEST_RELOAD_HOME="+home, "YARILO_TEST_RELOAD_ROUNDS="+rounds), env...)
 	cmd.WaitDelay = time.Second
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("the folding process failed: %v\n%s", err, out)
@@ -125,7 +135,7 @@ func TestOnlyAPairReadAtTwoMomentsIsStale(t *testing.T) {
 		if seq == lineageUnknown {
 			return &logReader{} // no readable header
 		}
-		return &logReader{ok: true, hdr: mailindex.LogHeader{FileSeq: seq}}
+		return &logReader{ok: true, hdr: mailindex.LogHeader{IndexID: 9, FileSeq: seq}}
 	}
 	for _, tc := range []struct {
 		name  string
@@ -138,12 +148,17 @@ func TestOnlyAPairReadAtTwoMomentsIsStale(t *testing.T) {
 		{"a base without a lineage replays whole", lineageHdr{}, 6, false},
 		{"a log without a header has nothing to replay", lineageHdr{Lineage: 7, FoldedLineage: 6}, lineageUnknown, false},
 		{"a pre-extension log under the first fold after an upgrade", lineageHdr{Lineage: 2}, legacyLogLineage, false},
+		{"a log of another mailbox is reset by its reader", lineageHdr{Lineage: 7, FoldedLineage: 6, FoldedOffset: 100}, 5, false},
 		{"a log two folds behind the base", lineageHdr{Lineage: 7, FoldedLineage: 6, FoldedOffset: 100}, 5, true},
 		{"a log of a later base", lineageHdr{Lineage: 7, FoldedLineage: 6, FoldedOffset: 100}, 8, true},
 		{"a pre-extension log under a base that folded a minted one", lineageHdr{Lineage: 7, FoldedLineage: 6}, legacyLogLineage, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := staleWith(tc.base, logOf(tc.log)); got != tc.stale {
+			indexID := uint32(9)
+			if strings.HasPrefix(tc.name, "a log of another mailbox") {
+				indexID = 8
+			}
+			if got := staleWith(tc.base, indexID, logOf(tc.log)); got != tc.stale {
 				t.Errorf("staleWith = %v, want %v", got, tc.stale)
 			}
 		})
@@ -203,6 +218,101 @@ func TestAReloadThatNeverPairsFailsNamingTheAccount(t *testing.T) {
 		t.Errorf("retried rose by %v, want %d", got, baseReadAttempts)
 	}
 	if got := testutil.ToFloat64(metricStalePair.WithLabelValues("reload", "failed")) - failed; got != 1 {
+		t.Errorf("failed rose by %v, want 1", got)
+	}
+}
+
+// A first open reads the base, takes its stat and replays the log, with no
+// folder lock: one fold by another process at either stage paired a base with
+// a log read at another moment (reviewer, #2694). Before the fix, a fold
+// after the stat answered 19 records on a header of 16, and a fold before it
+// answered 19 records with no warning and kept them, as its stat was the new
+// base's.
+func TestAFirstOpenAcrossAFoldReadsAPair(t *testing.T) {
+	for _, stage := range []string{"read", "stat"} {
+		t.Run(stage, func(t *testing.T) {
+			home := t.TempDir()
+			foldFromAnotherProcess(t, home, "3:5,9:10!", "YARILO_TEST_RELOAD_INIT=20")
+			folded := false
+			openBaseSeam = func(at string) {
+				if at == stage && !folded {
+					folded = true
+					foldFromAnotherProcess(t, home, "4:6")
+				}
+			}
+			t.Cleanup(func() { openBaseSeam = nil })
+			var u *userIndex
+			var f *mailbox.Folder
+			out := logged(t, func() {
+				u = New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
+				var err error
+				if f, err = u.OpenFolder("INBOX", 0, ""); err != nil {
+					t.Fatal(err)
+				}
+			})
+			t.Cleanup(func() { _ = u.Close() })
+			if !folded {
+				t.Fatal("the fold never ran inside the open, so this row proves nothing")
+			}
+			openBaseSeam = nil
+			for _, when := range []string{"open", "reload"} {
+				fs, err := u.state(f.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fs.mu.Lock()
+				if when == "reload" {
+					if err := fs.reloadNow(); err != nil {
+						t.Error(err)
+					}
+				}
+				if err := fs.recountHeaderLocked(); err != nil {
+					t.Error(err)
+				}
+				h, n := fs.file.Header, fs.recordCount()
+				fs.mu.Unlock()
+				if n != 17 || h.MessagesCount != 17 || h.SeenMessagesCount != 3 {
+					t.Errorf("after %s: %d records, header messages=%d seen=%d, want 17/17/3", when, n, h.MessagesCount, h.SeenMessagesCount)
+				}
+			}
+			if strings.Contains(out, "header corrected") {
+				t.Errorf("the open paired a log with a base it does not meet:\n%s", out)
+			}
+		})
+	}
+}
+
+// A first open whose base moves on every read fails after its retries,
+// naming the account, and counts them under its own path.
+func TestAFirstOpenThatNeverPairsFailsNamingTheAccount(t *testing.T) {
+	home := t.TempDir()
+	foldFromAnotherProcess(t, home, "1:2!", "YARILO_TEST_RELOAD_INIT=40")
+	folds := 0
+	openBaseSeam = func(at string) {
+		if at == "read" {
+			folds++
+			foldFromAnotherProcess(t, home, fmt.Sprintf("%d:%d", 2*folds+1, 2*folds+2))
+		}
+	}
+	t.Cleanup(func() { openBaseSeam = nil })
+	retried := testutil.ToFloat64(metricStalePair.WithLabelValues("open", "retried"))
+	failed := testutil.ToFloat64(metricStalePair.WithLabelValues("open", "failed"))
+	var oerr error
+	out := logged(t, func() {
+		u := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
+		defer u.Close() //nolint:errcheck
+		_, oerr = u.OpenFolder("INBOX", 0, "")
+	})
+	if oerr == nil || !strings.Contains(oerr.Error(), testUser) {
+		t.Errorf("open = %v, want an error naming %s", oerr, testUser)
+	}
+	if !strings.Contains(out, "kept not pairing on open") || !strings.Contains(out, "user="+testUser) {
+		t.Errorf("no error line naming the account:\n%s", out)
+	}
+	if got := testutil.ToFloat64(metricStalePair.WithLabelValues("open", "retried")) - retried; got != baseReadAttempts {
+		t.Errorf("retried rose by %v, want %d", got, baseReadAttempts)
+	}
+	if got := testutil.ToFloat64(metricStalePair.WithLabelValues("open", "failed")) - failed; got != 1 {
 		t.Errorf("failed rose by %v, want 1", got)
 	}
 }

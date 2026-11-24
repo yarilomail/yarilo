@@ -52,8 +52,8 @@ var (
 	}, []string{"result"}) // adopt
 	metricStalePair = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "fileindex_stale_pair_total",
-		Help: "Reads that found a base its open log does not pair with, by path and outcome: retried means both were read again, failed means the retries ran out and the read returned an error.",
-	}, []string{"path", "result"}) // reload | view × retried | failed
+		Help: "Reads that found a base its open log does not pair with, or a base replaced while its log was opened, by path and outcome: retried means both were read again, failed means the retries ran out (a view then reads under the lock; an open and a reload return an error).",
+	}, []string{"path", "result"}) // reload | view | open × retried | failed
 	metricLineageStamped = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fileindex_lineage_stamped_total",
 		Help: "Folder indexes given a lineage on first open because they were written before the extension. Expected to rise once per folder after an upgrade and stay flat afterwards; two pods racing the same first open can each stamp it, so a folder may count twice.",

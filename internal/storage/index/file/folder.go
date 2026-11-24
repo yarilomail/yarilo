@@ -317,26 +317,41 @@ func (u *userIndex) loadExisting(fs *folderState) error {
 	return u.loadModern(fs)
 }
 
-// readBase opens the base into fs.file, records its mtime and replays the log,
-// resetting a mismatched-IndexID one under the folder lock.
+// readBase opens the base into fs.file, records its identity and replays the
+// log from where it meets the base, resetting a mismatched-IndexID one under
+// the folder lock. The base, its identity and the log are one pair, read as a
+// view reads them (imageAndItsLog): an existing index opens without the
+// folder lock, and a fold between the reads paired a base with a log read at
+// another moment.
 func (u *userIndex) readBase(fs *folderState) error {
-	mf, recs, err := openWriterBase(fs)
+	img, lg, err := fs.imageAndItsLog("open")
 	if err != nil {
+		if errors.Is(err, errBaseMoving) {
+			slog.Error("fileindex: the base and its log kept not pairing on open; the open fails",
+				"user", fs.user, "folder", fs.folder)
+			return fmt.Errorf("fileindex/openfolder: %s %s: %w", fs.user, fs.folder, err)
+		}
 		return fmt.Errorf("fileindex/openfolder: open: %w", err)
 	}
+	defer lg.close()
+	mf, recs := cloneIndexFile(img.file), img.recs.Fork()
 	fs.newBaseLoaded(mf)
 	fs.file, fs.recs = mf, recs
 	// Every path that loads a base learns its pairing here, so the lineage
 	// question is answered by the file, not by which function loaded it.
 	fs.lineage = readLineage(mf)
-	if st, stErr := os.Stat(fs.indexPath); stErr == nil {
-		fs.baseMod = st.ModTime()
-		fs.baseIdent = st
+	// The identity of the base this read parsed, not of whatever is at the
+	// path now: a later reload compares against it.
+	fs.baseMod, fs.baseIdent = img.mod, img.ident
+	// Unpaired here is only what staleWith lets through: it replays whole.
+	from := int64(0)
+	if off, paired := replayStart(fs.lineage, lg.lineage()); paired {
+		from = off
 	}
 	// fs.logSize comes from applyLog's confirmed offset, never a stat: a
 	// post-call stat over-reports an append it never parsed, wedging reload.
-	if _, logErr := os.Stat(fs.indexPath + ".log"); logErr == nil {
-		confirmedEnd, applyErr := fs.applyLog(0)
+	if lg.f != nil {
+		confirmedEnd, applyErr := fs.applyLogRange(lg, from, true)
 		if errors.Is(applyErr, errLogIndexIDMismatch) {
 			// Log belongs to a deleted/recreated mailbox; reset it under the
 			// distributed lock so concurrent writers don't race the truncate.
@@ -1294,7 +1309,7 @@ func (fs *folderState) reloadOnceLocked() error {
 		if err != nil {
 			return fmt.Errorf("fileindex/reload: %w", err)
 		}
-		if staleWith(readLineage(mf), lg) {
+		if staleWith(readLineage(mf), mf.Header.IndexID, lg) {
 			return errStalePair
 		}
 		fs.newBaseLoaded(mf)
@@ -2924,6 +2939,13 @@ func (fs *folderState) applyLog(fromOffset int64) (int64, error) {
 // applyLogFrom folds in the log lg holds open from fromOffset. It takes the
 // reader, not a path: the offset came from THIS descriptor's header.
 func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, error) {
+	return fs.applyLogRange(lg, fromOffset, fromOffset == 0)
+}
+
+// applyLogRange is applyLogFrom; whole says the replay reads to the end of
+// the log for a base just loaded, as an open does from where the log meets
+// its base, so a torn trailing group is cut.
+func (fs *folderState) applyLogRange(lg *logReader, fromOffset int64, whole bool) (int64, error) {
 	if lg.f == nil || !lg.ok {
 		return fromOffset, nil // absent, empty or unreadable log
 	}
@@ -3047,12 +3069,12 @@ func (fs *folderState) applyLogFrom(lg *logReader, fromOffset int64) (int64, err
 		}
 	}
 
-	// Truncate any partial tail after the last complete BOUNDARY, only on full
-	// replay (fromOffset==0) -- incremental appends are always complete.
+	// Truncate any partial tail after the last complete BOUNDARY, only on a
+	// whole replay (whole) -- incremental appends are always complete.
 	//
 	// Against the end of the tail THIS pass read, never a fresh os.Stat: a
 	// writer's valid append in the gap would otherwise be truncated away.
-	if fromOffset == 0 && committedEnd > 0 && start+int64(len(tail)) > committedEnd {
+	if whole && committedEnd > 0 && start+int64(len(tail)) > committedEnd {
 		fs.dropStump(committedEnd, start+int64(len(tail)))
 	}
 	// committedEnd, not filePos: an incremental read neither truncates a partial
