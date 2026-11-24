@@ -780,7 +780,7 @@ func TestAFailedIndexStepDoesNotStopTheArm(t *testing.T) {
 			}
 			script := "set -euo pipefail\nOUT=" + out + "\nARM=B\nstep() { :; }\nfirst_pod() { echo p; }\n" +
 				tc.kube + "\n" + block + "\necho arm-went-on\n"
-			got, err := exec.Command("bash", "-c", script).CombinedOutput()
+			got, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
 			if err != nil {
 				t.Fatalf("the step stopped the arm: %v\n%s", err, got)
 			}
