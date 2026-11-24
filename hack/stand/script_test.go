@@ -888,3 +888,35 @@ func TestStoreParallelProfilesInsideTheRun(t *testing.T) {
 		t.Error("a capture not taken does not fail the run")
 	}
 }
+
+// Two kinds captured at once take ports of their own: on shared ports the
+// second rode the first's forward and lost it when the first closed it.
+func TestTwoCaptureKindsTakeTheirOwnPorts(t *testing.T) {
+	lib, err := os.ReadFile("pprof.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(lib)
+	body := src[strings.Index(src, "pprof_capture() {"):]
+	if strings.Contains(body, "18080") {
+		t.Error("pprof_capture still names a port of its own instead of its kind's")
+	}
+	fn := src[strings.Index(src, "pprof_port() {"):]
+	fn = fn[:strings.Index(fn, "\n}\n")+3]
+	ports := map[string]string{}
+	for _, kind := range []string{"profile", "block"} {
+		out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\npprof_port "+kind).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ports[kind] = strings.TrimSpace(string(out))
+	}
+	p, b := ports["profile"], ports["block"]
+	pi, _ := strconv.Atoi(p)
+	bi, _ := strconv.Atoi(b)
+	// Each kind forwards one port a pod: a hundred apart leaves room for every
+	// backend pod the stand runs.
+	if pi == 0 || bi == 0 || pi == bi || (bi-pi < 100 && pi-bi < 100) {
+		t.Errorf("profile on %s and block on %s overlap", p, b)
+	}
+}
