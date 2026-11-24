@@ -296,5 +296,7 @@ jobs:
           use-regex: true
           delete-tags: '-dev\.'
           keep-n-tagged: ${{ env.KEEP_DEV_TAGS }}
-          exclude-tags: '^(latest|\d+\.\d+\.\d+|\d+\.\d+\.\d+-rebuild(-[0-9a-f]{8})?)$'
+          ## One branch per tag form, no quantifier inside another: the action
+          ## refuses a nested one as ReDoS-prone (safe-regex2).
+          exclude-tags: '^(latest|\d+\.\d+\.\d+|\d+\.\d+\.\d+-rebuild|\d+\.\d+\.\d+-rebuild-[0-9a-f]{8})$'
           token: ${{ secrets.GITHUB_TOKEN }}
