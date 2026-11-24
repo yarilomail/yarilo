@@ -721,3 +721,33 @@ func TestAFailedAgedPreparationFailsTheRow(t *testing.T) {
 		}
 	}
 }
+
+// Every arm keeps the index of every account, base and both journals, before
+// the next arm empties the accounts; a header correction names only the
+// folder, so a few chosen ones would miss it. No bodies are taken.
+func TestEveryArmKeepsTheIndexOfEveryAccount(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	i := strings.Index(s, `step "index"`)
+	if i < 0 {
+		t.Fatal("ab-arm.sh keeps no index")
+	}
+	if j := strings.Index(s, `message_inventory > "$OUT/messages-last-arm.txt"`); j < i {
+		t.Error("the index is kept after the arm's end, or not at all")
+	}
+	block := s[i:]
+	block = block[:strings.Index(block, "\n\n")]
+	for _, name := range []string{"-name yarilo.index ", "-name yarilo.index.log ", "-name yarilo.index.log.2 ", "find /var/mail/vhosts ", `"$OUT/index-$ARM.tgz"`} {
+		if !strings.Contains(block, name) {
+			t.Errorf("the index step does not name %q", name)
+		}
+	}
+	for _, body := range []string{"Maildir/cur", "dbox-Mails", "storage/m."} {
+		if strings.Contains(block, body) {
+			t.Errorf("the index step takes bodies: %s", body)
+		}
+	}
+}

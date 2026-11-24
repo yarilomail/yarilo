@@ -72,7 +72,8 @@ beside the checkout) / B (the cut image) / A2 (the last release, same slot as
 B), `store-parallel.sh` after each, and the stand goes back to the cut through
 `stand_deploy`. Each arm keeps every container's log of every backend pod in
 `logs-<arm>/` before the next arm's deploy replaces the pods, whether the arm
-passed or not. Each A arm runs on a store its own release filled: before A1
+passed or not, and the index files of every account (`yarilo.index`, `.log`,
+`.log.2`, no bodies) in `index-<arm>.tgz` before the next arm empties them. Each A arm runs on a store its own release filled: before A1
 the window empties every account of the test domains and the public namespace,
 which the scenarios write with the cut, and each arm empties the mailbox its
 seed fills. No arm runs the last release on a store the cut wrote: the old
