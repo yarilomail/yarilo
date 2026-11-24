@@ -94,14 +94,32 @@ backend_metrics() {
   local pod
   for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
     kube exec "$pod" -c yarilo-imap -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics' 2>/dev/null |
-      grep -E '^(imap_command_seconds_bucket\{command="Store"|yarilo_locks_acquire_wait_seconds_bucket\{resource="mbox")' || true
+      grep -E '^(imap_command_seconds_bucket\{command="Store"|yarilo_locks_acquire_wait_seconds_bucket\{resource="mbox"|process_cpu_seconds_total )' |
+      sed "s/^process_cpu_seconds_total /process_cpu_seconds_total{pod=\"$pod\"} /" || true
   done
+}
+
+# store_cpu prints the imap process's CPU seconds across the run, per pod and
+# in all, from the same two pages: a throughput gap reads apart from a cost
+# gap only beside what the pod spent.
+store_cpu() {
+  awk '
+    $1 !~ /^process_cpu_seconds_total/ { next }
+    FILENAME == ARGV[1] { was[$1] = $2; next }
+    {
+      d = $2 - was[$1]; total += d
+      pod = $1; sub(/.*pod="/, "", pod); sub(/".*/, "", pod)
+      printf "%s=%.2fs ", pod, d
+    }
+    END { printf "imap_cpu=%.2fs\n", total }
+  ' "$1" "$2"
 }
 
 # quantiles prints, per series, the count and the bucket bounds p50 and p99
 # fall under, from the delta between two pages.
 quantiles() {
   awk '
+    $1 !~ /_bucket\{/ { next }
     FILENAME == ARGV[1] { start[$1] += $2; next }
     {
       s = $1; le = $1
@@ -161,4 +179,5 @@ for t in $TYPES; do
   fi
   echo "store_parallel type=$t user=$user stores=$(( a + b )) per_sec=$(( (a + b) / SECS )) pusha=$a pushb=$b"
   quantiles "$OUT/store-$LABEL-$t-before.txt" "$OUT/store-$LABEL-$t-after.txt" | sed "s/^/store_latency type=$t /"
+  store_cpu "$OUT/store-$LABEL-$t-before.txt" "$OUT/store-$LABEL-$t-after.txt" | sed "s/^/store_cpu type=$t /"
 done
