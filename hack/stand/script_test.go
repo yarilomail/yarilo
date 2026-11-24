@@ -790,3 +790,60 @@ func TestAFailedIndexStepDoesNotStopTheArm(t *testing.T) {
 		})
 	}
 }
+
+// Every arm reads the index's counters from every service's telemetry port,
+// not only imap's: the header corrections came from fts.
+func TestEveryArmReadsTheIndexCountersOfEveryService(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	i := strings.Index(s, `step "index-counters"`)
+	if i < 0 {
+		t.Fatal("ab-arm.sh reads no index counters")
+	}
+	if j := strings.Index(s, `message_inventory > "$OUT/messages-last-arm.txt"`); j < i {
+		t.Error("the counters are read after the arm's end")
+	}
+	block := s[i:]
+	block = block[:strings.Index(block, "\n\n")]
+	for _, want := range []string{"containerPort", "808[0-9]", "fileindex_(stale_pair|header_corrected)_total", "stale_pair_failed=", "|| true"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the counters step does not carry %q", want)
+		}
+	}
+}
+
+// The counters summary reads a scrape: two services, both results.
+func TestTheIndexCountersSummaryAddsEveryService(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	i := strings.Index(s, "awk '\n  $3 ~ /^fileindex_header_corrected_total/")
+	if i < 0 {
+		t.Fatal("no counters summary")
+	}
+	prog := s[i:]
+	prog = prog[:strings.Index(prog, `"$OUT/index-counters-$ARM.txt"`)]
+	dir := t.TempDir()
+	in := filepath.Join(dir, "c.txt")
+	scrape := `p0 :8080 fileindex_header_corrected_total{field="seen"} 2
+p0 :8085 fileindex_header_corrected_total{field="messages"} 3
+p0 :8085 fileindex_stale_pair_total{path="open",result="retried"} 4
+p1 :8080 fileindex_stale_pair_total{path="reload",result="retried"} 1
+p1 :8080 fileindex_stale_pair_total{path="reload",result="failed"} 0
+`
+	if err := os.WriteFile(in, []byte(scrape), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), "bash", "-c", "ARM=B\n"+prog+" "+in).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "header_corrected=5 stale_pair_retried=5 stale_pair_failed=0"; !strings.Contains(string(out), want) {
+		t.Errorf("summary %q, want %q", out, want)
+	}
+}

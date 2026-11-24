@@ -927,6 +927,26 @@ else
   echo "-- index of every account: $idxn files in index-$ARM.tgz"
 fi
 
+# The index's own counters from every service of every backend pod: header
+# corrections and stale base and log pairs are counted in the process that
+# read, fts as much as imap, and each serves its telemetry on its own port.
+step "index-counters"
+: > "$OUT/index-counters-$ARM.txt"
+for po in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+  ports=$(kube get pod "$po" -o jsonpath='{.spec.containers[*].ports[*].containerPort}' 2>/dev/null) || ports=
+  for port in $ports; do
+    case "$port" in 808[0-9]) ;; *) continue ;; esac
+    kube exec "$po" -c yarilo-imap -- sh -c "wget -qO- http://127.0.0.1:$port/metrics 2>/dev/null" 2>/dev/null |
+      grep -E '^fileindex_(stale_pair|header_corrected)_total' | sed "s/^/$po :$port /" >> "$OUT/index-counters-$ARM.txt" || true
+  done
+done
+awk '
+  $3 ~ /^fileindex_header_corrected_total/ { corrected += $4 }
+  $3 ~ /^fileindex_stale_pair_total/ && $3 ~ /result="retried"/ { retried += $4 }
+  $3 ~ /^fileindex_stale_pair_total/ && $3 ~ /result="failed"/ { failed += $4 }
+  END { printf "-- index counters: header_corrected=%d stale_pair_retried=%d stale_pair_failed=%d (index-counters-'"$ARM"'.txt)\n", corrected, retried, failed }
+' "$OUT/index-counters-$ARM.txt"
+
 # What the next arm must find if it carries this state over.
 message_inventory > "$OUT/messages-last-arm.txt"
 echo "-- this arm ends on $(cat "$OUT/messages-last-arm.txt")" | tee "$OUT/messages-$ARM-end.txt"
