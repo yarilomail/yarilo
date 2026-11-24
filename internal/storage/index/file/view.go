@@ -50,6 +50,14 @@ var (
 // view is built on and the log it opens. Nil everywhere else.
 var afterViewImage func()
 
+// afterReloadLogOpen is a test seam: folds by another process between the log
+// a reload opened and the base it opens next. Nil everywhere else.
+var afterReloadLogOpen func()
+
+// openBaseSeam is a test seam: folds by another process while a first open
+// reads the base and its log, at the named stage. Nil everywhere else.
+var openBaseSeam func(stage string)
+
 // imageFor returns the parsed base for the file at fs.indexPath as it is now.
 // It takes no lock and writes nothing the writer can see.
 func imageFor(fs *folderState) (*baseImage, error) {
@@ -120,7 +128,7 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 			return nil, 0, nil, err
 		}
 	}
-	img, lg, err := fs.imageAndItsLog()
+	img, lg, err := fs.imageAndItsLog("view")
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -155,8 +163,8 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		view.onBase = view.recs != nil
 		return view, 0, img, nil
 	}
-	// Where this log meets this base, by the lineage table: an unpaired one
-	// replays whole rather than from an offset that means nothing in it.
+	// Where this log meets this base, by the lineage table. Unpaired here is
+	// only a base or a log without a lineage (staleWith): it replays whole.
 	from, paired := replayStart(img.lineage, lg.lineage())
 	if !paired {
 		from = int64(mailindex.LogHeaderSize)
@@ -200,31 +208,41 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 var errBaseMoving = errors.New("fileindex/view: the base kept moving while the view was built")
 
 // imageAndItsLog returns a base image and a log opened while that base was
-// still the file: a base replaced in between pairs it with the next base's log.
-func (fs *folderState) imageAndItsLog() (*baseImage, *logReader, error) {
+// still the file, and which pairs with it: a base replaced in between pairs it
+// with the next base's log. path names the reader in the metric.
+func (fs *folderState) imageAndItsLog(path string) (*baseImage, *logReader, error) {
 	for attempt := 0; ; attempt++ {
 		img, err := imageFor(fs)
 		if err != nil {
 			return nil, nil, err
 		}
-		if afterViewImage != nil {
+		if afterViewImage != nil && path == "view" {
 			afterViewImage()
+		}
+		if openBaseSeam != nil && path == "open" {
+			// Both stages of the open meet here: the stat is the image's own.
+			openBaseSeam("read")
+			openBaseSeam("stat")
 		}
 		lg, lgErr := openLogRead(fs.indexPath)
 		if lgErr != nil {
 			return nil, nil, fmt.Errorf("fileindex/view: log: %w", lgErr)
 		}
 		st, serr := os.Stat(fs.indexPath)
-		if serr == nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
+		same := serr == nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime())
+		if same && !staleWith(img.lineage, img.file.Header.IndexID, lg) {
 			return img, lg, nil
 		}
 		lg.close()
 		if serr != nil {
 			return nil, nil, serr
 		}
+		// The base moved, or stayed while the log moved on past it.
 		if attempt >= baseReadAttempts {
+			metricStalePair.WithLabelValues(path, "failed").Inc()
 			return nil, nil, errBaseMoving
 		}
+		metricStalePair.WithLabelValues(path, "retried").Inc()
 	}
 }
 

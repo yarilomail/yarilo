@@ -35,7 +35,7 @@ func (fs *folderState) headerCorrected(field string, was, now uint32) {
 	fs.headerFixed = true
 	metricHeaderCorrected.WithLabelValues(field).Inc()
 	slog.Warn("fileindex: header corrected from its records",
-		"trace_id", fs.traceID, "folder", fs.folder, "field", field, "was", was, "now", now)
+		"user", fs.user, "trace_id", fs.traceID, "folder", fs.folder, "field", field, "was", was, "now", now)
 }
 
 // countRecordsLocked is the last uid and the \Seen and \Deleted counts of the
@@ -79,7 +79,7 @@ func (fs *folderState) takeOne(n *uint32, field string, unknown uint8) {
 	fs.countersUnknown |= unknown
 	metricHeaderCorrected.WithLabelValues(field).Inc()
 	slog.Warn("fileindex: an expunge took a counter below zero; recounting",
-		"trace_id", fs.traceID, "folder", fs.folder, "field", field)
+		"user", fs.user, "trace_id", fs.traceID, "folder", fs.folder, "field", field)
 }
 
 // moveCount adjusts a flag count for one record whose flags went from old to now.
