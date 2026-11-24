@@ -50,6 +50,10 @@ var (
 // view is built on and the log it opens. Nil everywhere else.
 var afterViewImage func()
 
+// afterReloadLogOpen is a test seam: folds by another process between the log
+// a reload opened and the base it opens next. Nil everywhere else.
+var afterReloadLogOpen func()
+
 // imageFor returns the parsed base for the file at fs.indexPath as it is now.
 // It takes no lock and writes nothing the writer can see.
 func imageFor(fs *folderState) (*baseImage, error) {
@@ -155,8 +159,8 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		view.onBase = view.recs != nil
 		return view, 0, img, nil
 	}
-	// Where this log meets this base, by the lineage table: an unpaired one
-	// replays whole rather than from an offset that means nothing in it.
+	// Where this log meets this base, by the lineage table. Unpaired here is
+	// only a base or a log without a lineage (staleWith): it replays whole.
 	from, paired := replayStart(img.lineage, lg.lineage())
 	if !paired {
 		from = int64(mailindex.LogHeaderSize)
@@ -215,14 +219,22 @@ func (fs *folderState) imageAndItsLog() (*baseImage, *logReader, error) {
 			return nil, nil, fmt.Errorf("fileindex/view: log: %w", lgErr)
 		}
 		st, serr := os.Stat(fs.indexPath)
-		if serr == nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
+		same := serr == nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime())
+		if same && !staleWith(img.lineage, lg) {
 			return img, lg, nil
 		}
 		lg.close()
+		if same {
+			// The base stayed and the log moved on past it: read both again.
+			metricStalePair.WithLabelValues("view", "retried").Inc()
+		}
 		if serr != nil {
 			return nil, nil, serr
 		}
 		if attempt >= baseReadAttempts {
+			if same {
+				metricStalePair.WithLabelValues("view", "failed").Inc()
+			}
 			return nil, nil, errBaseMoving
 		}
 	}

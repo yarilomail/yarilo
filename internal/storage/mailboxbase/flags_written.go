@@ -44,7 +44,7 @@ func FlagsWritten(idx mailbox.UserIndex, box mailbox.UserMailbox, folderID uint6
 	for _, res := range results {
 		if res.Err != nil {
 			slog.Warn("mailbox: could not record flags in storage",
-				"folder", folder, "uid", res.UID, "err", res.Err)
+				"user", box.Username(), "folder", folder, "uid", res.UID, "err", res.Err)
 		}
 		if terr == nil {
 			tx.MarkDirty(res.UID, res.Err != nil)

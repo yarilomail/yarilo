@@ -2,6 +2,7 @@ package file
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"os"
 
@@ -117,6 +118,28 @@ func replayStart(h lineageHdr, logLineage uint32) (offset int64, paired bool) {
 		return 0, false
 	}
 }
+
+// staleWith says the log cannot be this base's own nor the one it folded, while
+// both name a lineage: they were read at two different moments, and the log
+// replayed whole would put its old counters on a newer base. A base without a
+// lineage, a log without a header, and a pre-extension log under a base that
+// folded one without a lineage (a first fold after an upgrade stopped before
+// the rename) replay the log whole, as they always did.
+func staleWith(h lineageHdr, lg *logReader) bool {
+	l := lg.lineage()
+	if h.Lineage == lineageUnknown || l == lineageUnknown {
+		return false
+	}
+	if l == legacyLogLineage && h.FoldedLineage == lineageUnknown {
+		return false
+	}
+	_, paired := replayStart(h, l)
+	return !paired
+}
+
+// errStalePair says a base and its log were read at different moments; the
+// reader reads both again.
+var errStalePair = errors.New("fileindex: the base and the log were read at different moments")
 
 // digestRecords hashes what a reader would serve, in file order, with FNV-1a --
 // a change detector for our own file, not a defence against a forged one. Runs

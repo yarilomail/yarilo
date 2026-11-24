@@ -1172,7 +1172,27 @@ func asCorrupt(folder string, err error) error {
 	return err
 }
 
+// reloadLocked reads the folder's change again. A base its open log does not
+// pair with means the two were read at different moments: both are read
+// again, a bounded number of times, and never paired by replaying the log
+// whole, as the reference reopens its index on a map it cannot prove.
 func (fs *folderState) reloadLocked() error {
+	for attempt := 0; ; attempt++ {
+		err := fs.reloadOnceLocked()
+		if !errors.Is(err, errStalePair) {
+			return err
+		}
+		if attempt >= baseReadAttempts {
+			metricStalePair.WithLabelValues("reload", "failed").Inc()
+			slog.Error("fileindex: the base and its log kept not pairing; the read fails",
+				"user", fs.user, "folder", fs.folder, "attempts", attempt+1)
+			return fmt.Errorf("fileindex/reload: %s %s: %w", fs.user, fs.folder, err)
+		}
+		metricStalePair.WithLabelValues("reload", "retried").Inc()
+	}
+}
+
+func (fs *folderState) reloadOnceLocked() error {
 	t0 := time.Now()
 	nextUIDBefore := uint32(0)
 	if fs.file != nil {
@@ -1192,6 +1212,9 @@ func (fs *folderState) reloadLocked() error {
 		return fmt.Errorf("fileindex/reload: log: %w", lgErr)
 	}
 	defer lg.close()
+	if afterReloadLogOpen != nil {
+		afterReloadLogOpen()
+	}
 	logStat := lg.stat
 	newLogSize := lg.size
 	logReplaced := false
@@ -1270,6 +1293,9 @@ func (fs *folderState) reloadLocked() error {
 		mf, recs, err := openWriterBase(fs)
 		if err != nil {
 			return fmt.Errorf("fileindex/reload: %w", err)
+		}
+		if staleWith(readLineage(mf), lg) {
+			return errStalePair
 		}
 		fs.newBaseLoaded(mf)
 		fs.file, fs.recs = mf, recs

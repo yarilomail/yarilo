@@ -105,6 +105,9 @@ func TestAnExpungeOnACounterAtZeroRecountsFirst(t *testing.T) {
 	if h := headerOf(t, u, f.ID); h.DeletedMessagesCount != 0 || h.MessagesCount != 2 {
 		t.Errorf("header messages=%d deleted=%d, want 2/0", h.MessagesCount, h.DeletedMessagesCount)
 	}
+	if !strings.Contains(out, "user="+testUser) {
+		t.Errorf("the correction does not name the account:\n%s", out)
+	}
 	if got := strings.Count(out, "header corrected"); got != 1 || !strings.Contains(out, "field=deleted was=0 now=1") {
 		t.Errorf("want one correction deleted 0->1, got %d:\n%s", got, out)
 	}
@@ -133,7 +136,7 @@ func TestAReplayedExpungeNeverWrapsACounter(t *testing.T) {
 	if h.DeletedMessagesCount != 1 || h.MessagesCount != 2 {
 		t.Errorf("header messages=%d deleted=%d, want 2/1", h.MessagesCount, h.DeletedMessagesCount)
 	}
-	if !strings.Contains(out, "below zero") || !strings.Contains(out, "field=deleted") {
+	if !strings.Contains(out, "below zero") || !strings.Contains(out, "field=deleted") || !strings.Contains(out, "user="+testUser) {
 		t.Errorf("the replay did not say the counter was wrong:\n%s", out)
 	}
 }
