@@ -179,6 +179,7 @@ func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 		{name: "fsync-never", allow: `^storage(\.mail_fsync)?$`},
 		{name: "notls", allow: `^internalTLS(\.enabled)?$`},
 		{name: "locks-cpu", allow: `^components(\.locks)?$`},
+		{name: "lmtp-nocpu", allow: `^components(\.lmtp)?$`},
 		// The OAuth2 matrix overlays: every login would reach the IdP, so never an arm (#2231).
 		{name: "oauth2-local", allow: `^components(\.auth)?$`, notAnArm: true},
 		{name: "oauth2-introspection", allow: `^components(\.auth)?$`, notAnArm: true},
