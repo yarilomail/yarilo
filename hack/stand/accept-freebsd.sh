@@ -17,6 +17,9 @@ set -Eeuo pipefail
 trap 'rc=$?; echo "accept-freebsd: line $LINENO: $BASH_COMMAND exited $rc" >&2' ERR
 
 VERSION="${1:?module version}"
+# The port's DISTVERSION carries no v (DISTVERSIONPREFIX adds it), and the
+# proxy paths below add their own: a v given here is taken off once.
+VERSION="${VERSION#v}"
 SMOKE_SRC="${2:?smoketest binary}"
 OUT="${3:?output directory}"
 PORT="${ACCEPT_PORT:-/usr/ports/mail/yarilo}"
@@ -82,13 +85,18 @@ verdict() {
 as_client() { su -m "$CLIENT" -c "$*"; }
 # Components the supervisor reports running; status lines are tab-separated
 # fields: name, state, pid, uptime, restarts, why.
-running() { service yarilo status 2>/dev/null | awk -F'\t' '$2 == "running"' | wc -l | tr -d ' '; }
+# status exits 1 while a component is down; under pipefail that must not end
+# the run, so each reader below ends in "|| true".
+running() { { service yarilo status 2>/dev/null || true; } | awk -F'\t' '$2 == "running"' | wc -l | tr -d ' '; }
 # The supervisor is /usr/local/sbin/yarilo-master; daemon(8) writes its pid.
 MASTER_PIDFILE="${ACCEPT_MASTER_PIDFILE:-/var/run/yarilo/master.pid}"
+# Empty while there is none, as just after a kill; never a failure, which
+# set -e would end the run on.
 master_pid() {
   local pid
   pid=$(cat "$MASTER_PIDFILE" 2>/dev/null || true)
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$pid"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "$pid"; fi
+  return 0
 }
 # Every yarilo process: the components in libexec, and the supervisor.
 yarilo_procs() {
@@ -98,10 +106,10 @@ yarilo_procs() {
   echo "$n"
 }
 # comp_uptime name: seconds the component has run, from status.
-comp_uptime() { service yarilo status "$1" 2>/dev/null | awk -F'\t' -v c="$1" '$1 == c {print $4}'; }
-comp_pid() { service yarilo status "$1" 2>/dev/null | awk -F'\t' -v c="$1" '$1 == c {print $3}'; }
+comp_uptime() { { service yarilo status "$1" 2>/dev/null || true; } | awk -F'\t' -v c="$1" '$1 == c {print $4}'; }
+comp_pid() { { service yarilo status "$1" 2>/dev/null || true; } | awk -F'\t' -v c="$1" '$1 == c {print $3}'; }
 restarts_metric() {
-  curl -s "$MASTER_METRICS" | awk -v c="$1" -v r="$2" \
+  { curl -s "$MASTER_METRICS" || true; } | awk -v c="$1" -v r="$2" \
     'index($0, "yarilo_master_restarts_total{") == 1 && index($0, "component=\"" c "\"") && index($0, "reason=\"" r "\"") {print $2}' | head -1
 }
 # up_within N name...: every named component is running within N seconds.
