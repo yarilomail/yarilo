@@ -83,9 +83,22 @@ as_client() { su -m "$CLIENT" -c "$*"; }
 # Components the supervisor reports running; status lines are tab-separated
 # fields: name, state, pid, uptime, restarts, why.
 running() { service yarilo status 2>/dev/null | awk -F'\t' '$2 == "running"' | wc -l | tr -d ' '; }
-# Every yarilo process but the daemon(8) that keeps yarilo-master alive.
-yarilo_procs() { ps -axo command | grep -E '^/usr/local/libexec/yarilo/yarilo-' | wc -l | tr -d ' '; }
-master_pid() { pgrep -f '^/usr/local/libexec/yarilo/yarilo-master' | head -1; }
+# The supervisor is /usr/local/sbin/yarilo-master; daemon(8) writes its pid.
+MASTER_PIDFILE="${ACCEPT_MASTER_PIDFILE:-/var/run/yarilo/master.pid}"
+master_pid() {
+  local pid
+  pid=$(cat "$MASTER_PIDFILE" 2>/dev/null || true)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$pid"
+}
+# Every yarilo process: the components in libexec, and the supervisor.
+yarilo_procs() {
+  local n
+  n=$(ps -axo command | grep -cE '^/usr/local/libexec/yarilo/yarilo-' || true)
+  [ -n "$(master_pid)" ] && n=$((n + 1))
+  echo "$n"
+}
+# comp_uptime name: seconds the component has run, from status.
+comp_uptime() { service yarilo status "$1" 2>/dev/null | awk -F'\t' -v c="$1" '$1 == c {print $4}'; }
 comp_pid() { service yarilo status "$1" 2>/dev/null | awk -F'\t' -v c="$1" '$1 == c {print $3}'; }
 restarts_metric() {
   curl -s "$MASTER_METRICS" | awk -v c="$1" -v r="$2" \
@@ -219,7 +232,7 @@ echo "== yarilo-master"
 service yarilo status > "$OUT/logs/master-status.start" 2>&1 || true
 mpid=$(master_pid)
 # No component runs as root, real or effective; only yarilo-master does.
-rootc=$(ps -axo uid,ruid,command | awk '$3 ~ /^\/usr\/local\/libexec\/yarilo\/yarilo-/ && $3 !~ /yarilo-master$/ && ($1 == 0 || $2 == 0)' | wc -l | tr -d ' ')
+rootc=$(ps -axo uid,ruid,command | awk '$3 ~ /^\/usr\/local\/libexec\/yarilo\/yarilo-/ && ($1 == 0 || $2 == 0)' | wc -l | tr -d ' ')
 [ "$rootc" = 0 ] && [ -n "$mpid" ] && [ "$(ps -o uid= -p "$mpid" | tr -d ' ')" = 0 ] &&
   verdict "only yarilo-master runs as root" ok "master pid $mpid" ||
   verdict "only yarilo-master runs as root" fail "components as root: $rootc, master pid '${mpid:-none}'"
@@ -227,7 +240,30 @@ rootc=$(ps -axo uid,ruid,command | awk '$3 ~ /^\/usr\/local\/libexec\/yarilo\/ya
 ipid=$(comp_pid imap)
 procstat -e "$ipid" > "$OUT/logs/imap-env.txt" 2>&1 || true
 procstat -l "$ipid" > "$OUT/logs/imap-limits.txt" 2>&1 || true
-want_gmp=$(awk '/^[[:space:]]+GOMAXPROCS:/ {gsub(/["'"'"']/, "", $2); print $2}' "$CONF" | head -1)
+# master_environment as "NAME=value" lines, from a block map or a one-line
+# flow map; any other form stops the run, not a criterion.
+master_env() {
+  awk '
+    /^[^[:space:]#]/ { m = ($0 ~ /^master:/); e = 0 }
+    m && /^[[:space:]]+master_environment:/ {
+      line = $0; sub(/^[^:]*:[[:space:]]*/, "", line)
+      if (line ~ /^\{.*\}[[:space:]]*$/) {
+        gsub(/^\{|\}[[:space:]]*$/, "", line); n = split(line, kv, ",")
+        for (i = 1; i <= n; i++) { k = kv[i]; v = kv[i]; sub(/:.*/, "", k); sub(/^[^:]*:/, "", v)
+          gsub(/[[:space:]"'"'"']/, "", k); gsub(/^[[:space:]]+|[[:space:]]+$|["'"'"']/, "", v); if (k != "") print k "=" v }
+        next
+      }
+      if (line == "" ) { e = 1; next }
+      print "UNREADABLE"; next
+    }
+    e && /^[[:space:]][[:space:]][[:space:]][[:space:]][A-Za-z_][A-Za-z0-9_]*:/ { k = $0; v = $0; sub(/:.*/, "", k); sub(/^[^:]*:/, "", v)
+      gsub(/[[:space:]]/, "", k); gsub(/^[[:space:]]+|[[:space:]]+$|["'"'"']/, "", v); print k "=" v; next }
+    e && !/^[[:space:]][[:space:]][[:space:]][[:space:]]/ { e = 0 }
+  ' "$CONF"
+}
+menv=$(master_env)
+case "$menv" in *UNREADABLE*) echo "accept-freebsd: master_environment in $CONF is neither a block nor a one-line map" >&2; exit 2 ;; esac
+want_gmp=$(printf '%s\n' "$menv" | sed -n 's/^GOMAXPROCS=//p' | head -1)
 if [ -z "$want_gmp" ]; then
   verdict "GOMAXPROCS from master_environment" skip "not set in $CONF"
 elif grep -qw "GOMAXPROCS=$want_gmp" "$OUT/logs/imap-env.txt"; then
@@ -236,7 +272,7 @@ else
   verdict "GOMAXPROCS from master_environment" fail "yarilo-imap lacks GOMAXPROCS=$want_gmp (logs/imap-env.txt)"
 fi
 # Only the variables yarilo-master gives: its fixed four and master_environment.
-allowed="PATH CONFIG LOG_LEVEL TELEMETRY_LISTEN $(awk '/^[^[:space:]#]/ { m = ($0 ~ /^master:/) } m && /master_environment:/ { e = 1; next } e && /^    [A-Za-z_][A-Za-z0-9_]*:/ { sub(/:.*/, ""); gsub(/ /, ""); printf "%s ", $0; next } e && !/^    / { e = 0 }' "$CONF")"
+allowed="PATH CONFIG LOG_LEVEL TELEMETRY_LISTEN $(printf '%s\n' "$menv" | cut -d= -f1 | tr '\n' ' ')"
 extra=$(tail -n +2 "$OUT/logs/imap-env.txt" | tr ' ' '\n' | grep '=' | cut -d= -f1 | sort -u | while read -r v; do
   case " $allowed " in (*" $v "*) ;; (*) printf '%s ' "$v" ;; esac
 done)
@@ -251,18 +287,31 @@ else
   verdict "open-files limit kept" fail "hard ${nofile:-?} < $MIN_NOFILE (logs/imap-limits.txt)"
 fi
 
-# A kill: each comes back at once under the same supervisor, counted once.
+# A kill of a component that has worked: back at once (within 1 s), under the
+# same supervisor, counted once. Then a kill of the same one, now young: back
+# after the first backoff (2 s), within 4 s.
 for c in pop3-login imap; do
+  for _ in $(seq 1 90); do [ "$(comp_uptime "$c")" -ge 61 ] 2>/dev/null && break; sleep 1; done
   before=$(restarts_metric "$c" signal); before=${before:-0}
   pid=$(comp_pid "$c")
   kill -KILL "$pid" 2>/dev/null || true
-  if up_within 3 "$c" && [ "$(comp_pid "$c")" != "$pid" ]; then
+  if up_within 1 "$c" && [ "$(comp_pid "$c")" != "$pid" ]; then
     after=$(restarts_metric "$c" signal); after=${after:-0}
     [ "$(master_pid)" = "$mpid" ] && [ "$((after - before))" = 1 ] &&
-      verdict "$c killed comes back" ok "within 3 s, same supervisor, restarts{signal} +1" ||
-      verdict "$c killed comes back" fail "supervisor $(master_pid) (was $mpid), restarts{signal} $before -> $after"
+      verdict "$c that worked comes back at once" ok "within 1 s of kill -KILL, same supervisor, restarts{signal} +1" ||
+      verdict "$c that worked comes back at once" fail "supervisor $(master_pid) (was $mpid), restarts{signal} $before -> $after"
   else
-    verdict "$c killed comes back" fail "not running 3 s after kill -KILL of $pid: $(service yarilo status "$c" 2>&1)"
+    verdict "$c that worked comes back at once" fail "not running 1 s after kill -KILL of $pid (uptime was 60 s+): $(service yarilo status "$c" 2>&1)"
+  fi
+  pid=$(comp_pid "$c")
+  t0=$(date +%s)
+  kill -KILL "$pid" 2>/dev/null || true
+  if up_within 4 "$c" && [ "$(comp_pid "$c")" != "$pid" ]; then
+    waited=$(( $(date +%s) - t0 ))
+    [ "$waited" -ge 1 ] && verdict "$c that died young waits" ok "back after ${waited} s" ||
+      verdict "$c that died young waits" fail "back after ${waited} s; the 2 s backoff was skipped"
+  else
+    verdict "$c that died young waits" fail "not running 4 s after the second kill: $(service yarilo status "$c" 2>&1)"
   fi
 done
 
