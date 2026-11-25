@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
 	"github.com/yarilomail/yarilo/v2/pkg/build"
@@ -67,9 +68,12 @@ func main() {
 	defer cancel()
 
 	reg := prometheus.NewRegistry()
+	// The process's own CPU and runtime: the service is on every write path,
+	// and without them its share of a busy node cannot be read (#2591).
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), collectors.NewGoCollector())
 	metrics := locks.NewMetrics(reg, lcfg.Mode)
 
-	backend, backendReady, err := buildBackend(lcfg)
+	backend, backendReady, err := buildBackend(lcfg, reg)
 	if err != nil {
 		slog.Error("backend init failed", "err", err, "mode", lcfg.Mode)
 		os.Exit(1)
@@ -121,7 +125,7 @@ func main() {
 
 // buildBackend instantiates the state backend for the configured mode. The
 // returned readiness func reports current usability; /readyz consults it per request.
-func buildBackend(lcfg config.LocksServiceConfig) (locks.Backend, func() bool, error) {
+func buildBackend(lcfg config.LocksServiceConfig, reg prometheus.Registerer) (locks.Backend, func() bool, error) {
 	switch lcfg.Mode {
 	case "embedded":
 		b := locks.NewMemoryBackend()
@@ -136,6 +140,7 @@ func buildBackend(lcfg config.LocksServiceConfig) (locks.Backend, func() bool, e
 			return nil, nil, fmt.Errorf("parse redis url: %w", err)
 		}
 		rdb := redisopt.Client(opts, lcfg.Sentinel())
+		locks.InstrumentRedis(rdb, reg)
 		// No eager Ping: the client is lazy, so the process comes up even when
 		// Redis is not yet reachable rather than crash-looping. The startupProbe gates
 		// traffic and `ready` reports Redis health on /readyz. A bad URL or unknown
