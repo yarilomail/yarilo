@@ -263,7 +263,7 @@ func (u *userIndex) loadOrInitMissing(fs *folderState, uidValidity uint32) error
 			if fs.intent == intentCreate {
 				// A folder being created has no past: nothing of theirs to
 				// adopt into a name somebody just asked for.
-				return fs.createFresh(u.newFolderUIDValidity(fs.folder, uidValidity), u.newFolderGUID())
+				return fs.createFresh(u.newFolderUIDValidity(fs.folder, uidValidity), u.newFolderGUID(), true)
 			}
 			switch converted, cerr := u.convertForeignFolder(fs); {
 			case cerr != nil:
@@ -274,7 +274,10 @@ func (u *userIndex) loadOrInitMissing(fs *folderState, uidValidity uint32) error
 			if err := u.refuseIfIndexLost(fs); err != nil {
 				return err
 			}
-			return fs.createFresh(u.identityFor(fs.folder, uidValidity), u.newFolderGUID())
+			// Known to the identity record, the folder had an index that is
+			// gone: not a first open.
+			v, known := u.identityFor(fs.folder, uidValidity)
+			return fs.createFresh(v, u.newFolderGUID(), !known)
 		case err != nil:
 			return fmt.Errorf("fileindex/openfolder: stat (locked recheck): %w", err)
 		}
@@ -411,18 +414,22 @@ func (u *userIndex) loadModern(fs *folderState) error {
 }
 
 // createFresh initialises a brand-new folder state, used for first-ever
-// OpenFolder and as the fallback after a corrupt file is moved aside.
-func (fs *folderState) createFresh(uidValidity uint32, guid [16]byte) error {
-	// This resets NextUID to 1; log the caller so an unexpected reset of an
-	// established folder can be traced.
+// OpenFolder and as the fallback after a corrupt file is moved aside. A folder
+// with no past (first says so) is a Debug line; any other reset of NextUID to
+// 1 is a WARN naming its caller, so an established folder's reset is traced.
+func (fs *folderState) createFresh(uidValidity uint32, guid [16]byte, first bool) error {
 	if pc, _, _, ok := runtime.Caller(1); ok {
 		caller := "unknown"
 		if fn := runtime.FuncForPC(pc); fn != nil {
 			caller = fn.Name()
 		}
-		slog.Warn("fileindex: createFresh resetting NextUID to 1",
-			"trace_id", fs.traceID, "folder", fs.folder, "caller", caller, "requested_uidvalidity", uidValidity,
-			"index_path", fs.indexPath, "index_dir", fs.indexDir)
+		level := slog.LevelWarn
+		if first {
+			level = slog.LevelDebug
+		}
+		slog.Log(context.Background(), level, "fileindex: createFresh resetting NextUID to 1",
+			"user", fs.user, "trace_id", fs.traceID, "folder", fs.folder, "caller", caller, "requested_uidvalidity", uidValidity,
+			"first", first, "index_path", fs.indexPath, "index_dir", fs.indexDir)
 	}
 	if uidValidity == 0 {
 		uidValidity = uint32(nowUnix())

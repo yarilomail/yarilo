@@ -2913,7 +2913,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 		for reason, n := range byReason {
 			metricUnreadable.WithLabelValues("search", reason).Add(float64(n))
 		}
-		slog.Warn("imap: search could not read some messages; the result is incomplete",
+		slog.Log(context.Background(), unreadableLevelOf(byReason), "imap: search could not read some messages; the result is incomplete",
 			"user", s.userInfo.Username,
 			"folder", s.folder.Name,
 			"unreadable", len(unreadable),
@@ -3485,7 +3485,9 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		}
 		if len(unreadable) > 0 {
 			metricUnreadable.WithLabelValues("fetch", reason).Inc()
-			slog.Warn("imap: fetch answered without attributes it could not read",
+			// A message expunged under the read is not an error, as the
+			// reference's FETCH has it: counted, and a Debug line.
+			slog.Log(context.Background(), unreadableLevel(reason), "imap: fetch answered without attributes it could not read",
 				"user", s.userInfo.Username, "folder", s.folder.Name,
 				"uid", m.UID, "reason", reason,
 				"missing", strings.Join(unreadable, ","), "err", reasonErr)
