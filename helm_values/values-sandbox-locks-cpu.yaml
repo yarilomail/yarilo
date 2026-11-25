@@ -1,0 +1,17 @@
+## Lock service CPU overlay for one A/B arm. Laid over values-sandbox.yaml as a
+## second -f by hack/stand/ab-arm.sh when the arm asks for it, and never
+## deployed on its own. Every exchange with the lock service took about 15 ms
+## under imaptest at the chart's 50m request (#2591); this arm asks whether a
+## starved scheduler share is the reason.
+##
+## Only components.locks.resources belongs here: ab-arm.sh refuses an arm if
+## anything else appears. The memory figures repeat the chart's, so the arm
+## differs in its CPU request alone.
+components:
+  locks:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 32Mi
+      limits:
+        memory: 128Mi

@@ -199,6 +199,7 @@ overlay_allows() {
     notls) echo '^internalTLS(\.enabled)?$' ;;
     no-protocol-rule) echo '^components(\.auth)?$' ;;
     mailcrypt-keys|mailcrypt-write) echo '^(mailCrypt(\.secretName)?|storage(\.mail_crypt)?)$' ;;
+    locks-cpu) echo '^components(\.locks)?$' ;;
     *) return 1 ;;
   esac
 }
