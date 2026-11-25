@@ -14,9 +14,10 @@ import (
 )
 
 // wakePing is how long the shared subscription may stay silent before it is
-// pinged: a connection that died without a word would otherwise hold every
-// waiter of the replica to the backstop.
-const wakePing = 15 * time.Second
+// pinged, and how long the ping has to be answered. A connection that died
+// without a word would otherwise hold every waiter of the replica to the
+// backstop until TCP gives up. A variable as a test seam.
+var wakePing = 15 * time.Second
 
 // wakeRetry spaces the attempts to reach the store again after the
 // subscription's connection broke.
@@ -67,49 +68,85 @@ func (h *wakeHub) start(ctx context.Context) error {
 	if h.ps != nil {
 		return nil
 	}
-	ps := h.rdb.PSubscribe(ctx, globEscape(h.prefix)+"*")
-	if _, err := ps.Receive(ctx); err != nil {
-		_ = ps.Close()
-		return fmt.Errorf("locks/redis: wakes: %w", err)
+	ps, err := h.subscribe(ctx)
+	if err != nil {
+		return err
 	}
 	h.ps = ps
 	go h.run(ps)
 	return nil
 }
 
-// run reads the subscription until the backend closes. A broken connection is
-// dialled again by the client, which subscribes again; a release published in
-// between reached nobody, so every waiter here is woken to look for itself.
+func (h *wakeHub) subscribe(ctx context.Context) (*redis.PubSub, error) {
+	ps := h.rdb.PSubscribe(ctx, globEscape(h.prefix)+"*")
+	if _, err := ps.Receive(ctx); err != nil {
+		_ = ps.Close()
+		return nil, fmt.Errorf("locks/redis: wakes: %w", err)
+	}
+	return ps, nil
+}
+
+// run reads the subscription until the backend closes. When the connection
+// breaks, or stays silent through a ping and the wait for its answer, the
+// subscription is dropped and taken again on a fresh connection. A release
+// published in between reached nobody, so every waiter here is then woken to
+// look for itself.
 func (h *wakeHub) run(ps *redis.PubSub) {
 	ctx := context.Background()
-	lost := false
+	pinged := false
 	for {
 		msg, err := ps.ReceiveTimeout(ctx, wakePing)
-		if err != nil {
-			if errors.Is(err, redis.ErrClosed) || h.isClosed() {
-				return
+		if err == nil {
+			pinged = false // any word from the store answers the ping
+			if m, ok := msg.(*redis.Message); ok {
+				h.deliver(strings.TrimPrefix(m.Channel, h.prefix), m.Payload)
 			}
-			var ne net.Error
-			if errors.As(err, &ne) && ne.Timeout() {
-				// Silence, not a failure: the ping's answer comes back as a
-				// Pong, and a dead connection fails the ping or the next read.
-				_ = ps.Ping(ctx)
-				continue
-			}
-			lost = true
-			time.Sleep(wakeRetry)
 			continue
 		}
-		switch m := msg.(type) {
-		case *redis.Subscription:
-			if lost {
-				lost = false
-				h.resubscribed.Inc()
-				h.wakeAll()
-			}
-		case *redis.Message:
-			h.deliver(strings.TrimPrefix(m.Channel, h.prefix), m.Payload)
+		if errors.Is(err, redis.ErrClosed) || h.isClosed() {
+			return
 		}
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() && !pinged {
+			// Silence. The client keeps a connection a read timed out on, so
+			// only an answer to the ping says it is still there.
+			pinged = true
+			if perr := ps.Ping(ctx); perr == nil {
+				continue
+			}
+		}
+		if ps = h.resubscribe(ctx, ps); ps == nil {
+			return
+		}
+		pinged = false
+	}
+}
+
+// resubscribe drops the subscription's connection and takes the subscription
+// again until it holds or the backend closes, then wakes every waiter.
+func (h *wakeHub) resubscribe(ctx context.Context, old *redis.PubSub) *redis.PubSub {
+	_ = old.Close()
+	for {
+		if h.isClosed() {
+			return nil
+		}
+		sctx, cancel := context.WithTimeout(ctx, wakePing)
+		ps, err := h.subscribe(sctx)
+		cancel()
+		if err == nil {
+			h.mu.Lock()
+			if h.closed {
+				h.mu.Unlock()
+				_ = ps.Close()
+				return nil
+			}
+			h.ps = ps
+			h.mu.Unlock()
+			h.resubscribed.Inc()
+			h.wakeAll()
+			return ps
+		}
+		time.Sleep(wakeRetry)
 	}
 }
 
