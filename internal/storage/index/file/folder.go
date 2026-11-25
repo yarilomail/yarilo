@@ -347,6 +347,7 @@ func (u *userIndex) readBase(fs *folderState) error {
 	// path now: a later reload compares against it.
 	fs.baseMod, fs.baseIdent = img.mod, img.ident
 	fs.baseFrom = "open"
+	fs.countersChecked = false
 	// Unpaired here is only what staleWith lets through: it replays whole.
 	from := int64(0)
 	if off, paired := replayStart(fs.lineage, lg.lineage()); paired {
@@ -1061,6 +1062,7 @@ func (fs *folderState) flush() error {
 	}
 	fs.lineage = next
 	fs.baseFrom = "flush"
+	fs.countersChecked = false
 	fs.flushes++
 	// Track base mtime+identity so the reload fast path fires after this flush.
 	if st, _ := os.Stat(fs.indexPath); st != nil {
@@ -1306,6 +1308,7 @@ func (fs *folderState) reloadOnceLocked() error {
 				fs.baseMod = newBaseMod
 				fs.baseIdent = baseStat
 				fs.baseFrom = "adopt"
+				fs.countersChecked = false
 				fs.logSize = 0
 				// The records are the ones we hold -- that is what the digest
 				// proved -- but the extension HEADERS are not covered by it,
@@ -1338,6 +1341,7 @@ func (fs *folderState) reloadOnceLocked() error {
 		fs.baseIdent = baseStat
 		fs.lineage = readLineage(mf)
 		fs.baseFrom = "reload"
+		fs.countersChecked = false
 		// Where to resume in the log the base did not fully absorb: without the
 		// pairing this restarts from zero, relying on idempotence nobody declared.
 		fs.logSize = 0

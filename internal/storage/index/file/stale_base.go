@@ -60,13 +60,22 @@ func (fs *folderState) baseFileSame() string {
 	return "no"
 }
 
-// verifyCountersLocked holds a writer's header to its own records once all
-// are loaded: a header they disagree with would be journaled as the next
-// absolute counters. Taken from the records, counted, Debug. Caller holds
-// fs.mu.
+// countersPassSeam is a test seam run on each full pass of the counters
+// check. Nil elsewhere.
+var countersPassSeam func()
+
+// verifyCountersLocked holds a writer's header to its own records once per
+// base the state takes, the first time all records are loaded: a header they
+// disagree with would be journaled as the next absolute counters. Taken from
+// the records, counted, Debug. Writes after that move header and records by
+// increments, so they count nothing. Caller holds fs.mu.
 func (fs *folderState) verifyCountersLocked(site string) {
-	if fs.recs == nil || !fs.recs.AllLoaded() || len(fs.pending) > 0 || fs.countersUnknown != 0 {
+	if fs.countersChecked || fs.recs == nil || !fs.recs.AllLoaded() || len(fs.pending) > 0 || fs.countersUnknown != 0 {
 		return
+	}
+	fs.countersChecked = true
+	if countersPassSeam != nil {
+		countersPassSeam()
 	}
 	_, seen, deleted := fs.countRecordsLocked()
 	h := &fs.file.Header

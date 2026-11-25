@@ -106,3 +106,43 @@ func TestAWritersHeaderIsHeldToItsRecordsBeforeItWrites(t *testing.T) {
 		t.Errorf("counted %v under write-flags/%s/counters/yes, want 1", got, from)
 	}
 }
+
+// The counters check passes over the records once per base the state takes,
+// not on every write: a run of writes into one loaded folder counts once, and
+// a base another process replaced is counted once more.
+func TestTheCountersCheckPassesOncePerBase(t *testing.T) {
+	passes := 0
+	countersPassSeam = func() { passes++ }
+	t.Cleanup(func() { countersPassSeam = nil })
+	home := t.TempDir()
+	w := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
+	t.Cleanup(func() { _ = w.Close() })
+	f, err := w.OpenFolder("INBOX", 42, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 20; i++ {
+		if err := w.AppendMessage(f.ID, &mailbox.MessageMeta{UID: uint32(i), Size: 10}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	passes = 0
+	for i := 1; i <= 20; i++ {
+		if err := w.UpdateFlags(f.ID, uint32(i), []string{`\Seen`}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if passes != 1 {
+		t.Errorf("20 writes into one loaded folder made %d passes, want 1", passes)
+	}
+	foldFromAnotherProcess(t, home, "3:5")
+	passes = 0
+	for i := 6; i <= 10; i++ {
+		if err := w.UpdateFlags(f.ID, uint32(i), nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if passes != 1 {
+		t.Errorf("5 writes after another process replaced the base made %d passes, want 1", passes)
+	}
+}
