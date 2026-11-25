@@ -227,6 +227,7 @@ func TestAWorkingComponentRestartsAtOnceAndAYoungOneBacksOff(t *testing.T) {
 func TestARequestedRestartIsImmediateAndAStopRestartsNothing(t *testing.T) {
 	r := newRig(t, func(r *rig) []Component { return []Component{r.comp("imap")} })
 	go r.sup.Run()
+	r.waitStarts("imap", 1, 3*time.Second)
 	r.waitState("imap", StateRunning, 3*time.Second)
 	asked := time.Now()
 	if err := r.sup.Restart("imap"); err != nil {
@@ -268,6 +269,8 @@ func TestAComponentThatIgnoresTermIsKilledAfterTheTimeout(t *testing.T) {
 func TestStopKeepsAComponentDownAndStartBringsItBack(t *testing.T) {
 	r := newRig(t, func(r *rig) []Component { return []Component{r.comp("imap")} })
 	go r.sup.Run()
+	// Running is set at exec; the helper's own start line comes after it.
+	r.waitStarts("imap", 1, 3*time.Second)
 	r.waitState("imap", StateRunning, 3*time.Second)
 	if err := r.sup.StopComponents("imap"); err != nil {
 		t.Fatal(err)

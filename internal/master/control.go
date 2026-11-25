@@ -109,9 +109,9 @@ func Ctl(ctx context.Context, path string, args []string, out io.Writer) error {
 		return fmt.Errorf("no yarilo-master on %s: %w", path, err)
 	}
 	defer func() { _ = conn.Close() }()
-	if _, err := fmt.Fprintln(conn, strings.Join(args, " ")); err != nil {
-		return err
-	}
+	// A refused peer is answered before its command is read, so the write
+	// may fail; the answer is still there to read.
+	_, werr := fmt.Fprintln(conn, strings.Join(args, " "))
 	sc := bufio.NewScanner(conn)
 	for sc.Scan() {
 		line := sc.Text()
@@ -124,6 +124,9 @@ func Ctl(ctx context.Context, path string, args []string, out io.Writer) error {
 		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}
+	}
+	if werr != nil {
+		return werr
 	}
 	if err := sc.Err(); err != nil {
 		return err

@@ -48,16 +48,17 @@ func main() {
 	}
 }
 
-func plan(cfgPath string) (*master.Plan, error) {
+func plan(cfgPath string) (*master.Plan, *config.Config, error) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", cfgPath, err)
+		return nil, nil, fmt.Errorf("load %s: %w", cfgPath, err)
 	}
-	return master.DefaultChecker().Build(cfg, cfgPath)
+	p, err := master.DefaultChecker().Build(cfg, cfgPath)
+	return p, cfg, err
 }
 
 func check(cfgPath string) int {
-	if _, err := plan(cfgPath); err != nil {
+	if _, _, err := plan(cfgPath); err != nil {
 		fmt.Fprintf(os.Stderr, "yarilo-master: %v\n", err)
 		return 1
 	}
@@ -89,7 +90,7 @@ func run(cfgPath string) int {
 		slog.Error("master: runs as root, to start each component as its own user")
 		return 1
 	}
-	p, err := plan(cfgPath)
+	p, cfg, err := plan(cfgPath)
 	if err != nil {
 		slog.Error("master: configuration refused; nothing started", "err", err)
 		return 1
@@ -117,7 +118,15 @@ func run(cfgPath string) int {
 	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(own, nil)).With("service", "master"))
 
-	tel := telemetry.NewWithOptions(telemetry.Options{Addr: p.Telemetry, Registry: reg})
+	tel := telemetry.NewWithOptions(telemetry.Options{
+		Addr:     telemetry.Addr(p.Telemetry),
+		Registry: reg,
+		Pprof: telemetry.PprofOptions{
+			Enabled:       cfg.Telemetry.PprofEnabled,
+			BlockRate:     cfg.Telemetry.PprofBlockProfileRate,
+			MutexFraction: cfg.Telemetry.PprofMutexProfileFraction,
+		},
+	})
 	if err := tel.Start(context.Background()); err != nil {
 		slog.Error("master: telemetry listen failed", "err", err)
 	}

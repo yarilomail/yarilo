@@ -24,6 +24,7 @@ ignore:
   - "app/yarilo-lmtp-login/**"
   - "app/yarilo-lmtp/**"
   - "app/yarilo-locks/**"
+  - "app/yarilo-master/**"
   - "app/yarilo-managesieve-login/**"
   - "app/yarilo-managesieve/**"
   - "app/yarilo-pop3-login/**"
