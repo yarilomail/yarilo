@@ -124,6 +124,8 @@ func TestEveryCollectedCounterHasAReader(t *testing.T) {
 		"maildir_partial_pass_empty_total",
 		"quota_folders_opened_total",
 		"maildir_lock_hold_seconds",
+		"imap_thread_record_seconds",
+		"yarilo_threads_save_not_recorded_total",
 	} {
 		if strings.Count(src, metric) < 2 {
 			t.Errorf("%s is collected but never summed into a line an operator reads", metric)
@@ -1012,5 +1014,35 @@ func TestTheCryptLoadModeSkipsOnlyTheOtherScenarios(t *testing.T) {
 		if err := cmd.Run(); err == nil || cmd.ProcessState.ExitCode() != 2 {
 			t.Errorf("%s: exit %v, want 2 before anything runs", bad, err)
 		}
+	}
+}
+
+// The thread record line reads an arm's delta: bucket bounds for p50 and p99
+// and the saves left outside their conversation.
+func TestTheThreadRecordLineReadsADelta(t *testing.T) {
+	src := armSource(t)
+	i := strings.Index(src, `$1 == "yarilo_threads_save_not_recorded_total"`)
+	if i < 0 {
+		t.Fatal("no thread record line")
+	}
+	start := strings.LastIndex(src[:i], "awk '") + len("awk '")
+	end := i + strings.Index(src[i:], "\n    '")
+	prog := src[start:end]
+	delta := filepath.Join(t.TempDir(), "delta.txt")
+	page := "yarilo_threads_save_not_recorded_total 3\n" +
+		"imap_thread_record_seconds_bucket{le=\"0.001\"} 90\n" +
+		"imap_thread_record_seconds_bucket{le=\"0.016\"} 99\n" +
+		"imap_thread_record_seconds_bucket{le=\"2\"} 100\n" +
+		"imap_thread_record_seconds_bucket{le=\"+Inf\"} 100\n" +
+		"maildir_lock_hold_seconds_bucket{site=\"save\",le=\"1\"} 7\n"
+	if err := os.WriteFile(delta, []byte(page), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), "awk", prog, delta).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "thread record: n=100 p50<=0.001s p99<=0.016s not_threaded=3"; string(out) != want {
+		t.Errorf("got %q, want %q", out, want)
 	}
 }

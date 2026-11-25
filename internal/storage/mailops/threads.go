@@ -20,13 +20,19 @@ const (
 	threadLockTimeout = 10 * time.Second
 	threadLockTTL     = 15 * time.Second
 	threadLockRenew   = 5 * time.Second
+	// threadLockWait is how long a save queues for the account's thread lock.
+	// Taken once, a lock any other save of the account held turned the
+	// message away at once; a save holds it for one append.
+	threadLockWait = 2 * time.Second
 	// mergeLockWait is how long a save waits to merge: another merge running
 	// is the one that folds this log, so it does not wait for it.
 	mergeLockWait = 100 * time.Millisecond
 )
 
-// recordThread puts a saved message into its conversation (#2217); a failure
-// leaves the mail as it is, and the migration step rebuilds the sidecar.
+// recordThread puts a saved message into its conversation (#2217), queueing
+// for the account's lock. A failure leaves the mail as it is, outside its
+// conversation, until a client asks for its thread id and ThreadLate records
+// it (#2420).
 func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	if o.cfg.Threads == nil || o.user == nil || guid == ([16]byte{}) {
 		return
@@ -49,8 +55,8 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	defer cancel()
 	var err error
 	if o.cfg.Locker != nil {
-		err = locks.WithLock(ctx, o.cfg.Locker, locks.ThreadsKey(user),
-			owner, threadLockTTL, threadLockRenew, rec)
+		err = locks.WithLockWaiting(ctx, o.cfg.Locker, locks.ThreadsKey(user),
+			owner, threadLockTTL, threadLockRenew, threadLockWait, rec)
 	} else {
 		err = rec(ctx)
 	}
@@ -106,8 +112,8 @@ func (o *Ops) mergeNow(user, path string) {
 		}
 		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), o.cfg.Protocol+"-threads-swap"), threadLockTimeout)
 		defer cancel()
-		return locks.WithLock(ctx, o.cfg.Locker, locks.ThreadsKey(user), owner, threadLockTTL, threadLockRenew,
-			func(context.Context) error { return fn() })
+		return locks.WithLockWaiting(ctx, o.cfg.Locker, locks.ThreadsKey(user), owner, threadLockTTL, threadLockRenew,
+			threadLockWait, func(context.Context) error { return fn() })
 	}
 	merge := func(context.Context) error { return threads.MergeStore(path, hold) }
 	var err error

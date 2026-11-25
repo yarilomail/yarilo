@@ -128,3 +128,12 @@ func unreadableLevelOf(byReason map[string]int) slog.Level {
 	}
 	return slog.LevelDebug
 }
+
+// metricThreadRecordSeconds times the conversation write of an IMAP save, the
+// wait for the account's thread lock included: a save now queues for it, so
+// the queue is part of the save's cost and is read from here (#2591).
+var metricThreadRecordSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
+	Name:    "imap_thread_record_seconds",
+	Help:    "Duration of the conversation write within an IMAP save, the wait for the account's thread lock included.",
+	Buckets: []float64{0.000125, 0.00025, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.016, 0.064, 0.256, 1, 2, 5},
+})

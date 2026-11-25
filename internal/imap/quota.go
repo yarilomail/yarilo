@@ -2,6 +2,7 @@ package imap
 
 import (
 	"log/slog"
+	"time"
 
 	imaplib "github.com/emersion/go-imap/v2"
 	imapserver "github.com/emersion/go-imap/v2/imapserver"
@@ -50,6 +51,7 @@ func (s *session) mailopsConfig() mailops.Config {
 	}
 	return mailops.Config{
 		Threads:      rec,
+		ThreadTimer:  func(d time.Duration) { metricThreadRecordSeconds.Observe(d.Seconds()) },
 		Protocol:     "imap",
 		Locker:       o.Locker,
 		FTS:          o.FTS.Client,
