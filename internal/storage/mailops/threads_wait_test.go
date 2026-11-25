@@ -243,3 +243,62 @@ func TestASaveQueuesUpToTheBoundThenLeavesTheMessageForThreadLate(t *testing.T) 
 		t.Error("ThreadLate did not record the message left out")
 	}
 }
+
+// waitCounter is a real locker that counts the requests made through the
+// waiting path, and passes them on.
+type waitCounter struct {
+	locks.Locker
+	mu      sync.Mutex
+	waiting int
+}
+
+func (w *waitCounter) LockWaiting(ctx context.Context, resource, owner string, ttl, limit time.Duration, shared bool) (locks.Lock, error) {
+	w.mu.Lock()
+	w.waiting++
+	w.mu.Unlock()
+	return w.Locker.(interface {
+		LockWaiting(context.Context, string, string, time.Duration, time.Duration, bool) (locks.Lock, error)
+	}).LockWaiting(ctx, resource, owner, ttl, limit, shared)
+}
+
+// A free thread lock is taken with one plain request, never through the
+// waiting path, which cost an IMAP save tens of milliseconds it had no reason
+// to pay; a held one still queues and the message is threaded.
+func TestAFreeThreadLockNeverTakesTheWaitingPath(t *testing.T) {
+	lk := &waitCounter{Locker: lockstest.Server(t)()}
+	user := &mailbox.UserInfo{Username: "u@example.com", Home: t.TempDir()}
+	o := &Ops{cfg: Config{Protocol: "test", Threads: threads.NewRecorder(nil), Locker: lk}, user: user}
+	const n = 50
+	start := time.Now()
+	for i := range n {
+		o.recordThread([16]byte{1, byte(i + 1)}, []byte(fmt.Sprintf("Message-ID: <f%d@x>\r\nSubject: s\r\n\r\n", i)))
+	}
+	per := time.Since(start) / n
+	if lk.waiting != 0 {
+		t.Errorf("%d records of a free lock went through the waiting path, want 0", lk.waiting)
+	}
+	t.Logf("a record with the lock free: %v each over %d", per, n)
+
+	// Held by someone else: the record queues behind it and lands once it is
+	// released.
+	ctx := locks.WithSite(context.Background(), "test")
+	held, err := lk.Lock(ctx, locks.ThreadsKey(user.Username), locks.Owner("other@example.com", locks.NewID()), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = lk.Unlock(ctx, held.ID)
+	}()
+	o.recordThread([16]byte{2}, []byte("Message-ID: <held@x>\r\nSubject: s\r\n\r\n"))
+	if lk.waiting != 1 {
+		t.Errorf("a held lock made %d waiting requests, want 1", lk.waiting)
+	}
+	st, err := threads.Load(threads.PathFor(user))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.ThreadOfGUID(mailbox.FormatObjectID([16]byte{2})); !ok {
+		t.Error("the record that queued behind a held lock is outside its conversation")
+	}
+}
