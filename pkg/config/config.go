@@ -82,6 +82,44 @@ type Config struct {
 	ManageSieveLoginService ManageSieveLoginServiceConfig `koanf:"managesieve_login_service"`
 	Telemetry               TelemetryConfig               `koanf:"telemetry"`
 	Log                     LogConfig                     `koanf:"log"`
+	Master                  MasterConfig                  `koanf:"master"`
+}
+
+// MasterConfig is yarilo-master's: the supervisor of the FreeBSD port, which
+// starts the components in order and starts again one that dies (#2715).
+// Kubernetes and the Linux packages do not run it.
+type MasterConfig struct {
+	// Components are the processes to run, in start order; they stop in
+	// reverse. Each is yarilo-<name> in LibexecDir. An unknown name or a
+	// missing binary stops the start.
+	Components []string `koanf:"master_components"`
+	// LibexecDir holds the component binaries. It and they must be root's
+	// and not writable by group or others.
+	LibexecDir string `koanf:"master_libexec_dir"`
+	// RunDir holds the components' sockets, their pid files, the lock and
+	// the control socket.
+	RunDir string `koanf:"master_run_dir"`
+	// EnvDir holds the optional auth.env and dict.env, root's with mode 0600;
+	// each reaches only its own component.
+	EnvDir string `koanf:"master_env_dir"`
+	// LogPath is a directory, one <name>.log per component, or "syslog".
+	LogPath string `koanf:"master_log_path"`
+	// SyslogFacility is the facility with LogPath "syslog".
+	SyslogFacility string `koanf:"master_syslog_facility"`
+	// StopTimeout is how many seconds a component has to exit on SIGTERM
+	// before it is killed.
+	StopTimeout int `koanf:"master_stop_timeout"`
+	// The users of the four roles. None may be root.
+	User         string `koanf:"master_user"`
+	AuthUser     string `koanf:"master_auth_user"`
+	LoginUser    string `koanf:"master_login_user"`
+	DeliveryUser string `koanf:"master_delivery_user"`
+	// TelemetryPort is the supervisor's own; each component's is this plus
+	// a fixed offset.
+	TelemetryPort int `koanf:"master_telemetry_port"`
+	// Environment is added to every component's environment, which holds
+	// nothing else of the supervisor's.
+	Environment map[string]string `koanf:"master_environment"`
 }
 
 // SieveConfig controls per-user Sieve email filtering (RFC 5228) in the LMTP delivery path.
@@ -3135,6 +3173,20 @@ func Defaults() *Config {
 	c.DirectorService.DomainExpire = 900
 	c.DirectorService.DomainRebalanceInterval = 60
 	c.DirectorService.FlushProgramTimeoutSeconds = 10
+	c.Master = MasterConfig{
+		Components:     []string{"locks", "auth", "warden", "dict", "imap", "pop3", "lmtp", "submission", "managesieve", "imap-login", "pop3-login", "lmtp-login", "submission-login", "managesieve-login"},
+		LibexecDir:     "/usr/local/libexec/yarilo",
+		RunDir:         "/var/run/yarilo",
+		EnvDir:         "/usr/local/etc/yarilo",
+		LogPath:        "/var/log/yarilo",
+		SyslogFacility: "mail",
+		StopTimeout:    60,
+		User:           "yarilo",
+		AuthUser:       "yarilo-auth",
+		LoginUser:      "yarilo-login",
+		DeliveryUser:   "yarilo-delivery",
+		TelemetryPort:  18079,
+	}
 	c.DictService.DictMaxConns = 8
 	c.DictService.SocketMode = "0660"
 	c.LocksClient.WaitPoolSize = 64
