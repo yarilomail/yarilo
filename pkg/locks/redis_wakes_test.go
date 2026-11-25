@@ -502,14 +502,11 @@ func (p *freezingProxy) addr() string { return p.ln.Addr().String() }
 // found by its unanswered ping and taken again on a fresh connection, and
 // every waiter is woken, with no release published.
 func TestASilentlyDeadSubscriptionIsTakenAgain(t *testing.T) {
-	old := wakePing
-	wakePing = 200 * time.Millisecond
-	t.Cleanup(func() { wakePing = old })
-
 	mr := miniredis.RunT(t)
 	proxy := newFreezingProxy(t, mr.Addr())
 	rdb := redis.NewClient(&redis.Options{Addr: proxy.addr()})
 	b := NewRedisBackend(rdb)
+	b.wakes.ping = 200 * time.Millisecond
 	t.Cleanup(func() { _ = b.Close() })
 	ctx := t.Context()
 
@@ -527,7 +524,7 @@ func TestASilentlyDeadSubscriptionIsTakenAgain(t *testing.T) {
 		t.Fatal("the waiter was never woken; the dead subscription was kept")
 	}
 	// Silence, the ping, no answer: two periods, and the fresh subscription.
-	if took := time.Since(frozeAt); took > 3*wakePing+time.Second {
+	if took := time.Since(frozeAt); took > 3*b.wakes.ping+time.Second {
 		t.Errorf("found the dead subscription after %v, want within about two ping periods", took)
 	}
 	if n := counterNow(t, b.wakes.resubscribed); n != 1 {

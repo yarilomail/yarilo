@@ -16,8 +16,8 @@ import (
 // wakePing is how long the shared subscription may stay silent before it is
 // pinged, and how long the ping has to be answered. A connection that died
 // without a word would otherwise hold every waiter of the replica to the
-// backstop until TCP gives up. A variable as a test seam.
-var wakePing = 15 * time.Second
+// backstop until TCP gives up.
+const wakePing = 15 * time.Second
 
 // wakeRetry spaces the attempts to reach the store again after the
 // subscription's connection broke.
@@ -30,6 +30,7 @@ const wakeRetry = 100 * time.Millisecond
 type wakeHub struct {
 	rdb    redis.UniversalClient
 	prefix string // release channel prefix; the resource follows it
+	ping   time.Duration
 
 	mu      sync.Mutex
 	ps      *redis.PubSub
@@ -48,6 +49,7 @@ func newWakeHub(rdb redis.UniversalClient, prefix string) *wakeHub {
 	return &wakeHub{
 		rdb:     rdb,
 		prefix:  prefix,
+		ping:    wakePing,
 		waiters: make(map[string]map[*wakeWaiter]struct{}),
 		resubscribed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "yarilo_locks_wake_resubscribed_total",
@@ -95,7 +97,7 @@ func (h *wakeHub) run(ps *redis.PubSub) {
 	ctx := context.Background()
 	pinged := false
 	for {
-		msg, err := ps.ReceiveTimeout(ctx, wakePing)
+		msg, err := ps.ReceiveTimeout(ctx, h.ping)
 		if err == nil {
 			pinged = false // any word from the store answers the ping
 			if m, ok := msg.(*redis.Message); ok {
@@ -130,7 +132,7 @@ func (h *wakeHub) resubscribe(ctx context.Context, old *redis.PubSub) *redis.Pub
 		if h.isClosed() {
 			return nil
 		}
-		sctx, cancel := context.WithTimeout(ctx, wakePing)
+		sctx, cancel := context.WithTimeout(ctx, h.ping)
 		ps, err := h.subscribe(sctx)
 		cancel()
 		if err == nil {
