@@ -200,6 +200,7 @@ overlay_allows() {
     no-protocol-rule) echo '^components(\.auth)?$' ;;
     mailcrypt-keys|mailcrypt-write) echo '^(mailCrypt(\.secretName)?|storage(\.mail_crypt)?)$' ;;
     locks-cpu) echo '^components(\.locks)?$' ;;
+    lmtp-nocpu) echo '^components(\.lmtp)?$' ;;
     *) return 1 ;;
   esac
 }
