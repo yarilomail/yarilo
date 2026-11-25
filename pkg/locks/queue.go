@@ -22,6 +22,13 @@ type WaitQueue interface {
 	// AtFront reports whether ticket is the one whose turn it is.
 	AtFront(ctx context.Context, resource, ticket string) (bool, error)
 
+	// JoinAndTry is Enqueue and, when ticket stands first, the acquire, as one
+	// step. ahead > 0 means it waits and nothing was tried; otherwise id is
+	// the grant or err says why not (ErrBusy with the holder). A grant takes
+	// the ticket out of the line and hands the turn on, as every grant to a
+	// ticket does.
+	JoinAndTry(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration, shared bool) (ahead int, id string, holder Holder, err error)
+
 	// Dequeue takes ticket out of the line, wherever it stands.
 	Dequeue(ctx context.Context, resource, ticket string) error
 

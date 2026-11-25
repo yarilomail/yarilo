@@ -124,6 +124,7 @@ func (b *MemoryBackend) Acquire(_ context.Context, resource, owner, site, ticket
 	}
 	b.byRes[resource] = id
 	b.sweepByLocked(b.locks[id].ExpiresAt)
+	b.leaveLineLocked(resource, ticket)
 	return id, Holder{}, nil
 }
 
@@ -156,6 +157,7 @@ func (b *MemoryBackend) AcquireShared(_ context.Context, resource, owner, site, 
 		b.sharedRes[resource] = make(map[string]struct{})
 	}
 	b.sharedRes[resource][id] = struct{}{}
+	b.leaveLineLocked(resource, ticket)
 	return id, Holder{}, nil
 }
 

@@ -41,14 +41,28 @@ func (b *MemoryBackend) AtFront(_ context.Context, resource, ticket string) (boo
 // Dequeue implements WaitQueue. Leaving names whoever now stands first, so a
 // contender that gave up hands the turn on instead of leaving it to the timer.
 func (b *MemoryBackend) Dequeue(_ context.Context, resource, ticket string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.leaveLineLocked(resource, ticket)
+	return nil
+}
+
+// leaveLineLocked takes ticket out of the line and hands the turn to whoever
+// now stands first. Caller holds b.mu.
+func (b *MemoryBackend) leaveLineLocked(resource, ticket string) {
+	if ticket == "" {
+		return
+	}
 	b.qmu.Lock()
 	var nextUp string
+	removed := false
 	line := b.queues[resource]
 	for i, entry := range line {
 		if entry.ticket != ticket {
 			continue
 		}
 		b.queues[resource] = append(line[:i:i], line[i+1:]...)
+		removed = true
 		break
 	}
 	if left := b.queues[resource]; len(left) == 0 {
@@ -57,12 +71,25 @@ func (b *MemoryBackend) Dequeue(_ context.Context, resource, ticket string) erro
 		nextUp = left[0].ticket
 	}
 	b.qmu.Unlock()
-	if nextUp != "" {
-		b.mu.Lock()
+	if removed && nextUp != "" {
 		b.handOver(resource, nextUp)
-		b.mu.Unlock()
 	}
-	return nil
+}
+
+// JoinAndTry implements WaitQueue.
+func (b *MemoryBackend) JoinAndTry(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration, shared bool) (int, string, Holder, error) {
+	ahead, err := b.Enqueue(ctx, resource, ticket)
+	if err != nil || ahead > 0 {
+		return ahead, "", Holder{}, err
+	}
+	var id string
+	var h Holder
+	if shared {
+		id, h, err = b.AcquireShared(ctx, resource, owner, site, ticket, ttl)
+	} else {
+		id, h, err = b.Acquire(ctx, resource, owner, site, ticket, ttl)
+	}
+	return 0, id, h, err
 }
 
 // pruneLocked drops tickets older than the abandon window. Caller holds qmu.

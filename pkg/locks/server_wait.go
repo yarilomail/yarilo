@@ -59,17 +59,26 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	defer unsubscribe()
 	s.trace(ticket, resource, "subscribe", peer)
 
-	ahead, err := queue.Enqueue(ctx, resource, ticket)
-	if err != nil {
-		s.logger.Error("locks: could not join the line", "peer", peer, "resource", resource, "err", err)
-		_ = writeFields(w, respError, "internal")
-		return true
-	}
+	// A grant took the ticket out of the line itself; any other way out
+	// leaves it here.
+	granted := false
 	defer func() {
+		if granted {
+			return
+		}
 		if derr := queue.Dequeue(context.WithoutCancel(ctx), resource, ticket); derr != nil {
 			s.logger.Warn("locks: could not leave the line", "resource", resource, "err", derr)
 		}
 	}()
+
+	// Joining and the first try are one step: a lock nobody holds or waits
+	// for is granted in it.
+	ahead, joinID, joinHolder, joinErr := queue.JoinAndTry(ctx, resource, owner, site, ticket, ttl, shared)
+	if joinErr != nil && !errors.Is(joinErr, ErrBusy) {
+		s.logger.Error("locks: could not join the line", "peer", peer, "resource", resource, "err", joinErr)
+		_ = writeFields(w, respError, "internal")
+		return true
+	}
 	s.trace(ticket, resource, "join", peer, "ahead", ahead)
 	s.metrics.observeQueueDepth(ahead)
 
@@ -91,15 +100,24 @@ func (s *Server) handleLockWait(ctx context.Context, conn net.Conn, fields []str
 	// The first contender may try at once; afterwards a turn is named, and one
 	// that is not this ticket's costs nothing to ignore (#1824).
 	mine := ahead == 0
+	tried := mine // the join made the first try
 	woken := false
 	for {
 		if mine {
-			id, current, aerr := s.tryAcquire(ctx, resource, owner, site, ticket, ttl, shared)
+			var id string
+			var current Holder
+			var aerr error
+			if tried {
+				id, current, aerr, tried = joinID, joinHolder, joinErr, false
+			} else {
+				id, current, aerr = s.tryAcquire(ctx, resource, owner, site, ticket, ttl, shared)
+			}
 			// The refusal names who holds it, so the trace says who takes the
 			// lock out from under the head of the queue (#1809).
 			s.trace(ticket, resource, "try", peer, "held_by", current.Owner, "held_site", current.Site)
 			switch {
 			case aerr == nil:
+				granted = true
 				s.trace(ticket, resource, "result", peer, "granted", true, "after_backstop", woken)
 				s.metrics.observeAcquire(time.Since(started).Seconds(), "ok")
 				// A grant nobody receives is a lock nobody releases, and it
