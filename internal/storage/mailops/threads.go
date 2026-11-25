@@ -3,6 +3,7 @@ package mailops
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -28,6 +29,18 @@ const (
 	// is the one that folds this log, so it does not wait for it.
 	mergeLockWait = 100 * time.Millisecond
 )
+
+// withThreadLock runs fn under the account's thread lock. One plain request
+// first, as a free lock costs no more than that; only a lock someone holds
+// (ErrBusy) queues, up to threadLockWait. A free lock taken through the
+// waiting path cost an IMAP save tens of milliseconds (#2591).
+func withThreadLock(ctx context.Context, l locks.Locker, user, owner string, fn func(context.Context) error) error {
+	err := locks.WithLock(ctx, l, locks.ThreadsKey(user), owner, threadLockTTL, threadLockRenew, fn)
+	if !errors.Is(err, locks.ErrBusy) {
+		return err
+	}
+	return locks.WithLockWaiting(ctx, l, locks.ThreadsKey(user), owner, threadLockTTL, threadLockRenew, threadLockWait, fn)
+}
 
 // recordThread puts a saved message into its conversation (#2217), queueing
 // for the account's lock. A failure leaves the mail as it is, outside its
@@ -55,8 +68,7 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	defer cancel()
 	var err error
 	if o.cfg.Locker != nil {
-		err = locks.WithLockWaiting(ctx, o.cfg.Locker, locks.ThreadsKey(user),
-			owner, threadLockTTL, threadLockRenew, threadLockWait, rec)
+		err = withThreadLock(ctx, o.cfg.Locker, user, owner, rec)
 	} else {
 		err = rec(ctx)
 	}
@@ -112,8 +124,7 @@ func (o *Ops) mergeNow(user, path string) {
 		}
 		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), o.cfg.Protocol+"-threads-swap"), threadLockTimeout)
 		defer cancel()
-		return locks.WithLockWaiting(ctx, o.cfg.Locker, locks.ThreadsKey(user), owner, threadLockTTL, threadLockRenew,
-			threadLockWait, func(context.Context) error { return fn() })
+		return withThreadLock(ctx, o.cfg.Locker, user, owner, func(context.Context) error { return fn() })
 	}
 	merge := func(context.Context) error { return threads.MergeStore(path, hold) }
 	var err error
