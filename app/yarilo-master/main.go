@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -26,10 +27,16 @@ import (
 )
 
 func main() {
-	logging.Setup("master")
+	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// realMain runs one command. check and ctl answer on stdout and log on
+// stderr: a script reads their answer, and a config warning in it would be a
+// line of JSON where a status field was expected.
+func realMain(args []string, stdout, stderr io.Writer) int {
 	cmd := "run"
-	if len(os.Args) > 1 {
-		cmd = os.Args[1]
+	if len(args) > 0 {
+		cmd = args[0]
 	}
 	cfgPath := os.Getenv("CONFIG")
 	if cfgPath == "" {
@@ -37,15 +44,24 @@ func main() {
 	}
 	switch cmd {
 	case "run":
-		os.Exit(run(cfgPath))
+		logging.Setup("master")
+		return run(cfgPath)
 	case "check":
-		os.Exit(check(cfgPath))
+		logTo(stderr)
+		return check(cfgPath, stdout, stderr)
 	case "ctl":
-		os.Exit(ctl(cfgPath, os.Args[2:]))
+		logTo(stderr)
+		return ctl(cfgPath, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(os.Stderr, "usage: yarilo-master [run | check | ctl <command>]\n")
-		os.Exit(2)
+		_, _ = fmt.Fprintf(stderr, "usage: yarilo-master [run | check | ctl <command>]\n")
+		return 2
 	}
+}
+
+func logTo(w io.Writer) {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{
+		Level: logging.ParseLevel(os.Getenv("LOG_LEVEL")),
+	})).With("service", "master"))
 }
 
 func plan(cfgPath string) (*master.Plan, *config.Config, error) {
@@ -57,29 +73,29 @@ func plan(cfgPath string) (*master.Plan, *config.Config, error) {
 	return p, cfg, err
 }
 
-func check(cfgPath string) int {
+func check(cfgPath string, stdout, stderr io.Writer) int {
 	if _, _, err := plan(cfgPath); err != nil {
-		fmt.Fprintf(os.Stderr, "yarilo-master: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "yarilo-master: %v\n", err)
 		return 1
 	}
-	fmt.Println("yarilo-master: configuration OK")
+	_, _ = fmt.Fprintln(stdout, "yarilo-master: configuration OK")
 	return 0
 }
 
-func ctl(cfgPath string, args []string) int {
+func ctl(cfgPath string, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: yarilo-master ctl status | stop|start|restart <name>… | reopen\n")
+		_, _ = fmt.Fprintf(stderr, "usage: yarilo-master ctl status [name…] | stop|start|restart <name>… | reopen\n")
 		return 2
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "yarilo-master: load %s: %v\n", cfgPath, err)
+		_, _ = fmt.Fprintf(stderr, "yarilo-master: load %s: %v\n", cfgPath, err)
 		return 1
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	if err := master.Ctl(ctx, master.ControlSocket(cfg.Master.RunDir), args, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "yarilo-master: %v\n", err)
+	if err := master.Ctl(ctx, master.ControlSocket(cfg.Master.RunDir), args, stdout); err != nil {
+		_, _ = fmt.Fprintf(stderr, "yarilo-master: %v\n", err)
 		return 1
 	}
 	return 0
