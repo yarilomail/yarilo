@@ -346,6 +346,8 @@ func (u *userIndex) readBase(fs *folderState) error {
 	// The identity of the base this read parsed, not of whatever is at the
 	// path now: a later reload compares against it.
 	fs.baseMod, fs.baseIdent = img.mod, img.ident
+	fs.baseFrom = "open"
+	fs.countersChecked = false
 	// Unpaired here is only what staleWith lets through: it replays whole.
 	from := int64(0)
 	if off, paired := replayStart(fs.lineage, lg.lineage()); paired {
@@ -1059,6 +1061,8 @@ func (fs *folderState) flush() error {
 		fs.mergeGUIDLookup(prev, next, fs.logSize)
 	}
 	fs.lineage = next
+	fs.baseFrom = "flush"
+	fs.countersChecked = false
 	fs.flushes++
 	// Track base mtime+identity so the reload fast path fires after this flush.
 	if st, _ := os.Stat(fs.indexPath); st != nil {
@@ -1093,6 +1097,11 @@ func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folder
 		if err := fs.missingBase(fs.reload()); err != nil {
 			return err
 		}
+		if site != lockSiteRefresh {
+			if err := fs.verifyBaseLocked(site); err != nil {
+				return err
+			}
+		}
 		// A write may change any record: the writer's chunks are all loaded.
 		// A delivery and the header's own changes read none (INDEX-MEMORY.md
 		// §4): the deferred records wait for the next writer that does.
@@ -1100,6 +1109,7 @@ func (u *userIndex) withFolderSite(folderID uint64, site string, fn func(*folder
 			if err := fs.loadWriterRecords(); err != nil {
 				return err
 			}
+			fs.verifyCountersLocked(site)
 		}
 		return fn(fs)
 	})
@@ -1297,6 +1307,8 @@ func (fs *folderState) reloadOnceLocked() error {
 				fs.lineage = h
 				fs.baseMod = newBaseMod
 				fs.baseIdent = baseStat
+				fs.baseFrom = "adopt"
+				fs.countersChecked = false
 				fs.logSize = 0
 				// The records are the ones we hold -- that is what the digest
 				// proved -- but the extension HEADERS are not covered by it,
@@ -1328,6 +1340,8 @@ func (fs *folderState) reloadOnceLocked() error {
 		fs.baseMod = newBaseMod
 		fs.baseIdent = baseStat
 		fs.lineage = readLineage(mf)
+		fs.baseFrom = "reload"
+		fs.countersChecked = false
 		// Where to resume in the log the base did not fully absorb: without the
 		// pairing this restarts from zero, relying on idempotence nobody declared.
 		fs.logSize = 0

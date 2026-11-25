@@ -672,6 +672,13 @@ type folderState struct {
 	// baseIdent is compared by inode+device: coarse mtime hides a same-tick
 	// replace, and reload()'s fast path would trust a stale snapshot.
 	baseIdent os.FileInfo
+	// baseFrom is how this state took its base (open, reload, adopt, flush,
+	// fresh): the label a stale base is counted under.
+	baseFrom string
+	// countersChecked says the header was held to the records once since the
+	// state took its base: later writes move both by increments and are not
+	// counted again.
+	countersChecked bool
 
 	// logFD stays open so an append costs one write(2). Callers must
 	// closeFDs() before anything that replaces the file on disk.
