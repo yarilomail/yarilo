@@ -90,6 +90,7 @@ type Supervisor struct {
 
 	ctx      context.Context
 	cancel   context.CancelFunc
+	runMu    sync.Mutex // orders addLoop against Stop's cancel
 	wg       sync.WaitGroup
 	stopOnce sync.Once
 }
@@ -125,6 +126,8 @@ func New(plan *Plan, opts Options) (*Supervisor, error) {
 		opts.Timings = DefaultTimings
 	}
 	s := &Supervisor{plan: plan, opts: opts, log: opts.Logger, m: newMetrics(opts.Registerer), byNm: map[string]*proc{}}
+	// Made here, not in Run: a Stop that comes before Run must still stop it.
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if err := s.prepareRunDir(); err != nil {
 		return nil, err
 	}
@@ -200,10 +203,11 @@ func takeLock(path string) (*os.File, error) {
 // Run stops what a dead supervisor left running, starts the components in
 // order, and supervises them until Stop.
 func (s *Supervisor) Run() {
-	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.stopSurvivors()
 	for _, p := range s.procs {
-		s.wg.Add(1)
+		if !s.addLoop() {
+			return
+		}
 		go p.loop()
 		select {
 		case <-p.firstUp:
@@ -211,6 +215,18 @@ func (s *Supervisor) Run() {
 			return
 		}
 	}
+}
+
+// addLoop counts one more component loop, unless the supervisor is stopping:
+// Stop waits for every loop it counted, and none starts after it began.
+func (s *Supervisor) addLoop() bool {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if s.ctx.Err() != nil {
+		return false
+	}
+	s.wg.Add(1)
+	return true
 }
 
 // stopSurvivors stops a component a previous supervisor left behind, found by
@@ -298,10 +314,15 @@ func (p *proc) loop() {
 				continue
 			}
 		}
+		if p.s.ctx.Err() != nil {
+			return
+		}
+		p.drainKick() // a kick from before this start is not a reason to skip the next wait
 		ran, how, err := p.runOnce()
 		if p.s.ctx.Err() != nil {
 			return
 		}
+		p.drainKick() // a start asked for while it ran is no reason to skip the wait now
 		if err != nil {
 			how = "exit"
 			p.s.log.Error("master: component could not be started", "component", p.c.Name, "err", err)
@@ -347,6 +368,13 @@ func (p *proc) nextDelay(ran time.Duration) time.Duration {
 		return t.MaxDelay
 	default:
 		return p.delay * 2
+	}
+}
+
+func (p *proc) drainKick() {
+	select {
+	case <-p.kick:
+	default:
 	}
 }
 
@@ -407,6 +435,11 @@ func (p *proc) runOnce() (time.Duration, string, error) {
 		p.cmd, p.pid, p.started, p.exited, p.why = cmd, pid, started, exited, ""
 		p.state = StateStarting
 	})
+	// Stop may have looked for this process before it existed, while the
+	// pre-start check ran; then it is stopped here, and Stop waits for it.
+	if p.s.ctx.Err() != nil {
+		go p.terminate()
+	}
 	_ = os.WriteFile(p.pidFile(), []byte(strconv.Itoa(pid)+"\n"), 0o644)
 	p.s.m.up.WithLabelValues(p.c.Name).Set(1)
 	p.s.m.started.WithLabelValues(p.c.Name).Set(float64(started.Unix()))
@@ -465,7 +498,8 @@ func exitReason(err error) (how, why string) {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			return "signal", "killed by " + ws.Signal().String()
+			sig := ws.Signal()
+			return "signal", fmt.Sprintf("killed by signal %d (%s)", int(sig), sig)
 		}
 		return "exit", fmt.Sprintf("exited with status %d", ee.ExitCode())
 	}
@@ -498,9 +532,9 @@ func (p *proc) terminate() {
 // Stop stops every component in reverse order and closes the logs.
 func (s *Supervisor) Stop() {
 	s.stopOnce.Do(func() {
-		if s.cancel != nil {
-			s.cancel()
-		}
+		s.runMu.Lock()
+		s.cancel()
+		s.runMu.Unlock()
 		for i := len(s.procs) - 1; i >= 0; i-- {
 			s.procs[i].terminate()
 		}

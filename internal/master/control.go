@@ -65,8 +65,22 @@ func (s *Supervisor) answer(conn net.Conn, allowedUID uint32) {
 	var cerr error
 	switch cmd {
 	case "status":
-		for _, st := range s.Status() {
+		// With names, only those; and the answer says whether each of them
+		// runs, for `service yarilo status <name>` to exit by it.
+		sts, serr := s.statusOf(names)
+		if serr != nil {
+			cerr = serr
+			break
+		}
+		down := []string{}
+		for _, st := range sts {
 			_, _ = fmt.Fprintln(conn, FormatStatus(st))
+			if st.State != StateRunning {
+				down = append(down, st.Name)
+			}
+		}
+		if len(down) > 0 {
+			cerr = fmt.Errorf("not running: %s", strings.Join(down, " "))
 		}
 	case "stop":
 		cerr = s.StopComponents(names...)
@@ -84,6 +98,26 @@ func (s *Supervisor) answer(conn net.Conn, allowedUID uint32) {
 		return
 	}
 	_, _ = fmt.Fprintf(conn, "OK\n")
+}
+
+func (s *Supervisor) statusOf(names []string) ([]Status, error) {
+	all := s.Status()
+	if len(names) == 0 {
+		return all, nil
+	}
+	by := map[string]Status{}
+	for _, st := range all {
+		by[st.Name] = st
+	}
+	out := make([]Status, 0, len(names))
+	for _, n := range names {
+		st, ok := by[n]
+		if !ok {
+			return nil, fmt.Errorf("no component %q", n)
+		}
+		out = append(out, st)
+	}
+	return out, nil
 }
 
 // FormatStatus is one tab-separated status line: name, state, pid or -,
@@ -130,9 +164,6 @@ func Ctl(ctx context.Context, path string, args []string, out io.Writer) error {
 	}
 	if err := sc.Err(); err != nil {
 		return err
-	}
-	if args[0] == "status" {
-		return nil
 	}
 	return errors.New("the supervisor closed the connection without an answer")
 }

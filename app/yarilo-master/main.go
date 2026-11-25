@@ -127,8 +127,13 @@ func run(cfgPath string) int {
 			MutexFraction: cfg.Telemetry.PprofMutexProfileFraction,
 		},
 	})
+	// Fatal, as for every component (#2419): the restart counts live here,
+	// and a supervisor nobody can read is blind.
 	if err := tel.Start(context.Background()); err != nil {
-		slog.Error("master: telemetry listen failed", "err", err)
+		slog.Error("master: telemetry listen failed; nothing started", "addr", p.Telemetry, "err", err)
+		sup.Stop()
+		sup.CloseOwnLog()
+		return 1
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

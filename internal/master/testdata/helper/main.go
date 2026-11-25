@@ -20,6 +20,11 @@ import (
 )
 
 func main() {
+	// Before the start line, so a test that waits for the line knows SIGTERM
+	// is already ignored.
+	if os.Getenv("HELPER_MODE") == "ignore-term" {
+		signal.Ignore(syscall.SIGTERM)
+	}
 	if f := os.Getenv("HELPER_STARTS"); f != "" {
 		fh, err := os.OpenFile(f, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 		if err == nil {
@@ -43,8 +48,6 @@ func main() {
 	switch os.Getenv("HELPER_MODE") {
 	case "crash":
 		os.Exit(3)
-	case "ignore-term":
-		signal.Ignore(syscall.SIGTERM)
 	}
 	if sock := os.Getenv("HELPER_LISTEN"); sock != "" {
 		ms, _ := strconv.Atoi(os.Getenv("HELPER_DELAY_MS"))

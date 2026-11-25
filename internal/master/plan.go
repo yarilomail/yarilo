@@ -153,6 +153,16 @@ func (c Checker) Build(cfg *config.Config, configPath string) (*Plan, error) {
 	if err := c.trustedDir(m.LibexecDir, "master_libexec_dir"); err != nil {
 		errs = append(errs, err)
 	}
+	// The lock, the pid files a new supervisor stops processes by, and the
+	// control socket live here. A missing one is made by the supervisor, as
+	// root with mode 0755.
+	if _, err := os.Lstat(m.RunDir); err == nil {
+		if err := c.trustedDir(m.RunDir, "master_run_dir"); err != nil {
+			errs = append(errs, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		fail("master_run_dir: %v", err)
+	}
 	if len(m.Components) == 0 {
 		fail("master_components is empty")
 	}

@@ -200,6 +200,9 @@ func TestAWorkingComponentRestartsAtOnceAndAYoungOneBacksOff(t *testing.T) {
 	if back := ts[1].Sub(killed); back > 150*time.Millisecond {
 		t.Errorf("imap, which had worked, came back %v after the kill; want at once", back)
 	}
+	if why := r.status("imap").Why; why != "" && why != "killed by signal 9 (killed)" {
+		t.Errorf("the kill reads %q", why)
+	}
 	if got := testutil.ToFloat64(r.sup.m.restarts.WithLabelValues("imap", "signal")); got != 1 {
 		t.Errorf("restarts{imap,signal} = %v, want 1", got)
 	}
@@ -253,6 +256,7 @@ func TestAComponentThatIgnoresTermIsKilledAfterTheTimeout(t *testing.T) {
 	r := newRig(t, func(r *rig) []Component { return []Component{r.comp("imap", "HELPER_MODE=ignore-term")} })
 	r.plan.StopTimeout = 300 * time.Millisecond
 	go r.sup.Run()
+	r.waitStarts("imap", 1, 3*time.Second)
 	st := r.waitState("imap", StateRunning, 3*time.Second)
 	began := time.Now()
 	r.sup.Stop()
@@ -332,6 +336,19 @@ func TestTheControlSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.waitState("pop3", StateStopped, 3*time.Second)
+	// status of named components answers for those alone, and fails when one
+	// of them is not running.
+	out.Reset()
+	if err := Ctl(ctx, sock, []string{"status", "imap"}, &out); err != nil || !strings.HasPrefix(out.String(), "imap\t") || strings.Count(out.String(), "\n") != 1 {
+		t.Errorf("status imap = %q, %v; want one running line and success", out.String(), err)
+	}
+	out.Reset()
+	if err := Ctl(ctx, sock, []string{"status", "pop3"}, &out); err == nil || !strings.Contains(err.Error(), "not running: pop3") || !strings.HasPrefix(out.String(), "pop3\tstopped") {
+		t.Errorf("status pop3 while stopped = %q, %v; want its line and a failure", out.String(), err)
+	}
+	if err := Ctl(ctx, sock, []string{"status", "nope"}, io.Discard); err == nil {
+		t.Error("status of an unknown component succeeded")
+	}
 	if err := Ctl(ctx, sock, []string{"start", "pop3"}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
@@ -694,3 +711,89 @@ func (b *safeBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 func (b *safeBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buf.String() }
+
+// A Stop that comes before Run stops it: nothing starts after.
+func TestAStopBeforeRunStartsNothing(t *testing.T) {
+	r := newRig(t, func(r *rig) []Component { return []Component{r.comp("imap")} })
+	r.sup.Stop()
+	done := make(chan struct{})
+	go func() { r.sup.Run(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run after Stop did not return")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := len(r.startTimes("imap")); n != 0 {
+		t.Errorf("imap started %d times after the stop", n)
+	}
+}
+
+// A component that is in its pre-start check when the stop comes is not left
+// running, and the stop ends.
+func TestAStopDuringThePreStartCheckLeavesNothingRunning(t *testing.T) {
+	inCheck, release := make(chan struct{}), make(chan struct{})
+	r := newRig(t, func(r *rig) []Component { return []Component{r.comp("imap")} },
+		func(o *Options) {
+			o.PreStart = func(Component) error { close(inCheck); <-release; return nil }
+		})
+	go r.sup.Run()
+	<-inCheck
+	stopped := make(chan struct{})
+	go func() { r.sup.Stop(); close(stopped) }()
+	time.Sleep(100 * time.Millisecond) // Stop has looked for a process and found none
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stop never ended")
+	}
+	if st := r.status("imap"); st.PID != 0 {
+		t.Errorf("imap left running as pid %d", st.PID)
+	}
+}
+
+// A start or restart leaves no kick behind that would cut the next wait
+// after a crash short.
+func TestAKickDoesNotOutliveTheStartItAskedFor(t *testing.T) {
+	r := newRig(t, func(r *rig) []Component { return []Component{r.comp("imap")} })
+	go r.sup.Run()
+	r.waitStarts("imap", 1, 3*time.Second)
+	st := r.waitState("imap", StateRunning, 3*time.Second)
+	if err := r.sup.StartComponents("imap"); err != nil { // running already: the kick is left over
+		t.Fatal(err)
+	}
+	killed := time.Now()
+	if err := syscall.Kill(st.PID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	ts := r.waitStarts("imap", 2, 3*time.Second)
+	if d := ts[1].Sub(killed); d < fast.FirstDelay-20*time.Millisecond {
+		t.Errorf("a young crash came back after %v; a leftover kick skipped the %v wait", d, fast.FirstDelay)
+	}
+}
+
+func TestAWritableRunDirectoryStopsTheStart(t *testing.T) {
+	p := newPlanRig(t, "imap")
+	if err := os.Mkdir(p.cfg.Master.RunDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p.cfg.Master.RunDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.chk.Build(p.cfg, ""); err == nil || !strings.Contains(err.Error(), "master_run_dir") {
+		t.Errorf("a world-writable run directory was accepted: %v", err)
+	}
+}
+
+func TestAKilledComponentIsNamedByItsSignal(t *testing.T) {
+	cmd := exec.Command(helperBin) //nolint:noctx // killed right here
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Process.Kill()
+	how, why := exitReason(cmd.Wait())
+	if how != "signal" || why != "killed by signal 9 (killed)" {
+		t.Errorf("exitReason = %s, %q", how, why)
+	}
+}
