@@ -387,9 +387,13 @@ func TestAWaitOpensNoConnectionToTheStore(t *testing.T) {
 }
 
 // freeLockCommands is what one acquire and one release of a free lock ask of
-// the store: join the line, try, leave the line, release, and announce the
-// release. Pinned, so a change that adds a round trip is seen.
-const freeLockCommands = 5
+// the store: join the line and take the lock in one script, release and
+// announce in another. Pinned, so a change that adds a round trip is seen.
+const freeLockCommands = 2
+
+// waitedLockCommands is what a contender that had to wait asks of the store:
+// join and find it held, take it when woken, release.
+const waitedLockCommands = 3
 
 func TestAFreeLockCostsAKnownNumberOfStoreCommands(t *testing.T) {
 	mr := miniredis.RunT(t)
@@ -424,6 +428,101 @@ func TestAFreeLockCostsAKnownNumberOfStoreCommands(t *testing.T) {
 	if got != freeLockCommands {
 		t.Errorf("a free lock took %d store commands, want %d", got, freeLockCommands)
 	}
+}
+
+func commandsSince(sc *storeCounter, was map[string]int) (int, map[string]int) {
+	diff := map[string]int{}
+	n := 0
+	for k, v := range sc.snapshot() {
+		if d := v - was[k]; d != 0 {
+			diff[k] = d
+			n += d
+		}
+	}
+	return n, diff
+}
+
+func TestAWaitedLockCostsAKnownNumberOfStoreCommands(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rs := redisReplicas(t, mr, 2)
+	ctx := waitCtx(t)
+
+	waited := func(name string) {
+		held, err := Acquire(ctx, rs[0].client, wakeResource, Owner("u@x.com", "holder"), 30*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			lk, aerr := Acquire(ctx, rs[1].client, wakeResource, Owner("u@x.com", name), 30*time.Second)
+			if aerr == nil {
+				aerr = rs[1].client.Unlock(ctx, lk.ID)
+			}
+			done <- aerr
+		}()
+		inLine(t, mr, 1)
+		if err := rs[0].client.Unlock(ctx, held.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	waited("warm") // loads the scripts
+	was := rs[1].store.snapshot()
+	waited("waiter")
+	got, diff := commandsSince(rs[1].store, was)
+	t.Logf("store commands of one waited lock: %v", diff)
+	if got != waitedLockCommands {
+		t.Errorf("a waited lock took %d store commands, want %d", got, waitedLockCommands)
+	}
+}
+
+// Readers queued behind a writer share the lock once it goes: the first
+// reader's grant hands the turn to the next at once, not at its release.
+func TestQueuedReadersShareTheLockWhenTheWriterGoes(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rs := redisReplicas(t, mr, 2)
+	ctx := waitCtx(t)
+
+	held, err := Acquire(ctx, rs[0].client, wakeResource, Owner("u@x.com", "writer"), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	granted := make(chan time.Time, 2)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		r := rs[i]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lk, aerr := AcquireShared(ctx, r.client, wakeResource, Owner("u@x.com", fmt.Sprintf("r%d", i)), 30*time.Second)
+			if aerr != nil {
+				t.Errorf("reader %d: %v", i, aerr)
+				return
+			}
+			granted <- time.Now()
+			<-release
+			_ = r.client.Unlock(ctx, lk.ID)
+		}()
+		inLine(t, mr, i+1)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if err := rs[0].client.Unlock(ctx, held.ID); err != nil {
+		t.Fatal(err)
+	}
+	first := <-granted
+	select {
+	case second := <-granted:
+		if d := second.Sub(first); d >= lostWakeBackstop {
+			t.Errorf("the second reader came %v after the first; the backstop, not the hand-off, let it in", d)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("the second reader waited for the first to finish")
+	}
+	close(release)
+	wg.Wait()
 }
 
 // freezingProxy stands between a client and the store. freeze makes every

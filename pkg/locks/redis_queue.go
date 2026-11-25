@@ -3,6 +3,7 @@ package locks
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -52,32 +53,53 @@ func (b *RedisBackend) AtFront(ctx context.Context, resource, ticket string) (bo
 	return front[0] == ticket, nil
 }
 
-// dequeueScript removes a ticket and names whoever now stands first, so a
-// contender that gave up hands the turn on instead of leaving it to the timer.
+// dequeueScript takes a ticket out of the line and hands the turn to whoever
+// now stands first, so a contender that gave up does not leave it to the
+// timer.
 //
 //	KEYS[1] = queue key
 //	ARGV[1] = ticket
-var dequeueScript = redis.NewScript(`
-local removed = redis.call("ZREM", KEYS[1], ARGV[1])
-if removed == 0 then return "" end
-local next_up = redis.call("ZRANGE", KEYS[1], 0, 0)
-return next_up[1] or ""
+//	ARGV[2] = the resource's release channel
+var dequeueScript = redis.NewScript(luaParseValue + `
+leaveLine(KEYS[1], ARGV[1], ARGV[2])
+return 1
 `)
 
 // Dequeue implements WaitQueue.
 func (b *RedisBackend) Dequeue(ctx context.Context, resource, ticket string) error {
-	res, err := dequeueScript.Run(ctx, b.rdb, []string{b.queueKey(resource)}, ticket).Result()
-	if err != nil {
+	if err := dequeueScript.Run(ctx, b.rdb, []string{b.queueKey(resource)}, ticket, b.wakeChannel(resource)).Err(); err != nil {
 		return fmt.Errorf("locks/redis: dequeue: %w", err)
 	}
-	nextUp, _ := res.(string)
-	if nextUp == "" {
-		return nil
-	}
-	if err := b.rdb.Publish(ctx, b.wakeChannel(resource), nextUp).Err(); err != nil {
-		return fmt.Errorf("locks/redis: hand the turn on: %w", err)
-	}
 	return nil
+}
+
+// JoinAndTry joins the line and makes the first try in one round trip.
+func (b *RedisBackend) JoinAndTry(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration, shared bool) (int, string, Holder, error) {
+	if resource == "" || owner == "" {
+		return 0, "", Holder{}, fmt.Errorf("locks/redis: resource and owner must be non-empty")
+	}
+	id, err := randID()
+	if err != nil {
+		return 0, "", Holder{}, fmt.Errorf("locks/redis: generate id: %w", err)
+	}
+	script, kind := joinAcquireScript, "x"
+	if shared {
+		script, kind = joinAcquireSharedScript, "s"
+	}
+	res, err := script.Run(ctx, b.rdb,
+		[]string{b.resKey(resource), b.lockKey(id), b.sharedKey(resource), b.queueKey(resource)},
+		id, lockValue(resource, owner, kind, site), ttl.Milliseconds(), b.keyPrefix, ticket,
+		b.wakeChannel(resource), ticketTTL.Milliseconds(),
+	).Result()
+	if err != nil {
+		return 0, "", Holder{}, fmt.Errorf("locks/redis: join and try: %w", err)
+	}
+	if arr, ok := res.([]interface{}); ok && len(arr) == 2 && arr[0] == "QUEUED" {
+		rank, _ := arr[1].(int64)
+		return int(rank), "", Holder{}, nil
+	}
+	id, h, err := parseAcquireResult(res, id)
+	return 0, id, h, err
 }
 
 // wakeChannel is the release channel for a resource, kept apart from the event
