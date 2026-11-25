@@ -65,7 +65,10 @@ func TestConcurrentRecordsOfOneAccountAreAllThreaded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			o := &Ops{cfg: Config{Protocol: "test", Threads: recorder, Locker: lk}, user: user}
+			// A session of its own, as each IMAP session holds: LockID fills
+			// its field on first use.
+			sess := &mailbox.UserInfo{Username: user.Username, Home: home, SessionID: fmt.Sprint("s", s)}
+			o := &Ops{cfg: Config{Protocol: "test", Threads: recorder, Locker: lk}, user: sess}
 			<-start
 			for i := range each {
 				raw := []byte(fmt.Sprintf("Message-ID: <%d.%d@x>\r\nSubject: s%d\r\n\r\n", s, i, s))
