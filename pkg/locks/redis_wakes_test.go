@@ -524,3 +524,117 @@ func TestQueuedReadersShareTheLockWhenTheWriterGoes(t *testing.T) {
 	close(release)
 	wg.Wait()
 }
+
+// freezingProxy stands between a client and the store. freeze makes every
+// connection open at that moment stop carrying data both ways while staying
+// open: the peer that vanished without a word. Connections made after it pass.
+type freezingProxy struct {
+	ln     net.Listener
+	target string
+	mu     sync.Mutex
+	conns  []*proxied
+}
+
+type proxied struct{ frozen atomic.Bool }
+
+func newFreezingProxy(t *testing.T, target string) *freezingProxy {
+	t.Helper()
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &freezingProxy{ln: ln, target: target}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go p.serve(t, c)
+		}
+	}()
+	return p
+}
+
+func (p *freezingProxy) serve(t *testing.T, c net.Conn) {
+	defer func() { _ = c.Close() }()
+	var d net.Dialer
+	up, err := d.DialContext(t.Context(), "tcp", p.target)
+	if err != nil {
+		return
+	}
+	defer func() { _ = up.Close() }()
+	pc := &proxied{}
+	p.mu.Lock()
+	p.conns = append(p.conns, pc)
+	p.mu.Unlock()
+	pipe := func(dst, src net.Conn) {
+		buf := make([]byte, 32<<10)
+		for {
+			n, rerr := src.Read(buf)
+			if n > 0 && !pc.frozen.Load() {
+				if _, werr := dst.Write(buf[:n]); werr != nil {
+					return
+				}
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}
+	go pipe(up, c)
+	pipe(c, up)
+}
+
+func (p *freezingProxy) freeze() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, c := range p.conns {
+		c.frozen.Store(true)
+	}
+}
+
+func (p *freezingProxy) addr() string { return p.ln.Addr().String() }
+
+// A subscription whose connection stops carrying data without closing is
+// found by its unanswered ping and taken again on a fresh connection, and
+// every waiter is woken, with no release published.
+func TestASilentlyDeadSubscriptionIsTakenAgain(t *testing.T) {
+	mr := miniredis.RunT(t)
+	proxy := newFreezingProxy(t, mr.Addr())
+	rdb := redis.NewClient(&redis.Options{Addr: proxy.addr()})
+	b := NewRedisBackend(rdb)
+	b.wakes.ping = 200 * time.Millisecond
+	t.Cleanup(func() { _ = b.Close() })
+	ctx := t.Context()
+
+	wakes, stop, err := b.Wakes(ctx, wakeResource, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+
+	proxy.freeze()
+	frozeAt := time.Now()
+	select {
+	case <-wakes:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiter was never woken; the dead subscription was kept")
+	}
+	// Silence, the ping, no answer: two periods, and the fresh subscription.
+	if took := time.Since(frozeAt); took > 3*b.wakes.ping+time.Second {
+		t.Errorf("found the dead subscription after %v, want within about two ping periods", took)
+	}
+	if n := counterNow(t, b.wakes.resubscribed); n != 1 {
+		t.Errorf("resubscribed = %v, want 1", n)
+	}
+	if err := rdb.Publish(ctx, b.wakeChannel(wakeResource), "t1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-wakes:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a release on the fresh subscription reached nobody")
+	}
+}
