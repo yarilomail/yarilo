@@ -255,7 +255,7 @@ func New(cfg *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("backend: sieve duplicate dict: %w", err)
 	}
-	if cfg.Sieve.Enabled {
+	if sieveRuns(cfg) {
 		sieveEngine = sieve.New(cfg.Sieve, locker, sieveDict, dupDict)
 	}
 
@@ -1396,3 +1396,11 @@ func DeploymentBase(r *mailbox.Resolver) *mailbox.UserInfo {
 // SetWalkBudget bounds what the whole-folder walks of this process hold
 // together, from storage.mail_sync_walk_memory (#2661).
 func SetWalkBudget(sc config.StorageConfig) { mailboxbase.SetWalkBudget(sc.MailSyncWalkMemory) }
+
+// sieveRuns says whether this process executes Sieve: delivery (LMTP) and
+// IMAPSIEVE (IMAP) do, POP3 and ManageSieve never run a script. A process that
+// does not would only read the global scripts the chart mounts where they run,
+// and report each as missing.
+func sieveRuns(cfg *config.Config) bool {
+	return cfg.Sieve.Enabled && (cfg.Services.IMAP.Active() || cfg.Services.LMTP.Active())
+}

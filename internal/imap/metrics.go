@@ -3,6 +3,7 @@ package imap
 import (
 	"errors"
 	"io/fs"
+	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -104,4 +105,26 @@ func unreadableReason(err error) string {
 		return reasonGone
 	}
 	return reasonUnreadable
+}
+
+// unreadableLevel is the log level of one unreadable message: a message
+// expunged under the read is Debug, as the reference neither fails nor logs it
+// (FETCH sends NIL, SEARCH marks the result lossy, SORT puts it first); a
+// message that is there and cannot be read is WARN.
+func unreadableLevel(reason string) slog.Level {
+	if reason == reasonGone {
+		return slog.LevelDebug
+	}
+	return slog.LevelWarn
+}
+
+// unreadableLevelOf is unreadableLevel for a command's counts: Debug only when
+// every message it could not read was expunged under it.
+func unreadableLevelOf(byReason map[string]int) slog.Level {
+	for reason, n := range byReason {
+		if n > 0 && reason != reasonGone {
+			return slog.LevelWarn
+		}
+	}
+	return slog.LevelDebug
 }

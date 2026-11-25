@@ -1,6 +1,7 @@
 package mailboxbase
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -413,7 +414,7 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 	for _, d := range list {
 		switch refs.fate(d.name) {
 		case bodyNameless:
-			slog.Warn("mailbox/expunge: the record named no file; its body, if any, stays",
+			slog.Log(context.Background(), namelessLevel(d.err), "mailbox/expunge: the record named no file; its body, if any, stays",
 				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "err", d.err)
 		case bodyShared:
 			slog.Warn("mailbox/expunge: the body stays, another record still names it",
@@ -444,7 +445,7 @@ func (b *Box) expungeBodyFirst(f *mailbox.Folder, folder string, list []doomed, 
 	for _, d := range list {
 		switch refs.fate(d.name) {
 		case bodyNameless:
-			slog.Warn("mailbox/expunge: the record named no file; its body, if any, stays",
+			slog.Log(context.Background(), namelessLevel(d.err), "mailbox/expunge: the record named no file; its body, if any, stays",
 				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "err", d.err)
 		case bodyShared:
 			slog.Warn("mailbox/expunge: the body stays, another record still names it",
@@ -548,4 +549,15 @@ func (b *Box) RemoveHeld(folder, name string) error {
 		return r.RemoveHeld(folder, name)
 	}
 	return b.store.Remove(folder, name)
+}
+
+// namelessLevel is the level of a record expunged with no file: a file another
+// session already removed is not an error, as the reference's maildir expunge
+// takes ENOENT for done and drops the record silently. Any other lookup error
+// stays WARN.
+func namelessLevel(err error) slog.Level {
+	if errors.Is(err, fs.ErrNotExist) {
+		return slog.LevelDebug
+	}
+	return slog.LevelWarn
 }

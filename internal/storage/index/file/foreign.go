@@ -204,7 +204,7 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	if hdr.UIDValidity == 0 {
 		return false, fmt.Errorf("fileindex/convert: folder %q: their index carries no uid_validity", fs.folder)
 	}
-	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID()); err != nil {
+	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID(), false); err != nil {
 		return false, err
 	}
 	u.rememberIdentity(fs.folder, hdr.UIDValidity)
@@ -384,7 +384,7 @@ func (u *userIndex) convertForeignSdboxFolder(fs *folderState, dir string) (bool
 	if hdr.UIDValidity == 0 {
 		return false, fmt.Errorf("fileindex/convert: folder %q: their index carries no uid_validity", fs.folder)
 	}
-	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID()); err != nil {
+	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID(), false); err != nil {
 		return false, err
 	}
 	// Recorded before their index is unlinked below, or it exists nowhere and a
@@ -478,19 +478,21 @@ func (u *userIndex) freshUIDValidity(requested uint32) uint32 {
 // not get the same answer -- a folder the record knows keeps its identity, or
 // every client resynchronises (#1611). Recorded on the way out for the next
 // loss to read; an unwritable record is logged and not fatal.
-func (u *userIndex) identityFor(folder string, requested uint32) uint32 {
+// identityFor also says whether the record knew the folder: one it knew had an
+// index before.
+func (u *userIndex) identityFor(folder string, requested uint32) (uint32, bool) {
 	if u.folders != nil {
 		if v, ok, err := u.folders.UIDValidity(folder); err != nil {
 			slog.Warn("fileindex: folder identity record unreadable", "user", u.username, "folder", folder, "err", err)
 		} else if ok {
 			slog.Info("fileindex: folder index was missing; its identity came from the record",
 				"user", u.username, "folder", folder, "uidvalidity", v)
-			return v
+			return v, true
 		}
 	}
 	v := u.freshUIDValidity(requested)
 	u.rememberIdentity(folder, v)
-	return v
+	return v, false
 }
 
 // rememberIdentity stores what a folder was created with.
