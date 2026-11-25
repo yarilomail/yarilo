@@ -3,7 +3,6 @@ package locks
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -87,46 +86,8 @@ func (b *RedisBackend) wakeChannel(resource string) string {
 	return b.chPrefix + "unlocked:" + resource
 }
 
-// Wakes implements WaitQueue. Every replica subscribes, so a release anywhere
-// reaches the contender waiting here.
+// Wakes implements WaitQueue. Every replica listens on its one shared
+// subscription, so a release anywhere reaches the contender waiting here.
 func (b *RedisBackend) Wakes(ctx context.Context, resource, ticket string) (<-chan struct{}, func(), error) {
-	ps := b.rdb.Subscribe(ctx, b.wakeChannel(resource))
-	if _, err := ps.Receive(ctx); err != nil {
-		_ = ps.Close()
-		return nil, nil, fmt.Errorf("locks/redis: wakes: %w", err)
-	}
-	// One slot: a hand-off names a ticket once, and a pending signal already
-	// says what a second would.
-	out := make(chan struct{}, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(out)
-		msgs := ps.Channel()
-		for {
-			select {
-			case <-done:
-				return
-			case msg, ok := <-msgs:
-				if !ok {
-					return
-				}
-				// Filtered here, not at the far end: dropping a message that
-				// names this ticket is the hand-off lost (#1809).
-				if msg.Payload != "" && msg.Payload != ticket {
-					continue
-				}
-				select {
-				case out <- struct{}{}:
-				default: // one pending signal is enough
-				}
-			}
-		}
-	}()
-	var once sync.Once
-	return out, func() {
-		once.Do(func() {
-			close(done)
-			_ = ps.Close()
-		})
-	}, nil
+	return b.wakes.wakes(ctx, resource, ticket)
 }

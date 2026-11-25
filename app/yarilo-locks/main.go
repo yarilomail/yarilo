@@ -157,7 +157,16 @@ func buildBackend(lcfg config.LocksServiceConfig, reg prometheus.Registerer) (lo
 			defer pcancel()
 			return rdb.Ping(pctx).Err() == nil
 		}
-		return locks.NewRedisBackend(rdb, opts2...), ready, nil
+		b := locks.NewRedisBackend(rdb, opts2...)
+		b.RegisterMetrics(reg)
+		// The release subscription is taken now, so a waiting acquire does not
+		// open it. Unreachable here, the first wait takes it instead.
+		sctx, scancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := b.ListenWakes(sctx); err != nil {
+			slog.Warn("release subscription not taken at start; the first wait takes it", "err", err)
+		}
+		scancel()
+		return b, ready, nil
 	default:
 		return nil, nil, fmt.Errorf("unknown locks_service.mode %q (want embedded | remote)", lcfg.Mode)
 	}
