@@ -863,14 +863,36 @@ kube exec "$authpod" -- sh -c \
 # deploy replaces the pods: an imaptest error that did not fail the arm is
 # named only in its protocol's log, and only until then.
 step "logs"
+# Every pod of the namespace, not only the backends: the lock service, the
+# directors and the login proxies say what the backends waited on.
 mkdir -p "$OUT/logs-$ARM"
-for po in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+for po in $(kube get pods --field-selector=status.phase=Running -o name | cut -d/ -f2); do
   for c in $(kube get pod "$po" -o jsonpath='{.spec.containers[*].name}'); do
     kube logs "$po" -c "$c" --timestamps > "$OUT/logs-$ARM/$c-$po.log" 2>&1 || true
     kube logs "$po" -c "$c" --timestamps --previous > "$OUT/logs-$ARM/$c-$po.previous.log" 2>/dev/null ||
       rm -f "$OUT/logs-$ARM/$c-$po.previous.log"
   done
 done
+
+# Every metrics page of every pod, whole: an arm deploys its pods fresh, so a
+# page read at its end is the arm's total, and a figure nobody listed in a
+# filter (a command's latency, a lock client's wait) is read from here after
+# the window instead of being lost with the next deploy. A port that is not a
+# telemetry one answers nothing and is skipped.
+step "metrics"
+mkdir -p "$OUT/metrics-$ARM"
+pages=0
+for po in $(kube get pods --field-selector=status.phase=Running -o name | cut -d/ -f2); do
+  ports=$(kube get pod "$po" -o jsonpath='{.spec.containers[*].ports[*].containerPort}' 2>/dev/null) || ports=
+  first=$(kube get pod "$po" -o jsonpath='{.spec.containers[0].name}' 2>/dev/null) || first=
+  for port in $ports; do
+    page=$(kube exec "$po" -c "$first" -- sh -c "wget -T 5 -qO- http://127.0.0.1:$port/metrics" 2>/dev/null) || continue
+    case "$page" in "# HELP"* | "# TYPE"*) ;; *) continue ;; esac
+    printf '%s\n' "$page" > "$OUT/metrics-$ARM/$po-$port.prom"
+    pages=$((pages + 1))
+  done
+done
+echo "-- metrics: $pages pages of every pod in metrics-$ARM/"
 
 # The index of every account, base and journals, no bodies: the next arm
 # empties the accounts, and a header correction names only the folder, so the

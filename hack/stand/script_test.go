@@ -1046,3 +1046,32 @@ func TestTheThreadRecordLineReadsADelta(t *testing.T) {
 		t.Errorf("got %q, want %q", out, want)
 	}
 }
+
+// Every arm keeps the logs of every pod and every metrics page whole, before
+// the next arm's deploy replaces them: the lock service's and the LMTP's pages
+// held what a window had to explain afterwards.
+func TestEveryArmKeepsEveryPodsLogsAndMetrics(t *testing.T) {
+	src := armSource(t)
+	logs := src[strings.Index(src, `step "logs"`):]
+	logs = logs[:strings.Index(logs, `step "metrics"`)]
+	if strings.Contains(logs, "component=backend") || !strings.Contains(logs, "status.phase=Running") {
+		t.Error("the logs step keeps only the backends")
+	}
+	i := strings.Index(src, `step "metrics"`)
+	if i < 0 {
+		t.Fatal("ab-arm.sh keeps no metrics pages")
+	}
+	if j := strings.Index(src, `message_inventory > "$OUT/messages-last-arm.txt"`); j < i {
+		t.Error("the metrics are kept after the arm's end")
+	}
+	block := src[i:]
+	block = block[:strings.Index(block, "\n\n")]
+	for _, want := range []string{"containerPort", "/metrics", "wget -T 5", "|| continue", `"$OUT/metrics-$ARM/$po-$port.prom"`} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the metrics step does not carry %q", want)
+		}
+	}
+	if strings.Contains(block, "grep -E") {
+		t.Error("the metrics step filters the pages")
+	}
+}
