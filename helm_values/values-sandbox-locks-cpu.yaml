@@ -4,6 +4,10 @@
 ## under imaptest at the chart's 50m request (#2591); this arm asks whether a
 ## starved scheduler share is the reason.
 ##
+## 250m, not more: the stand's one node has 4 CPUs and 3340m already
+## requested, and the rollout surges one lock pod, so two pods at 250m and the
+## surge (3990m) still schedule where 500m would leave them Pending.
+##
 ## Only components.locks.resources belongs here: ab-arm.sh refuses an arm if
 ## anything else appears. The memory figures repeat the chart's, so the arm
 ## differs in its CPU request alone.
@@ -11,7 +15,7 @@ components:
   locks:
     resources:
       requests:
-        cpu: 500m
+        cpu: 250m
         memory: 32Mi
       limits:
         memory: 128Mi
