@@ -48,7 +48,14 @@ VALUES="$REPO/helm_values"
 mkdir -p "$OUT"
 : > "$ROWS"
 
-TYPES="mdbox maildir sdbox"
+TYPES="${CRYPT_TYPES:-mdbox maildir sdbox}"
+# CRYPT_ONLY=load runs the keys, the rows under imaptest CRYPT_LOAD_ROUNDS
+# times on CRYPT_TYPES, and the way back to plaintext: a reproduction run for
+# a fault seen once under load, not the scenario set (#2700).
+ONLY="${CRYPT_ONLY:-}"
+LOAD_ROUNDS="${CRYPT_LOAD_ROUNDS:-1}"
+case "$ONLY" in "" | load) ;; *) echo "crypt-scenarios: CRYPT_ONLY is empty or load, not $ONLY" >&2; exit 2 ;; esac
+case "$LOAD_ROUNDS" in "" | *[!0-9]* | 0) echo "crypt-scenarios: CRYPT_LOAD_ROUNDS is a count, not $LOAD_ROUNDS" >&2; exit 2 ;; esac
 user_of() { case "$1" in mdbox) echo u45@d00001.test ;; maildir) echo u95@d00002.test ;; sdbox) echo u145@d00003.test ;; esac; }
 # The load users are the first of each imaptest range accept.sh runs.
 load_of() { case "$1" in mdbox) echo "u3@d00001.test d00001.test 3-20" ;; maildir) echo "u53@d00002.test d00002.test 53-70" ;; sdbox) echo "u103@d00003.test d00003.test 103-120" ;; esac; }
@@ -205,7 +212,20 @@ finish() {
   exit 1
 }
 
-echo "-- tooling: $(git -C "$REPO" log --oneline -1) tag=$TAG n=$N kill_n=$KILL_N big=$BIG"
+# timed runs crypt reencrypt and adds "<label> <messages> <seconds>" to speed.txt.
+timed() {
+  local label="$1" moved="$2" start code
+  shift 2
+  start=$(date +%s)
+  crypt reencrypt "$@" >> "$OUT/reencrypt.log" 2>&1
+  code=$?
+  echo "$label $moved $(( $(date +%s) - start ))" >> "$OUT/speed.txt"
+  return "$code"
+}
+job_done() { [ "$(kube get job imaptest -o jsonpath='{.status.succeeded}' 2>/dev/null)" = 1 ]; }
+load_running() { kube get pods -l job-name=imaptest -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q Running; }
+
+echo "-- tooling: $(git -C "$REPO" log --oneline -1) tag=$TAG n=$N kill_n=$KILL_N big=$BIG types=[$TYPES] only=${ONLY:-all} load_rounds=$LOAD_ROUNDS"
 
 echo "== a known start: every account a scenario fills is wiped"
 for u in $(for t in $TYPES; do user_of "$t"; set -- $(load_of "$t"); echo "$1"; done) "$KILL_USER" "$BIG_USER"; do
@@ -232,17 +252,7 @@ after=$(status_of "$probe")
 for t in $TYPES; do u=$(user_of "$t"); fill_to "$u" $(( $(messages "$u") + N )); done
 
 echo "== mixed, and speed per type"
-# timed runs crypt reencrypt and adds "<label> <messages> <seconds>" to speed.txt.
-timed() {
-  local label="$1" moved="$2" start code
-  shift 2
-  start=$(date +%s)
-  crypt reencrypt "$@" >> "$OUT/reencrypt.log" 2>&1
-  code=$?
-  echo "$label $moved $(( $(date +%s) - start ))" >> "$OUT/speed.txt"
-  return "$code"
-}
-
+if [ "$ONLY" != load ]; then
 for t in $TYPES; do
   u=$(user_of "$t")
   before=$(status_of "$u")
@@ -266,10 +276,13 @@ start=$(date +%s)
 big=$(status_of "$BIG_USER")
 big_secs=$(( $(date +%s) - start ))
 
+fi
+
 echo "== under imaptest, each type"
-job_done() { [ "$(kube get job imaptest -o jsonpath='{.status.succeeded}' 2>/dev/null)" = 1 ]; }
-load_running() { kube get pods -l job-name=imaptest -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q Running; }
+for round in $(seq 1 "$LOAD_ROUNDS"); do
 for t in $TYPES; do
+  # A round past the first carries its number in the row and the log.
+  name=$t; [ "$LOAD_ROUNDS" = 1 ] || name="$t-r$round"
   set -- $(load_of "$t")
   lu="$1" dom="$2" range="$3"
   fill_to "$lu" $(( $(messages "$lu") + LOAD_N ))
@@ -289,20 +302,22 @@ for t in $TYPES; do
   during=$?
   job_done && ended_under=0 || ended_under=1
   kube wait --for=condition=complete --timeout=300s job/imaptest > /dev/null 2>&1
-  kube logs job/imaptest -c imaptest > "$OUT/imaptest-load-$t.log" 2>&1
-  errors=$(grep -ac '^Error' "$OUT/imaptest-load-$t.log" || true)
+  kube logs job/imaptest -c imaptest > "$OUT/imaptest-load-$name.log" 2>&1
+  errors=$(grep -ac '^Error' "$OUT/imaptest-load-$name.log" || true)
   crypt reencrypt "$lu" --rate 0 >> "$OUT/load.log" 2>&1
   rerun=$?
   after=$(status_of "$lu")
   if [ "$started_under$ended_under" != 11 ]; then
-    row FAIL "load-$t" "$lu: the job did not run inside imaptest (running at start $started_under, at end $ended_under); before[$before] after[$after]"
+    row FAIL "load-$name" "$lu: the job did not run inside imaptest (running at start $started_under, at end $ended_under); before[$before] after[$after]"
   elif [ "$rerun" = 0 ] && [ "${errors:-1}" = 0 ] && [ "$(field "$after" plain)" = 0 ] && [ "$(field "$after" failed)" = 0 ]; then
-    row PASS "load-$t" "$lu under imaptest, run exit $during, imaptest errors 0, before[$before] after[$after]"
+    row PASS "load-$name" "$lu under imaptest, run exit $during, imaptest errors 0, before[$before] after[$after]"
   else
-    row FAIL "load-$t" "$lu run exit $during, rerun exit $rerun, imaptest errors ${errors:-unread}, before[$before] after[$after]"
+    row FAIL "load-$name" "$lu run exit $during, rerun exit $rerun, imaptest errors ${errors:-unread}, before[$before] after[$after]"
   fi
 done
+done
 
+if [ "$ONLY" != load ]; then
 echo "== pod killed mid-run"
 fill_to "$KILL_USER" "$KILL_N"
 crypt reencrypt "$KILL_USER" --to plain --rate 0 >> "$OUT/kill.log" 2>&1
@@ -373,6 +388,7 @@ if [ "$code" = 0 ] && [ "$(field "$before" other_key)" -gt 0 ] && [ "$(field "$m
 else
   row FAIL rotate "reencrypt exit $code; before[$before] after-reencrypt[$mid] old-key-removed[$after]"
 fi
+fi
 
 echo "== back to plaintext"
 before=$(status_of --all)
@@ -390,6 +406,7 @@ else
   row FAIL plain "exit $code; before[$before] after[$after]"
 fi
 
+if [ "$ONLY" != load ]; then
 echo "== speed"
 rates=$(awk '{ printf "%s %d msgs %ds (%s/s); ", $1, $2, $3, ($3 > 0 ? int($2 / $3) : "inf") }' "$OUT/speed.txt")
 total=$(( $(field "$big" plain) + $(encrypted "$big") ))
@@ -397,4 +414,5 @@ if [ "$(wc -l < "$OUT/speed.txt")" -ge 9 ] && [ "$total" -ge "$BIG" ]; then
   row PASS speed "$rates status on $total messages ($BIG_USER) ${big_secs}s, its fill ${big_fill_secs}s; measured at $BIG, not beyond"
 else
   row FAIL speed "$rates status of $BIG_USER: $total of $BIG messages, fill exit $big_fill: $(grep -m1 "refused after" "$OUT/fill.log" || echo none recorded)"
+fi
 fi

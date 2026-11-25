@@ -174,6 +174,17 @@ Each run adds `CRYPT_LOAD_N` (1000) messages to the first user of every
 imaptest range and fills its own users: imaptest figures after it are not
 comparable with rows before it.
 
+
+`CRYPT_ONLY=load` runs only the keys, the `load-<type>` rows and the way back
+to plaintext, `CRYPT_LOAD_ROUNDS` times over `CRYPT_TYPES` (default all three).
+A round past the first is named `load-<type>-r<round>`, with its own
+`imaptest-load-<type>-r<round>.log`. It is a reproduction run for a fault seen
+once under load (#2700), not the scenario set, and its rows do not stand for one:
+
+```sh
+CRYPT_ONLY=load CRYPT_TYPES=maildir CRYPT_LOAD_ROUNDS=5 bash hack/stand/crypt-scenarios.sh <tag> ~/windows/<name>
+```
+
 ## The acceptance run
 
 ```

@@ -955,3 +955,62 @@ func TestStoreParallelPrintsThePodsCPU(t *testing.T) {
 		t.Errorf("store_cpu = %q, want %q", out, want)
 	}
 }
+
+// CRYPT_ONLY=load keeps the keys, the rows under imaptest and the way back to
+// plaintext, and skips every other scenario; the helpers those rows and the
+// way back use are defined outside any skipped block.
+func TestTheCryptLoadModeSkipsOnlyTheOtherScenarios(t *testing.T) {
+	src, err := os.ReadFile("crypt-scenarios.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	guard := `if [ "$ONLY" != load ]; then`
+	inGuard := func(marker string) bool {
+		at := strings.Index(s, marker)
+		if at < 0 {
+			t.Fatalf("no %q in crypt-scenarios.sh", marker)
+		}
+		open := strings.LastIndex(s[:at], guard)
+		if open < 0 {
+			return false
+		}
+		depth := 0
+		for _, line := range strings.Split(s[open:at], "\n") {
+			l := strings.TrimSpace(line)
+			if strings.HasPrefix(l, "if ") {
+				depth++
+			}
+			if l == "fi" {
+				depth--
+			}
+		}
+		return depth > 0
+	}
+	for _, skipped := range []string{`row PASS "mixed-$t"`, `big=$(status_of "$BIG_USER")`, `echo "== pod killed mid-run"`, `echo "== rotation (§13.10)"`, `echo "== speed"`} {
+		if !inGuard(skipped) {
+			t.Errorf("%s runs in the load mode", skipped)
+		}
+	}
+	for _, kept := range []string{`echo "== under imaptest, each type"`, `echo "== back to plaintext"`, `trap finish EXIT`} {
+		if inGuard(kept) {
+			t.Errorf("%s is skipped in the load mode", kept)
+		}
+	}
+	first := strings.Index(s, guard)
+	for _, helper := range []string{"timed() {", "job_done() {", "load_running() {"} {
+		if at := strings.Index(s, helper); at < 0 || at > first {
+			t.Errorf("%s is not defined before the first skipped block", helper)
+		}
+	}
+	if !strings.Contains(s, `"load-$name"`) || !strings.Contains(s, `name="$t-r$round"`) {
+		t.Error("a round past the first does not carry its number in the row")
+	}
+	for _, bad := range []string{"CRYPT_ONLY=all", "CRYPT_LOAD_ROUNDS=0", "CRYPT_LOAD_ROUNDS=x"} {
+		cmd := exec.CommandContext(t.Context(), "bash", "crypt-scenarios.sh", "tag", t.TempDir()+"/out")
+		cmd.Env = append(os.Environ(), bad, "KUBECONFIG=/nonexistent")
+		if err := cmd.Run(); err == nil || cmd.ProcessState.ExitCode() != 2 {
+			t.Errorf("%s: exit %v, want 2 before anything runs", bad, err)
+		}
+	}
+}
