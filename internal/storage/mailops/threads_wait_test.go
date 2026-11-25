@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
@@ -30,12 +31,49 @@ type holdTimer struct {
 
 func (h *holdTimer) Lock(ctx context.Context, resource, owner string, ttl time.Duration) (locks.Lock, error) {
 	l, err := h.Locker.Lock(ctx, resource, owner, ttl)
+	h.took(resource, l, err)
+	return l, err
+}
+
+// waitingLocker is the client's queued acquire. Embedding the Locker interface
+// alone hides it, and a wait then polls with backoff instead of queueing: the
+// test measured a path no deployment takes (#2713).
+type waitingLocker interface {
+	LockWaiting(ctx context.Context, resource, owner string, ttl, limit time.Duration, shared bool) (locks.Lock, error)
+}
+
+func (h *holdTimer) LockWaiting(ctx context.Context, resource, owner string, ttl, limit time.Duration, shared bool) (locks.Lock, error) {
+	l, err := h.Locker.(waitingLocker).LockWaiting(ctx, resource, owner, ttl, limit, shared)
+	h.took(resource, l, err)
+	return l, err
+}
+
+func (h *holdTimer) took(resource string, l locks.Lock, err error) {
 	if err == nil && strings.HasPrefix(resource, "threads:") {
 		h.mu.Lock()
 		h.taken[l.ID] = time.Now()
 		h.mu.Unlock()
 	}
-	return l, err
+}
+
+// pollingRetries is how often a lock acquire backed off and tried again
+// instead of queueing. Zero for a caller whose waits go through the queue.
+func pollingRetries(t *testing.T) float64 {
+	t.Helper()
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n float64
+	for _, mf := range mfs {
+		if mf.GetName() != "yarilo_locks_acquire_busy_retries_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			n += m.GetCounter().GetValue()
+		}
+	}
+	return n
 }
 
 func (h *holdTimer) Unlock(ctx context.Context, id string) error {
@@ -59,6 +97,7 @@ func TestConcurrentRecordsOfOneAccountAreAllThreaded(t *testing.T) {
 	user := &mailbox.UserInfo{Username: "u@example.com", Home: home}
 	recorder := threads.NewRecorder(nil)
 	failed := testutil.ToFloat64(metricThreadRecordFailed)
+	retries := pollingRetries(t)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for s := range sessions {
@@ -96,6 +135,9 @@ func TestConcurrentRecordsOfOneAccountAreAllThreaded(t *testing.T) {
 	if got := testutil.ToFloat64(metricThreadRecordFailed) - failed; got != 0 {
 		t.Errorf("%v thread records failed", got)
 	}
+	if got := pollingRetries(t) - retries; got != 0 {
+		t.Errorf("%v acquires polled instead of queueing", got)
+	}
 	lk.mu.Lock()
 	holds := slices.Clone(lk.holds)
 	lk.mu.Unlock()
@@ -118,6 +160,7 @@ func TestConcurrentSavesOfOneAccountAreAllThreaded(t *testing.T) {
 	}
 	recorder := threads.NewRecorder(nil)
 	failed := testutil.ToFloat64(metricThreadRecordFailed)
+	retries := pollingRetries(t)
 	var wg sync.WaitGroup
 	guids := make(chan [16]byte, sessions*each)
 	for s := range sessions {
@@ -157,6 +200,9 @@ func TestConcurrentSavesOfOneAccountAreAllThreaded(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(metricThreadRecordFailed) - failed; got != 0 {
 		t.Errorf("%v thread records failed", got)
+	}
+	if got := pollingRetries(t) - retries; got != 0 {
+		t.Errorf("%v acquires polled instead of queueing", got)
 	}
 	lk.mu.Lock()
 	holds := slices.Clone(lk.holds)
