@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,6 +19,7 @@ type RedisBackend struct {
 	rdb       redis.UniversalClient
 	keyPrefix string
 	chPrefix  string
+	wakes     *wakeHub
 }
 
 // RedisOption tunes the backend at construction time.
@@ -46,7 +48,20 @@ func NewRedisBackend(rdb redis.UniversalClient, opts ...RedisOption) *RedisBacke
 	for _, opt := range opts {
 		opt(b)
 	}
+	b.wakes = newWakeHub(rdb, b.wakeChannel(""))
 	return b
+}
+
+// RegisterMetrics puts the backend's own counters on r.
+func (b *RedisBackend) RegisterMetrics(r prometheus.Registerer) {
+	r.MustRegister(b.wakes.resubscribed)
+}
+
+// ListenWakes takes the replica's release subscription now rather than at
+// the first waiting acquire. A store not yet reachable is not an error here:
+// the first wait subscribes instead.
+func (b *RedisBackend) ListenWakes(ctx context.Context) error {
+	return b.wakes.start(ctx)
 }
 
 // lockValue is the stored value: "<resource>|<owner>|<kind>", kind ∈
@@ -434,6 +449,7 @@ func (b *RedisBackend) counterKey(key string) string {
 
 // Close implements Backend. Closes the wrapped Redis client.
 func (b *RedisBackend) Close() error {
+	b.wakes.close()
 	if err := b.rdb.Close(); err != nil && !errors.Is(err, redis.ErrClosed) {
 		return fmt.Errorf("locks/redis: close: %w", err)
 	}
