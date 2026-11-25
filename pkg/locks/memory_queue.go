@@ -76,22 +76,6 @@ func (b *MemoryBackend) leaveLineLocked(resource, ticket string) {
 	}
 }
 
-// JoinAndTry implements WaitQueue.
-func (b *MemoryBackend) JoinAndTry(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration, shared bool) (int, string, Holder, error) {
-	ahead, err := b.Enqueue(ctx, resource, ticket)
-	if err != nil || ahead > 0 {
-		return ahead, "", Holder{}, err
-	}
-	var id string
-	var h Holder
-	if shared {
-		id, h, err = b.AcquireShared(ctx, resource, owner, site, ticket, ttl)
-	} else {
-		id, h, err = b.Acquire(ctx, resource, owner, site, ticket, ttl)
-	}
-	return 0, id, h, err
-}
-
 // pruneLocked drops tickets older than the abandon window. Caller holds qmu.
 func (b *MemoryBackend) pruneLocked(resource string) []queued {
 	line := b.queues[resource]

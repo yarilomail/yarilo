@@ -73,7 +73,7 @@ func (b *RedisBackend) Dequeue(ctx context.Context, resource, ticket string) err
 	return nil
 }
 
-// JoinAndTry implements WaitQueue in one round trip.
+// JoinAndTry joins the line and makes the first try in one round trip.
 func (b *RedisBackend) JoinAndTry(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration, shared bool) (int, string, Holder, error) {
 	if resource == "" || owner == "" {
 		return 0, "", Holder{}, fmt.Errorf("locks/redis: resource and owner must be non-empty")
