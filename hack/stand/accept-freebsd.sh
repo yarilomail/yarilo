@@ -442,8 +442,8 @@ for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do
     verdict "imaptest $dom" fail "errors=$errors stalled=$stalls logins=${logins:-?}"
 done
 t1=$(date +%s)
-mc=$(awk -v a="$m0" -v b="$(cpu_s "$cm")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", t > 0 ? (b - a) / t * 100 : 0 }')
-lc=$(awk -v a="$l0" -v b="$(cpu_s "$cl")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", t > 0 ? (b - a) / t * 100 : 0 }')
+mc=$(awk -v a="$m0" -v b="$(cpu_s "$cm")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", (t > 0 ? (b - a) / t * 100 : 0) }')
+lc=$(awk -v a="$l0" -v b="$(cpu_s "$cl")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", (t > 0 ? (b - a) / t * 100 : 0) }')
 # A process that went away during the part reads as no CPU at all: a restart
 # under load is what the run is there to catch, so a changed pid fails.
 if [ -z "$cm" ] || [ "$(master_pid)" != "$cm" ]; then
