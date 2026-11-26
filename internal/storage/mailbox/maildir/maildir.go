@@ -2653,12 +2653,12 @@ func (u *userMailbox) WriteFlags(folder, filename string, flags, keywords []stri
 		return filename, err
 	}
 	defer release()
+	letters, err := u.keywordLetters(folder, keywords)
+	if err != nil {
+		return filename, err
+	}
 	var newName string
 	err = u.withMailboxLockSite(folder, lockSiteWriteFlags, func() error {
-		letters, lerr := u.keywordLettersLocked(folder, keywords)
-		if lerr != nil {
-			return lerr
-		}
 		var werr error
 		newName, werr = u.writeFlagsLocked(folder, filename, flags, letters)
 		return werr
@@ -2688,41 +2688,39 @@ func (u *userMailbox) WriteFlagsMulti(folder string, writes []mailbox.FlagWrite)
 	release, err := u.sharedCrypt(folder, lockSiteWriteFlagsBulk)
 	if err == nil {
 		defer release()
-		err = u.withMailboxLockSite(folder, lockSiteWriteFlagsBulk, func() error {
-			lockMS = time.Since(whole).Milliseconds()
-			kwStart := time.Now()
-			t := u.loadKeywordTableLocked(folder)
-			added := false
-			for i := range writes {
-				if t.allocate(u, folder, writes[i].Keywords) {
-					added = true
+		// The letters before the mutex: a new one takes the folder's list,
+		// which every path takes first (#2184, #2733).
+		kwStart := time.Now()
+		sets := make([][]string, len(writes))
+		for i := range writes {
+			sets[i] = writes[i].Keywords
+		}
+		var t *keywordTable
+		t, err = u.keywordTableFor(folder, sets...)
+		keywordsMS = time.Since(kwStart).Milliseconds()
+		if err == nil {
+			err = u.withMailboxLockSite(folder, lockSiteWriteFlagsBulk, func() error {
+				lockMS = time.Since(whole).Milliseconds() - keywordsMS
+				renStart := time.Now()
+				defer func() { renamesMS = time.Since(renStart).Milliseconds() }()
+				for i := range writes {
+					if beforeFlagRename != nil {
+						beforeFlagRename()
+					}
+					name, werr := u.writeFlagsLocked(folder, writes[i].Filename,
+						writes[i].Flags, t.letters(writes[i].Keywords))
+					if werr != nil {
+						out[i].Err = werr
+						continue
+					}
+					if name != writes[i].Filename {
+						renamed++
+					}
+					out[i].Filename = name
 				}
-			}
-			if added {
-				if werr := u.writeKeywordFileLocked(folder, t.names); werr != nil {
-					return werr
-				}
-			}
-			keywordsMS = time.Since(kwStart).Milliseconds()
-			renStart := time.Now()
-			defer func() { renamesMS = time.Since(renStart).Milliseconds() }()
-			for i := range writes {
-				if beforeFlagRename != nil {
-					beforeFlagRename()
-				}
-				name, werr := u.writeFlagsLocked(folder, writes[i].Filename,
-					writes[i].Flags, t.letters(writes[i].Keywords))
-				if werr != nil {
-					out[i].Err = werr
-					continue
-				}
-				if name != writes[i].Filename {
-					renamed++
-				}
-				out[i].Filename = name
-			}
-			return nil
-		})
+				return nil
+			})
+		}
 	}
 	slog.Debug("maildir: flags timing",
 		"user", u.username, "folder", folder, "writes", len(writes), "renamed", renamed,
@@ -2824,36 +2822,50 @@ func renameWithFlags(filename, info string) string {
 	return base + ":2," + info
 }
 
-// keywordLetters is keywordLettersLocked under the folder lock, for callers
-// that do not already hold it -- Save writes into its own tmp file and takes
-// the lock for nothing else.
+// keywordLetters returns the letters standing for keywords, giving a letter
+// to any the folder's keyword file does not name yet. Sorted, so a name is one
+// string regardless of the order the keywords arrived in.
 func (u *userMailbox) keywordLetters(folder string, keywords []string) (string, error) {
 	if len(keywords) == 0 {
 		return "", nil
 	}
-	var letters string
-	err := u.withMailboxLockSite(folder, lockSiteKeywords, func() error {
-		var lerr error
-		letters, lerr = u.keywordLettersLocked(folder, keywords)
-		return lerr
-	})
-	return letters, err
-}
-
-// keywordLettersLocked returns the letters standing for keywords, adding any
-// the folder's keyword file does not name yet. Sorted, so a name is one string
-// regardless of the order the keywords arrived in.
-func (u *userMailbox) keywordLettersLocked(folder string, keywords []string) (string, error) {
-	if len(keywords) == 0 {
-		return "", nil
-	}
-	t := u.loadKeywordTableLocked(folder)
-	if t.allocate(u, folder, keywords) {
-		if err := u.writeKeywordFileLocked(folder, t.names); err != nil {
-			return "", err
-		}
+	t, err := u.keywordTableFor(folder, keywords)
+	if err != nil {
+		return "", err
 	}
 	return t.letters(keywords), nil
+}
+
+// keywordTableFor returns the folder's keyword table, naming every keyword in
+// sets. The keyword file has no lock of its own: as in the reference, a new
+// letter is given only under the folder's list lock, which holds across
+// sessions, processes and pods, from the file read again under it. A table in
+// which every keyword already has a letter needs no lock, since the file is
+// replaced by a rename and a letter once given never changes (#2733). Taken
+// before the mailbox mutex, the order every path keeps (#2184).
+func (u *userMailbox) keywordTableFor(folder string, sets ...[]string) (*keywordTable, error) {
+	t := u.loadKeywordTable(folder)
+	if t.namesAll(sets) {
+		return t, nil
+	}
+	release, err := u.holdList(folder, lockSiteKeywords)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	t = u.loadKeywordTable(folder)
+	added := false
+	for _, keywords := range sets {
+		if t.allocate(u, folder, keywords) {
+			added = true
+		}
+	}
+	if added {
+		if err := u.writeKeywordFileHeld(folder, t.names); err != nil {
+			return nil, err
+		}
+	}
+	return t, nil
 }
 
 // sectionProbe reports what the reconcile's critical section did to the
@@ -2887,7 +2899,7 @@ type keywordTable struct {
 	byName map[string]byte
 }
 
-func (u *userMailbox) loadKeywordTableLocked(folder string) *keywordTable {
+func (u *userMailbox) loadKeywordTable(folder string) *keywordTable {
 	names := u.keywordNames(folder)
 	if names == nil {
 		// No keyword file yet: this folder is about to have its first keyword.
@@ -2898,6 +2910,18 @@ func (u *userMailbox) loadKeywordTableLocked(folder string) *keywordTable {
 		byName[name] = letter
 	}
 	return &keywordTable{names: names, byName: byName}
+}
+
+// namesAll reports whether every keyword in sets already has a letter.
+func (t *keywordTable) namesAll(sets [][]string) bool {
+	for _, keywords := range sets {
+		for _, kw := range keywords {
+			if _, ok := t.byName[kw]; !ok {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // allocate gives every keyword a letter it does not already have, and reports
@@ -2946,8 +2970,9 @@ func firstFreeKeywordLetter(names map[byte]string) (byte, bool) {
 	return 0, false
 }
 
-// writeKeywordFileLocked rewrites the folder's keyword file from the mapping.
-func (u *userMailbox) writeKeywordFileLocked(folder string, names map[byte]string) error {
+// writeKeywordFileHeld rewrites the folder's keyword file from the mapping.
+// The caller holds the folder's list.
+func (u *userMailbox) writeKeywordFileHeld(folder string, names map[byte]string) error {
 	letters := make([]byte, 0, len(names))
 	for c := range names {
 		letters = append(letters, c)
@@ -2959,14 +2984,32 @@ func (u *userMailbox) writeKeywordFileLocked(folder string, names map[byte]strin
 		fmt.Fprintf(&b, "%d %s\n", c-'a', names[c])
 	}
 	path := filepath.Join(u.folderPath(folder), keywordsFileName)
-	tmp := fmt.Sprintf("%s.tmp.%d", path, os.Getpid())
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+	// Unique per writer, as the list's: a temp named by the pid alone is one
+	// file every session of the process fills (#2733).
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("maildir/keywords: create tmp: %w", err)
+	}
+	tmp := f.Name()
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()      //nolint:errcheck
+		os.Remove(tmp) //nolint:errcheck
+		return fmt.Errorf("maildir/keywords: write: %w", err)
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()      //nolint:errcheck
+		os.Remove(tmp) //nolint:errcheck
+		return fmt.Errorf("maildir/keywords: write: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp) //nolint:errcheck
 		return fmt.Errorf("maildir/keywords: write: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+		os.Remove(tmp) //nolint:errcheck
 		return fmt.Errorf("maildir/keywords: commit: %w", err)
 	}
+	removeStaleListTemps(path)
 	return nil
 }
 

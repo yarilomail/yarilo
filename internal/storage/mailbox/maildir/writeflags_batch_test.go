@@ -66,7 +66,7 @@ func holdsTaken(t *testing.T) int {
 	return int(total)
 }
 
-// The keyword file is read once for the batch, not once per message.
+// The keyword file is read once or twice for the batch, not once per message.
 //
 // The lock was the expensive half and is fixed by the batch; this is the other
 // half, and it is the one a comment can claim without the code doing it. Counted
@@ -99,8 +99,22 @@ func TestABatchReadsTheKeywordFileOnce(t *testing.T) {
 			t.Fatalf("uid %d: %v", r.UID, r.Err)
 		}
 	}
+	// Twice for a batch that brings new keywords: once without a lock, and
+	// once again under the folder's list before giving letters (#2733). The
+	// count does not grow with the batch.
+	if reads != 2 {
+		t.Errorf("the batch read the keyword file %d times, want 2", reads)
+	}
+
+	// A batch whose keywords all have letters reads the file once.
+	reads = 0
+	for _, r := range box.WriteFlagsMulti("INBOX", writes) {
+		if r.Err != nil {
+			t.Fatalf("uid %d: %v", r.UID, r.Err)
+		}
+	}
 	if reads != 1 {
-		t.Errorf("the batch read the keyword file %d times, want 1", reads)
+		t.Errorf("a batch of known keywords read the keyword file %d times, want 1", reads)
 	}
 
 	// And every keyword still got its own letter, in one file.
