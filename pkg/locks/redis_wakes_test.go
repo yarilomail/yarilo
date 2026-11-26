@@ -442,39 +442,133 @@ func commandsSince(sc *storeCounter, was map[string]int) (int, map[string]int) {
 	return n, diff
 }
 
+// warmResource is where a test loads the scripts before counting: a release
+// on it reaches nobody waiting on wakeResource (#2735).
+const warmResource = "mailbox/u@x.com/Warm"
+
+// inLineOn waits until resource's line holds n tickets.
+func inLineOn(t *testing.T, mr *miniredis.Miniredis, resource string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if members, _ := mr.ZMembers("yarilo:locks:q:" + resource); len(members) == n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("the line of %s did not reach %d tickets", resource, n)
+}
+
+// logWakes prints every wake published for resource, as it arrives: the
+// ticket it names, or that it names none and so reaches every waiter. Read
+// through a client of its own, so it adds nothing to the counts.
+func logWakes(t *testing.T, mr *miniredis.Miniredis, b *RedisBackend, resource string) {
+	t.Helper()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ps := rdb.Subscribe(t.Context(), b.wakeChannel(resource))
+	if _, err := ps.Receive(t.Context()); err != nil {
+		t.Fatalf("subscribe to the wakes: %v", err)
+	}
+	start := time.Now()
+	exited := make(chan struct{})
+	// The printer is gone before the test ends: a log after it would panic.
+	t.Cleanup(func() { _ = ps.Close(); <-exited })
+	go func() {
+		defer close(exited)
+		for msg := range ps.Channel() {
+			woke := "ticket " + msg.Payload
+			if msg.Payload == "" {
+				woke = "no ticket: every waiter tries"
+			}
+			t.Logf("+%v wake on %s: %s", time.Since(start).Round(time.Millisecond), resource, woke)
+		}
+	}()
+}
+
+// waitedOnce has a contender on rs[1] wait for a lock rs[0] holds on resource,
+// then take it and release it. between runs while it waits in line.
+func waitedOnce(t *testing.T, mr *miniredis.Miniredis, rs []redisReplica, resource, name string, between func()) {
+	t.Helper()
+	ctx := waitCtx(t)
+	held, err := Acquire(ctx, rs[0].client, resource, Owner("u@x.com", "holder"), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		lk, aerr := Acquire(ctx, rs[1].client, resource, Owner("u@x.com", name), 30*time.Second)
+		if aerr == nil {
+			aerr = rs[1].client.Unlock(ctx, lk.ID)
+		}
+		done <- aerr
+	}()
+	inLineOn(t, mr, resource, 1)
+	if between != nil {
+		between()
+	}
+	if err := rs[0].client.Unlock(ctx, held.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The scripts are loaded on another resource than the one counted: the warm
+// round ends with a release on an empty line, which names no ticket and so
+// wakes every waiter of its resource. Late on a slow runner, on the counted
+// resource it woke the counted waiter into a fourth command (#2735).
 func TestAWaitedLockCostsAKnownNumberOfStoreCommands(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rs := redisReplicas(t, mr, 2)
-	ctx := waitCtx(t)
+	logWakes(t, mr, rs[1].backend, wakeResource)
 
-	waited := func(name string) {
-		held, err := Acquire(ctx, rs[0].client, wakeResource, Owner("u@x.com", "holder"), 30*time.Second)
-		if err != nil {
-			t.Fatal(err)
-		}
-		done := make(chan error, 1)
-		go func() {
-			lk, aerr := Acquire(ctx, rs[1].client, wakeResource, Owner("u@x.com", name), 30*time.Second)
-			if aerr == nil {
-				aerr = rs[1].client.Unlock(ctx, lk.ID)
-			}
-			done <- aerr
-		}()
-		inLine(t, mr, 1)
-		if err := rs[0].client.Unlock(ctx, held.ID); err != nil {
-			t.Fatal(err)
-		}
-		if err := <-done; err != nil {
-			t.Fatal(err)
-		}
-	}
-	waited("warm") // loads the scripts
+	waitedOnce(t, mr, rs, warmResource, "warm", nil) // loads the scripts
 	was := rs[1].store.snapshot()
-	waited("waiter")
+	waitedOnce(t, mr, rs, wakeResource, "waiter", nil)
 	got, diff := commandsSince(rs[1].store, was)
 	t.Logf("store commands of one waited lock: %v", diff)
 	if got != waitedLockCommands {
 		t.Errorf("a waited lock took %d store commands, want %d", got, waitedLockCommands)
+	}
+}
+
+// A release that names no ticket reaches every waiter of the resource on
+// purpose: one subscribed but not yet in line must hear it. A waiter in line
+// takes it for its turn, tries once, and is refused: exactly one command more
+// than a waited lock, and no backstop (#2735).
+func TestAReleaseNamingNoTicketCostsAWaiterOneTry(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rs := redisReplicas(t, mr, 2)
+	logWakes(t, mr, rs[1].backend, wakeResource)
+	pub := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = pub.Close() })
+
+	waitedOnce(t, mr, rs, warmResource, "warm", nil)
+	was := rs[1].store.snapshot()
+	bs := counterNow(t, rs[1].metrics.waitBackstop)
+	waitedOnce(t, mr, rs, wakeResource, "waiter", func() {
+		tried := rs[1].store.snapshot()["evalsha"]
+		if err := pub.Publish(t.Context(), rs[1].backend.wakeChannel(wakeResource), "").Err(); err != nil {
+			t.Fatal(err)
+		}
+		// The release waits for the extra try, so the count cannot race it.
+		deadline := time.Now().Add(5 * time.Second)
+		for rs[1].store.snapshot()["evalsha"] == tried {
+			if time.Now().After(deadline) {
+				t.Fatal("the waiter did not try on a release naming no ticket")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	})
+	got, diff := commandsSince(rs[1].store, was)
+	t.Logf("store commands of one waited lock with a release naming no ticket: %v", diff)
+	if got != waitedLockCommands+1 || diff["evalsha"] != waitedLockCommands+1 {
+		t.Errorf("took %v, want evalsha:%d and nothing else", diff, waitedLockCommands+1)
+	}
+	if n := counterNow(t, rs[1].metrics.waitBackstop) - bs; n != 0 {
+		t.Errorf("the backstop woke the waiter %v times, want 0", n)
 	}
 }
 
