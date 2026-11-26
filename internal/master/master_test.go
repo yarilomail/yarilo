@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,7 +29,21 @@ import (
 
 var helperBin string
 
+// testLogRole makes this test binary the log process when a rig starts it:
+// the same RunLog production runs, its target taken from the environment.
+const testLogRole = "YARILO_TEST_LOG_ROLE"
+
 func TestMain(m *testing.M) {
+	if path := os.Getenv(testLogRole); path != "" {
+		sigs := make(chan os.Signal, 4)
+		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+		err := RunLog(LogTarget{Path: path}, os.Getenv(LogFDsEnv), nil, sigs, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	dir, err := os.MkdirTemp("", "master-helper")
 	if err != nil {
 		panic(err)
@@ -76,6 +91,14 @@ func (r *rig) comp(name string, env ...string) Component {
 
 func (r *rig) starts(name string) string { return filepath.Join(r.dir, name+".starts") }
 
+func (r *rig) logComp() Component {
+	self, err := os.Executable()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return Component{Name: LogComponent, Bin: self, Env: []string{testLogRole + "=" + filepath.Join(r.dir, "log")}}
+}
+
 func newRig(t *testing.T, comps func(r *rig) []Component, mutate ...func(*Options)) *rig {
 	t.Helper()
 	dir := shortDir(t)
@@ -85,7 +108,9 @@ func newRig(t *testing.T, comps func(r *rig) []Component, mutate ...func(*Option
 		t.Fatal(err)
 	}
 	r.plan = &Plan{RunDir: filepath.Join(dir, "run"), LogPath: logs, StopTimeout: 2 * time.Second, Accounts: map[role]Account{}}
-	r.plan.Components = comps(r)
+	// The log process first, as the plan puts it: this test binary in the
+	// log role, so every component's output is read as in production.
+	r.plan.Components = append([]Component{r.logComp()}, comps(r)...)
 	opts := Options{Logger: slog.New(slog.DiscardHandler), Registerer: r.reg, Timings: fast}
 	for _, f := range mutate {
 		f(&opts)
@@ -323,7 +348,7 @@ func TestTheControlSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 {
+	if len(lines) != 3 { // the log process and the two components
 		t.Fatalf("status gave %d lines: %q", len(lines), out.String())
 	}
 	for _, l := range lines {
@@ -539,8 +564,14 @@ func newPlanRig(t *testing.T, comps ...string) *planRig {
 	me := uint32(os.Getuid())
 	p.chk = Checker{
 		TrustedUID: me,
-		Lookup:     func(name string) (Account, error) { return Account{Name: name, UID: me + 1000, GID: me + 1000}, nil },
-		BaseEnv:    []string{"PATH=/usr/bin:/bin"},
+		Lookup: func(name string) (Account, error) {
+			if name == "yarilo-log" { // owns the log directory, which the test made
+				return Account{Name: name, UID: me, GID: me + 1000}, nil
+			}
+			return Account{Name: name, UID: me + 1000, GID: me + 1000}, nil
+		},
+		BaseEnv: []string{"PATH=/usr/bin:/bin"},
+		Self:    helperBin,
 	}
 	return p
 }
@@ -626,7 +657,11 @@ func TestAComponentGetsItsOwnEnvironmentOnly(t *testing.T) {
 	envFile := filepath.Join(shortDir(t), "env")
 	r := newRig(t, func(r *rig) []Component {
 		c := r.comp("imap", "HELPER_ENV="+envFile)
-		c.Env = append(c.Env, plan.Components[1].Env...)
+		for _, pc := range plan.Components {
+			if pc.Name == "imap" {
+				c.Env = append(c.Env, pc.Env...)
+			}
+		}
 		return []Component{c}
 	})
 	go r.sup.Run()
@@ -838,4 +873,224 @@ func countVar(env []string, name string) int {
 		}
 	}
 	return n
+}
+
+// lines reads a log file's complete lines.
+func fileLines(t *testing.T, path string) []string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+}
+
+const streamLine = "stream-0123456789abcdefghijklmnopqrstuvwxyz-0123456789abcdefghijklmnopqrstuvwxyz-end"
+
+// kill -KILL of the log process under a stream of lines: no component dies or
+// restarts, and the lines go on once the log process is back.
+func TestKillingTheLogProcessStopsNoComponent(t *testing.T) {
+	r := newRig(t, func(r *rig) []Component {
+		return []Component{r.comp("imap", "HELPER_SAY="+streamLine, "HELPER_SAY_MS=2")}
+	})
+	go r.sup.Run()
+	r.waitStarts("imap", 1, 3*time.Second)
+	imap := r.waitState("imap", StateRunning, 3*time.Second)
+	logp := r.waitState(LogComponent, StateRunning, 3*time.Second)
+	logFile := filepath.Join(r.plan.LogPath, "imap.log")
+	waitFor(t, func() bool { return len(fileLines(t, logFile)) > 20 })
+
+	if err := syscall.Kill(logp.PID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { st := r.status(LogComponent); return st.State == StateRunning && st.PID != logp.PID })
+	before := len(fileLines(t, logFile))
+	waitFor(t, func() bool { return len(fileLines(t, logFile)) > before+20 })
+
+	now := r.status("imap")
+	if now.PID != imap.PID || now.Restarts != 0 || len(r.startTimes("imap")) != 1 {
+		t.Errorf("imap was disturbed by the log process's death: pid %d→%d, restarts %d, starts %d",
+			imap.PID, now.PID, now.Restarts, len(r.startTimes("imap")))
+	}
+	split := 0
+	for _, l := range fileLines(t, logFile) {
+		if l != streamLine {
+			split++
+		}
+	}
+	if split > 1 { // one line split at the hand-over is allowed (#2715)
+		t.Errorf("%d lines were split across the log process's restart, want at most 1", split)
+	}
+}
+
+// A rotation in the middle of a stream does not split a line.
+func TestARotationMidStreamSplitsNoLine(t *testing.T) {
+	r := newRig(t, func(r *rig) []Component {
+		return []Component{r.comp("imap", "HELPER_SAY="+streamLine, "HELPER_SAY_MS=1")}
+	})
+	go r.sup.Run()
+	r.waitState(LogComponent, StateRunning, 3*time.Second)
+	logFile := filepath.Join(r.plan.LogPath, "imap.log")
+	waitFor(t, func() bool { return len(fileLines(t, logFile)) > 50 })
+	if err := os.Rename(logFile, logFile+".0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.sup.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(fileLines(t, logFile)) > 50 })
+	for _, f := range []string{logFile + ".0", logFile} {
+		for i, l := range fileLines(t, f) {
+			if l != streamLine {
+				t.Fatalf("%s line %d is split: %q", filepath.Base(f), i+1, l)
+			}
+		}
+	}
+}
+
+// A log directory that refuses writes does not stop a component: the log
+// process drops its lines and the component keeps its process.
+func TestALogDirectoryThatRefusesWritesStopsNoComponent(t *testing.T) {
+	r := newRig(t, func(r *rig) []Component {
+		return []Component{r.comp("imap", "HELPER_SAY="+streamLine, "HELPER_SAY_MS=1")}
+	})
+	if err := os.Chmod(r.plan.LogPath, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(r.plan.LogPath, 0o755) })
+	go r.sup.Run()
+	imap := r.waitState("imap", StateRunning, 3*time.Second)
+	time.Sleep(800 * time.Millisecond) // well past what a 64 KiB pipe holds at this rate
+	if now := r.status("imap"); now.PID != imap.PID || now.State != StateRunning {
+		t.Errorf("imap stopped behind a log directory that refuses writes: %+v", now)
+	}
+}
+
+// A log process that never starts: the supervisor's line saying so reaches its
+// fallback, the pipes are drained, the starts back off, and no component
+// blocks.
+func TestALogProcessThatNeverStartsLosesNothingOfTheSupervisors(t *testing.T) {
+	var logged safeBuffer
+	r := newRig(t, func(r *rig) []Component {
+		return []Component{r.comp("imap", "HELPER_SAY="+streamLine, "HELPER_SAY_MS=1")}
+	}, func(o *Options) { o.Logger = slog.New(slog.NewJSONHandler(&logged, nil)) })
+	r.sup.byNm[LogComponent].c.Bin = filepath.Join(r.dir, "no-such-binary") // the supervisor's copy
+	go r.sup.Run()
+	imap := r.waitState("imap", StateRunning, 3*time.Second)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(logged.String(), "no log process reads") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(logged.String(), "no log process reads") {
+		t.Fatalf("no drain line; the supervisor logged: %s", logged.String())
+	}
+	time.Sleep(800 * time.Millisecond)
+	if now := r.status("imap"); now.PID != imap.PID || now.State != StateRunning {
+		t.Errorf("imap blocked or restarted with no log process: %+v", now)
+	}
+	if !strings.Contains(logged.String(), `"component":"log"`) || !strings.Contains(logged.String(), "could not be started") {
+		t.Errorf("the line that the log process does not start was lost: %s", logged.String())
+	}
+	if starts := r.status(LogComponent).Restarts; starts > 12 {
+		t.Errorf("the log process was tried %d times in under 2 s; after three quick failures it must back off", starts)
+	}
+
+	// Without a log process the supervisor's own lines go to the fallback.
+	var fb bytes.Buffer
+	if _, err := r.sup.OwnLog(&fb).Write([]byte("own line\n")); err != nil || fb.String() != "own line\n" {
+		t.Errorf("own line with no log process: %q, %v", fb.String(), err)
+	}
+}
+
+// Syslog at three lengths against a socket that takes at most max bytes: the
+// limit arrives whole, one byte more and twice as much are cut, marked and
+// counted, and no datagram passes the limit.
+func TestASyslogDatagramNeverPassesTheLimit(t *testing.T) {
+	sock := filepath.Join(shortDir(t), "log.sock")
+	pc, err := new(net.ListenConfig).ListenPacket(t.Context(), "unixgram", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+	conn, err := new(net.Dialer).DialContext(t.Context(), "unixgram", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newMetrics(nil)
+	const max = 1024 // the host's is 8191; this one fits every system's socket
+	d := &syslogDest{conn: conn, facility: facilities["mail"], tag: "yarilo-imap", max: max,
+		cut: m.logTruncated.WithLabelValues("imap"), now: func() time.Time { return time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC) }}
+	header := fmt.Sprintf("<%d>%s %s[%d]: ", facilities["mail"]|severity("INFO"), d.now().Format(time.Stamp), d.tag, os.Getpid())
+	room := max - len(header)
+	for _, tc := range []struct {
+		name string
+		n    int
+		cut  bool
+	}{{"the limit", room, false}, {"one byte more", room + 1, true}, {"twice", 2 * room, true}} {
+		if err := d.write([]byte(strings.Repeat("x", tc.n) + "\n")); err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, 4*max)
+		_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, _, err := pc.ReadFrom(buf)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		got := string(buf[:n])
+		if n > max {
+			t.Errorf("%s: a %d-byte datagram passes the %d limit", tc.name, n, max)
+		}
+		if marked := strings.Contains(got, "…[truncated "); marked != tc.cut {
+			t.Errorf("%s: marked %v, want %v", tc.name, marked, tc.cut)
+		}
+		if !tc.cut && n != max {
+			t.Errorf("%s: %d bytes arrived, want all %d", tc.name, n, max)
+		}
+	}
+	if got := testutil.ToFloat64(m.logTruncated.WithLabelValues("imap")); got != 2 {
+		t.Errorf("truncated = %v, want 2", got)
+	}
+}
+
+// The log process gets GOMAXPROCS as the components do, and its own port.
+func TestTheLogProcessGetsGOMAXPROCSAndItsPort(t *testing.T) {
+	p := newPlanRig(t, "imap")
+	plan, err := p.chk.Build(p.cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Components[0].Name != LogComponent {
+		t.Fatalf("the plan starts with %s, want the log process", plan.Components[0].Name)
+	}
+	env := envOf(plan, LogComponent)
+	if env["GOMAXPROCS"] != DefaultGOMAXPROCS {
+		t.Errorf("log process GOMAXPROCS=%q, want %s", env["GOMAXPROCS"], DefaultGOMAXPROCS)
+	}
+	if env["TELEMETRY_LISTEN"] != "127.0.0.1:18100" {
+		t.Errorf("log process telemetry %s, want 18100", env["TELEMETRY_LISTEN"])
+	}
+}
+
+// A log account that does not exist, or is root, stops the start.
+func TestTheLogAccountMustExistAndNotBeRoot(t *testing.T) {
+	for name, acct := range map[string]func(string) (Account, error){
+		"missing": func(n string) (Account, error) {
+			if n == "yarilo-log" {
+				return Account{}, errors.New("unknown user yarilo-log")
+			}
+			return Account{Name: n, UID: 5000, GID: 5000}, nil
+		},
+		"root": func(n string) (Account, error) {
+			if n == "yarilo-log" {
+				return Account{Name: n}, nil
+			}
+			return Account{Name: n, UID: 5000, GID: 5000}, nil
+		},
+	} {
+		p := newPlanRig(t, "imap")
+		p.chk.Lookup = acct
+		if _, err := p.chk.Build(p.cfg, ""); err == nil || !strings.Contains(err.Error(), "master_log_user") {
+			t.Errorf("%s log account: %v, want a refusal naming master_log_user", name, err)
+		}
+	}
 }

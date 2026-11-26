@@ -29,6 +29,7 @@ type Component struct {
 	Name    string
 	Bin     string
 	Account Account
+	Args    []string // after the binary; the log process's role
 	Env     []string // the whole environment it gets
 	Ready   []string // absolute socket paths it serves to the ones after it
 }
@@ -65,6 +66,8 @@ type Checker struct {
 	TrustedUID uint32
 	Lookup     func(name string) (Account, error)
 	BaseEnv    []string // PATH and the like, before the configured variables
+	// Self is the supervisor's own binary, which the log process runs.
+	Self string
 }
 
 // DefaultChecker is the production one.
@@ -73,7 +76,16 @@ func DefaultChecker() Checker {
 		TrustedUID: 0,
 		Lookup:     lookupAccount,
 		BaseEnv:    []string{"PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"},
+		Self:       selfPath(),
 	}
+}
+
+func selfPath() string {
+	p, err := os.Executable()
+	if err != nil {
+		return os.Args[0]
+	}
+	return p
 }
 
 func lookupAccount(name string) (Account, error) {
@@ -124,15 +136,13 @@ func (c Checker) Build(cfg *config.Config, configPath string) (*Plan, error) {
 	if m.StopTimeout <= 0 {
 		fail("master_stop_timeout must be above 0")
 	}
-	if m.TelemetryPort <= 0 || m.TelemetryPort+20 > 65535 {
+	if m.TelemetryPort <= 0 || m.TelemetryPort+telemetryOffset[LogComponent] > 65535 {
 		fail("master_telemetry_port %d leaves no room for the components' ports", m.TelemetryPort)
 	}
-	if !p.Syslog() {
-		if err := c.trustedDir(m.LogPath, "master_log_path"); err != nil {
-			errs = append(errs, err)
+	if p.Syslog() {
+		if _, ok := facilities[m.SyslogFacility]; !ok {
+			fail("master_syslog_facility %q is not a syslog facility", m.SyslogFacility)
 		}
-	} else if _, ok := facilities[m.SyslogFacility]; !ok {
-		fail("master_syslog_facility %q is not a syslog facility", m.SyslogFacility)
 	}
 
 	users := map[role]struct{ key, name string }{
@@ -140,6 +150,7 @@ func (c Checker) Build(cfg *config.Config, configPath string) (*Plan, error) {
 		roleAuth:     {"master_auth_user", m.AuthUser},
 		roleLogin:    {"master_login_user", m.LoginUser},
 		roleDelivery: {"master_delivery_user", m.DeliveryUser},
+		roleLog:      {"master_log_user", m.LogUser},
 	}
 	for r, u := range users {
 		a, err := c.Lookup(u.name)
@@ -153,6 +164,17 @@ func (c Checker) Build(cfg *config.Config, configPath string) (*Plan, error) {
 			continue
 		}
 		p.Accounts[r] = a
+	}
+
+	// The log process opens the files as the log account, so the directory is
+	// that account's, not writable by group or others.
+	if la, ok := p.Accounts[roleLog]; ok && !p.Syslog() {
+		if err := c.ownedBy(m.LogPath, la.UID, true, "master_log_path"); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := c.trustedFile(c.Self, "the supervisor's own binary, which the log process runs"); err != nil {
+		errs = append(errs, err)
 	}
 
 	if configPath != "" {
@@ -192,6 +214,15 @@ func (c Checker) Build(cfg *config.Config, configPath string) (*Plan, error) {
 		extra = append(extra, k+"="+v)
 	}
 	sort.Strings(extra)
+
+	// The log process first: it reads every other component's output.
+	logEnv := append([]string{}, c.BaseEnv...)
+	logEnv = append(logEnv,
+		"CONFIG="+configPath,
+		"LOG_LEVEL="+cfg.Log.Level,
+		fmt.Sprintf("TELEMETRY_LISTEN=127.0.0.1:%d", m.TelemetryPort+telemetryOffset[LogComponent]))
+	logEnv = append(logEnv, extra...)
+	p.Components = append(p.Components, Component{Name: LogComponent, Bin: c.Self, Args: []string{"log"}, Env: logEnv, Account: p.Accounts[roleLog]})
 
 	seen := map[string]bool{}
 	for _, name := range m.Components {
@@ -233,6 +264,26 @@ func (c Checker) Build(cfg *config.Config, configPath string) (*Plan, error) {
 		return nil, errors.Join(errs...)
 	}
 	return p, nil
+}
+
+// ownedBy refuses path unless uid owns it and neither group nor others may
+// write it; dir says it must be a directory.
+func (c Checker) ownedBy(path string, uid uint32, dir bool, what string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid != uid {
+		return fmt.Errorf("%s: %s must be owned by uid %d", what, path, uid)
+	}
+	if fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s: %s is writable by group or others (%v)", what, path, fi.Mode().Perm())
+	}
+	if dir && !fi.IsDir() {
+		return fmt.Errorf("%s: %s is not a directory", what, path)
+	}
+	return nil
 }
 
 // owned reports whether path is the trusted uid's and not writable by group

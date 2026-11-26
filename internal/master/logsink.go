@@ -2,15 +2,18 @@ package master
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/syslog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -24,10 +27,14 @@ var facilities = map[string]syslog.Priority{
 	"local6": syslog.LOG_LOCAL6, "local7": syslog.LOG_LOCAL7,
 }
 
-// syslogMax is the longest message sent to the local syslog socket; a longer
-// line is cut to it and marked. The figure is the host's syslogd, measured
-// before the port uses syslog (#2715).
-var syslogMax = 8192
+// syslogDatagram is the largest datagram the local syslog socket takes,
+// header and all: on the FreeBSD host 8191 bytes arrived and 8192 was dropped
+// whole, not cut (net.local.dgram.maxdgram 8192, measured 2026-11-26). A line
+// that would pass it is cut to fit and marked.
+var syslogDatagram = 8191
+
+// syslogSockets are where the local syslog listens, by system.
+var syslogSockets = []string{"/var/run/log", "/dev/log", "/var/run/syslog"}
 
 // queued is how many lines a sink holds while its destination is slow. Past
 // it lines are dropped and counted: a full disk must never block a component
@@ -168,55 +175,77 @@ func (d *fileDest) close() error {
 	return d.f.Close()
 }
 
-// syslogDest sends each line at the priority of its JSON level.
+// syslogDest sends each line as one datagram at the priority of its JSON
+// level, in the local format the system's own syslog(3) writes:
+// "<pri>Mmm dd hh:mm:ss tag[pid]: msg".
 type syslogDest struct {
-	w   *syslog.Writer
-	cut prometheus.Counter
+	conn     net.Conn
+	facility syslog.Priority
+	tag      string
+	max      int // the whole datagram
+	cut      prometheus.Counter
+	now      func() time.Time
 }
 
 func openSyslogDest(facility, tag string, cut prometheus.Counter) (*syslogDest, error) {
-	w, err := syslog.New(facilities[facility]|syslog.LOG_INFO, tag)
-	if err != nil {
-		return nil, fmt.Errorf("syslog: %w", err)
+	var last error
+	for _, path := range syslogSockets {
+		c, err := new(net.Dialer).DialContext(context.Background(), "unixgram", path)
+		if err == nil {
+			return &syslogDest{conn: c, facility: facilities[facility], tag: tag, max: syslogDatagram, cut: cut, now: time.Now}, nil
+		}
+		last = err
 	}
-	return &syslogDest{w: w, cut: cut}, nil
+	return nil, fmt.Errorf("syslog: no local socket: %w", last)
 }
 
 func (d *syslogDest) write(line []byte) error {
 	msg := strings.TrimRight(string(line), "\n")
-	level := levelOf(msg)
-	msg, cut := fitSyslog(msg, syslogMax)
+	pri := d.facility | severity(levelOf(msg))
+	header := fmt.Sprintf("<%d>%s %s[%d]: ", pri, d.now().Format(time.Stamp), d.tag, os.Getpid())
+	msg, cut := fitSyslog(msg, d.max-len(header))
 	if cut {
 		d.cut.Inc()
 	}
+	_, err := d.conn.Write([]byte(header + msg))
+	return err
+}
+
+func severity(level string) syslog.Priority {
 	switch level {
 	case "ERROR":
-		return d.w.Err(msg)
+		return syslog.LOG_ERR
 	case "WARN":
-		return d.w.Warning(msg)
+		return syslog.LOG_WARNING
 	case "DEBUG":
-		return d.w.Debug(msg)
+		return syslog.LOG_DEBUG
 	default:
-		return d.w.Info(msg)
+		return syslog.LOG_INFO
 	}
 }
 
 func (d *syslogDest) reopen() error { return nil }
-func (d *syslogDest) close() error  { return d.w.Close() }
+func (d *syslogDest) close() error  { return d.conn.Close() }
 
-// fitSyslog cuts msg to max bytes, the cut marked at its end with how much
-// went. A line is never split into several messages: a reader would take
-// each half for an event of its own.
+// fitSyslog cuts msg to at most max bytes, its end marked with how many went.
+// A line is never split into several messages: a reader would take each half
+// for an event of its own.
 func fitSyslog(msg string, max int) (string, bool) {
 	if len(msg) <= max {
 		return msg, false
 	}
-	tail := fmt.Sprintf(" …[truncated %d bytes]", len(msg)-max)
-	keep := max - len(tail)
-	for keep > 0 && !utf8.RuneStart(msg[keep]) {
+	keep := max
+	for keep > 0 {
+		for keep > 0 && !utf8.RuneStart(msg[keep]) {
+			keep--
+		}
+		tail := fmt.Sprintf(" …[truncated %d bytes]", len(msg)-keep)
+		if keep+len(tail) <= max {
+			return msg[:keep] + tail, true
+		}
 		keep--
 	}
-	return msg[:keep] + tail, true
+	return "", true
 }
 
 // levelOf reads the level of a component's JSON line; a line it cannot read

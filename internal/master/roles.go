@@ -17,10 +17,17 @@ const (
 	roleAuth
 	roleLogin
 	roleDelivery
+	roleLog
 )
+
+// LogComponent is the log process: the supervisor's own binary in the role
+// that reads every component's pipe. It is started first and stopped last.
+const LogComponent = "log"
 
 func roleOf(name string) role {
 	switch {
+	case name == LogComponent:
+		return roleLog
 	case name == "lmtp-login":
 		return roleDelivery
 	case strings.HasSuffix(name, "-login"):
@@ -39,7 +46,7 @@ var telemetryOffset = map[string]int{
 	"pop3": 7, "lmtp": 8, "submission": 9, "managesieve": 10, "jmap": 11,
 	"quota-status": 12, "imap-login": 13, "pop3-login": 14, "lmtp-login": 15,
 	"submission-login": 16, "managesieve-login": 17, "jmap-login": 18,
-	"sasl-login": 19, "backend-api": 20,
+	"sasl-login": 19, "backend-api": 20, LogComponent: 21,
 }
 
 // readySockets are the sockets a component serves that the ones after it
@@ -78,7 +85,7 @@ var runDirs = []struct {
 }
 
 func knownComponent(name string) error {
-	if _, ok := telemetryOffset[name]; !ok {
+	if _, ok := telemetryOffset[name]; !ok || name == LogComponent {
 		return fmt.Errorf("unknown component %q in master_components", name)
 	}
 	return nil
