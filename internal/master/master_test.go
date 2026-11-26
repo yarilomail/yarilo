@@ -797,3 +797,45 @@ func TestAKilledComponentIsNamedByItsSignal(t *testing.T) {
 		t.Errorf("exitReason = %s, %q", how, why)
 	}
 }
+
+// Without GOMAXPROCS in master_environment every component gets the default,
+// once; with it, the value given and no default beside it.
+func TestGOMAXPROCSDefaultsAndMasterEnvironmentOverrides(t *testing.T) {
+	p := newPlanRig(t, "imap", "pop3")
+	plan, err := p.chk.Build(p.cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.GOMAXPROCS != DefaultGOMAXPROCS || plan.GOMAXPROCSFrom != "default" {
+		t.Errorf("plan says GOMAXPROCS=%s from %s, want the default", plan.GOMAXPROCS, plan.GOMAXPROCSFrom)
+	}
+	for _, c := range plan.Components {
+		if n := countVar(c.Env, "GOMAXPROCS"); n != 1 || envOf(plan, c.Name)["GOMAXPROCS"] != DefaultGOMAXPROCS {
+			t.Errorf("%s has GOMAXPROCS %d times, %q; want the default once", c.Name, n, envOf(plan, c.Name)["GOMAXPROCS"])
+		}
+	}
+
+	p.cfg.Master.Environment = map[string]string{"GOMAXPROCS": "3"}
+	plan, err = p.chk.Build(p.cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.GOMAXPROCS != "3" || plan.GOMAXPROCSFrom != "master_environment" {
+		t.Errorf("plan says GOMAXPROCS=%s from %s, want 3 from master_environment", plan.GOMAXPROCS, plan.GOMAXPROCSFrom)
+	}
+	for _, c := range plan.Components {
+		if n := countVar(c.Env, "GOMAXPROCS"); n != 1 || envOf(plan, c.Name)["GOMAXPROCS"] != "3" {
+			t.Errorf("%s has GOMAXPROCS %d times, %q; want 3 once", c.Name, n, envOf(plan, c.Name)["GOMAXPROCS"])
+		}
+	}
+}
+
+func countVar(env []string, name string) int {
+	n := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, name+"=") {
+			n++
+		}
+	}
+	return n
+}

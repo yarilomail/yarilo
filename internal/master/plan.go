@@ -44,7 +44,17 @@ type Plan struct {
 	Telemetry   string // the supervisor's own listen address
 	ConfigPath  string
 	Accounts    map[role]Account
+	// GOMAXPROCS every component gets, and whether it came from
+	// master_environment or is the default.
+	GOMAXPROCS     string
+	GOMAXPROCSFrom string
 }
+
+// DefaultGOMAXPROCS is what a component gets when master_environment names
+// none: on the FreeBSD host 2 was the one value with no stall and the most
+// logins, and from 3 up the logins fell to a third and below (#2715,
+// reviewer 2026-11-26). master_environment overrides it.
+const DefaultGOMAXPROCS = "2"
 
 // Syslog reports whether the components' lines go to syslog.
 func (p *Plan) Syslog() bool { return p.LogPath == "syslog" }
@@ -167,7 +177,13 @@ func (c Checker) Build(cfg *config.Config, configPath string) (*Plan, error) {
 		fail("master_components is empty")
 	}
 
-	extra := make([]string, 0, len(m.Environment))
+	extra := make([]string, 0, len(m.Environment)+1)
+	p.GOMAXPROCS, p.GOMAXPROCSFrom = DefaultGOMAXPROCS, "default"
+	if v, ok := m.Environment["GOMAXPROCS"]; ok {
+		p.GOMAXPROCS, p.GOMAXPROCSFrom = v, "master_environment"
+	} else {
+		extra = append(extra, "GOMAXPROCS="+DefaultGOMAXPROCS)
+	}
 	for k, v := range m.Environment {
 		if k == "" || strings.ContainsAny(k, "=\x00") {
 			fail("master_environment has a bad name %q", k)
