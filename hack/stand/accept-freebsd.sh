@@ -444,10 +444,22 @@ done
 t1=$(date +%s)
 mc=$(awk -v a="$m0" -v b="$(cpu_s "$cm")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", t > 0 ? (b - a) / t * 100 : 0 }')
 lc=$(awk -v a="$l0" -v b="$(cpu_s "$cl")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", t > 0 ? (b - a) / t * 100 : 0 }')
-awk -v c="$mc" -v m="$MASTER_CPU_MAX" 'BEGIN { exit !(c < m) }' && verdict "supervisor CPU during imaptest" ok "$mc % (< $MASTER_CPU_MAX %)" ||
+# A process that went away during the part reads as no CPU at all: a restart
+# under load is what the run is there to catch, so a changed pid fails.
+if [ -z "$cm" ] || [ "$(master_pid)" != "$cm" ]; then
+  verdict "supervisor CPU during imaptest" fail "the supervisor changed or went away during imaptest: $cm -> $(master_pid)"
+elif awk -v c="$mc" -v m="$MASTER_CPU_MAX" 'BEGIN { exit !(c >= 0 && c < m) }'; then
+  verdict "supervisor CPU during imaptest" ok "$mc % (< $MASTER_CPU_MAX %)"
+else
   verdict "supervisor CPU during imaptest" fail "$mc %, limit $MASTER_CPU_MAX %"
-awk -v c="$lc" -v m="$LOG_CPU_MAX" 'BEGIN { exit !(c < m) }' && verdict "log process CPU during imaptest" ok "$lc % (< $LOG_CPU_MAX %)" ||
+fi
+if [ -z "$cl" ] || [ "$(log_pid)" != "$cl" ]; then
+  verdict "log process CPU during imaptest" fail "the log process changed or went away during imaptest: $cl -> $(log_pid)"
+elif awk -v c="$lc" -v m="$LOG_CPU_MAX" 'BEGIN { exit !(c >= 0 && c < m) }'; then
+  verdict "log process CPU during imaptest" ok "$lc % (< $LOG_CPU_MAX %)"
+else
   verdict "log process CPU during imaptest" fail "$lc %, limit $LOG_CPU_MAX %"
+fi
 
 echo "== FTS short tokens"
 U=u101@d00003.test; T=$(date +%s)
