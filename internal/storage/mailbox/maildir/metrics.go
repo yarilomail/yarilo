@@ -9,7 +9,7 @@ import (
 // here, the journal in the index (#1840). Sites are named by role.
 var metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_lock_acquired_total",
-	Help: "Locks the maildir driver took on the uidlist, by the call that took it. A store, a rename and a read take none.",
+	Help: "Locks the maildir driver took on the uidlist, by the call that took it. A rename and a read take none; a store or a save takes one only to give a new keyword its letter.",
 }, []string{"site"})
 
 // Held, not waited for: the cost a site imposes on the folder is the time it
