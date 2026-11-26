@@ -42,6 +42,9 @@ LOG_CPU_MAX="${ACCEPT_LOG_CPU_MAX:-15}"
 MIN_NOFILE="${ACCEPT_MIN_NOFILE:-}"
 MASTER_METRICS="${ACCEPT_MASTER_METRICS:-http://127.0.0.1:18079/metrics}"
 CLOCK_MAX_MS="${ACCEPT_CLOCK_MAX_MS:-1000}"
+# Both whole-server stalls on the host came with 12 % free and none of the
+# runs with 44 % free (#2715); no run lies between.
+DISK_MIN_FREE_PCT="${ACCEPT_DISK_MIN_FREE_PCT:-25}"
 
 # A run never writes over another run's evidence.
 [ -e "$OUT" ] && { echo "accept-freebsd: $OUT exists; pick a new directory" >&2; exit 2; }
@@ -188,9 +191,15 @@ smoke_part() {
 date -u +"start %FT%TZ" > "$OUT/times"
 cp "$CONF" "$OUT/yarilo.yaml.start"
 cp "$RCCONF" "$OUT/rc.conf.start"
+# The owner and mode go back as they were: yarilo.yaml is root:yarilo-auth
+# 0640, and a run that left it 0644 failed the next run's log-process row.
+set -- $(stat -f '%Su %Sg %Lp' "$CONF")
+conf_owner=$1 conf_group=$2 conf_mode=$3
+set -- $(stat -f '%Su %Sg %Lp' "$RCCONF")
+rc_owner=$1 rc_group=$2 rc_mode=$3
 restore() {
-  install -m 0644 -o root -g wheel "$OUT/yarilo.yaml.start" "$CONF"
-  install -m 0644 "$OUT/rc.conf.start" "$RCCONF"
+  install -m "$conf_mode" -o "$conf_owner" -g "$conf_group" "$OUT/yarilo.yaml.start" "$CONF"
+  install -m "$rc_mode" -o "$rc_owner" -g "$rc_group" "$OUT/rc.conf.start" "$RCCONF"
   service yarilo restart > /dev/null 2>&1 || true
 }
 trap restore EXIT
@@ -208,6 +217,19 @@ if [ -n "$off" ] && awk -v o="$off" -v m="$CLOCK_MAX_MS" 'BEGIN{exit !(o < m && 
   verdict "clock in sync" ok "$src offset ${off} ms"
 else
   verdict "clock in sync" fail "$src offset '${off:-none}' ms, date $(date -u +%FT%TZ)"
+fi
+
+echo "== disk"
+# Every file system the mail, the state and the logs live on, and / (the
+# figures in #2715 are df /), each once.
+free=$(df -kP / /var/mail/vhosts /var/db/yarilo /var/log/yarilo 2>/dev/null | awk 'NR > 1 && !seen[$6]++ {
+  printf "%s%s %d%%", sep, $6, 100 - $5; sep = ", "
+  if (100 - $5 < min || min == "") min = 100 - $5
+} END {print "|" min}')
+if [ -n "${free#*|}" ] && [ "${free#*|}" -ge "$DISK_MIN_FREE_PCT" ]; then
+  verdict "free space at least ${DISK_MIN_FREE_PCT} %" ok "${free%|*} free"
+else
+  verdict "free space at least ${DISK_MIN_FREE_PCT} %" fail "${free%|*} free"
 fi
 
 echo "== port"
