@@ -1204,3 +1204,56 @@ func TestTheLogProcessIsNotGivenTheConfig(t *testing.T) {
 		t.Errorf("log process environment lacks its settings: %v", env)
 	}
 }
+
+// failSecond passes writes through to the socket except the second, which
+// fails as a write to a syslogd that went away does.
+type failSecond struct {
+	net.Conn
+	n int
+}
+
+func (f *failSecond) Write(b []byte) (int, error) {
+	f.n++
+	if f.n == 2 {
+		return 0, errors.New("connection refused")
+	}
+	return f.Conn.Write(b)
+}
+
+// A chunk of three lines whose second write fails: after the redial the
+// second and third are sent, and the first is not sent twice.
+func TestASyslogRedialResendsOnlyTheLinesThatDidNotGo(t *testing.T) {
+	sock := filepath.Join(shortDir(t), "log.sock")
+	pc, err := new(net.ListenConfig).ListenPacket(t.Context(), "unixgram", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+	old := syslogSockets
+	syslogSockets = []string{sock}
+	t.Cleanup(func() { syslogSockets = old })
+
+	d := &retryDest{target: LogTarget{Path: "syslog", Facility: "mail"}, name: "imap", m: newMetrics(nil), logger: slog.New(slog.DiscardHandler)}
+	if err := d.open(); err != nil {
+		t.Fatal(err)
+	}
+	sd := d.dst.(*syslogDest)
+	sd.conn = &failSecond{Conn: sd.conn}
+	if err := d.write([]byte("one\ntwo\nthree\n")); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for len(got) < 4 {
+		buf := make([]byte, 8192)
+		_ = pc.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		n, _, err := pc.ReadFrom(buf)
+		if err != nil {
+			break
+		}
+		msg := string(buf[:n])
+		got = append(got, msg[strings.LastIndex(msg, ": ")+2:])
+	}
+	if strings.Join(got, ",") != "one,two,three" {
+		t.Errorf("syslog got %q, want one, two, three once each", got)
+	}
+}
