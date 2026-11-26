@@ -4,6 +4,7 @@
 //
 //	yarilo-master [run]          supervise, as root
 //	yarilo-master check          validate the master section and exit
+//	yarilo-master log            the log process, which the supervisor starts
 //	yarilo-master ctl <command>  status | stop|start|restart <name>… | reopen
 package main
 
@@ -14,6 +15,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -46,6 +49,9 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	case "run":
 		logging.Setup("master")
 		return run(cfgPath)
+	case "log":
+		logTo(stderr)
+		return logRole()
 	case "check":
 		logTo(stderr)
 		return check(cfgPath, stdout, stderr)
@@ -53,7 +59,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		logTo(stderr)
 		return ctl(cfgPath, args[1:], stdout, stderr)
 	default:
-		_, _ = fmt.Fprintf(stderr, "usage: yarilo-master [run | check | ctl <command>]\n")
+		_, _ = fmt.Fprintf(stderr, "usage: yarilo-master [run | check | log | ctl <command>]\n")
 		return 2
 	}
 }
@@ -89,6 +95,47 @@ func checkLine(p *master.Plan) string {
 	return fmt.Sprintf("yarilo-master: configuration OK; components get GOMAXPROCS=%s (%s)", p.GOMAXPROCS, p.GOMAXPROCSFrom)
 }
 
+// setGOMAXPROCS applies to the supervisor the value the components get:
+// master_environment's, else 2. With every core the Go scheduler spun on the
+// FreeBSD host, 252 % of CPU against 25 % at 2 (#2715).
+func setGOMAXPROCS(v string) {
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		runtime.GOMAXPROCS(n)
+	}
+}
+
+// logRole is the log process: it reads the pipes the supervisor handed it and
+// writes each component's lines to the configured destination, as the log
+// account. Its counters are on its own telemetry port.
+func logRole() int {
+	setGOMAXPROCS(os.Getenv("GOMAXPROCS"))
+	block, _ := strconv.Atoi(os.Getenv(master.LogPprofBlockEnv))
+	mutex, _ := strconv.Atoi(os.Getenv(master.LogPprofMutexEnv))
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), collectors.NewGoCollector())
+	tel := telemetry.NewWithOptions(telemetry.Options{
+		Addr:     telemetry.Addr(""),
+		Registry: reg,
+		Pprof: telemetry.PprofOptions{
+			Enabled:       os.Getenv(master.LogPprofEnv) == "true",
+			BlockRate:     block,
+			MutexFraction: mutex,
+		},
+	})
+	if err := tel.Start(context.Background()); err != nil {
+		slog.Error("log: telemetry listen failed", "err", err)
+		return 1
+	}
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	target := master.LogTarget{Path: os.Getenv(master.LogPathEnv), Facility: os.Getenv(master.LogFacilityEnv)}
+	if err := master.RunLog(target, os.Getenv(master.LogFDsEnv), reg, sigs, slog.Default()); err != nil {
+		slog.Error("log: stopped", "err", err)
+		return 1
+	}
+	return 0
+}
+
 func ctl(cfgPath string, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		_, _ = fmt.Fprintf(stderr, "usage: yarilo-master ctl status [name…] | stop|start|restart <name>… | reopen\n")
@@ -120,6 +167,7 @@ func run(cfgPath string) int {
 	}
 	// Inherited by every component; it was daemon's and the login class's.
 	syscall.Umask(0o027)
+	setGOMAXPROCS(p.GOMAXPROCS)
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), collectors.NewGoCollector())
@@ -134,12 +182,7 @@ func run(cfgPath string) int {
 		slog.Error("master: could not prepare", "err", err)
 		return 1
 	}
-	own, err := sup.OwnLog()
-	if err != nil {
-		slog.Error("master: could not open its own log", "err", err)
-		return 1
-	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(own, nil)).With("service", "master"))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(sup.OwnLog(os.Stderr), nil)).With("service", "master"))
 
 	tel := telemetry.NewWithOptions(telemetry.Options{
 		Addr:     telemetry.Addr(p.Telemetry),
@@ -155,7 +198,6 @@ func run(cfgPath string) int {
 	if err := tel.Start(context.Background()); err != nil {
 		slog.Error("master: telemetry listen failed; nothing started", "addr", p.Telemetry, "err", err)
 		sup.Stop()
-		sup.CloseOwnLog()
 		return 1
 	}
 
@@ -183,7 +225,6 @@ func run(cfgPath string) int {
 		cancel()
 		sup.Stop()
 		slog.Info("master: stopped")
-		sup.CloseOwnLog()
 		return 0
 	}
 	return 0

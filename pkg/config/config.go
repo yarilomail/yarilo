@@ -114,6 +114,9 @@ type MasterConfig struct {
 	AuthUser     string `koanf:"master_auth_user"`
 	LoginUser    string `koanf:"master_login_user"`
 	DeliveryUser string `koanf:"master_delivery_user"`
+	// LogUser runs the log process and owns the log directory; no component
+	// that handles mail can rewrite the logs.
+	LogUser string `koanf:"master_log_user"`
 	// TelemetryPort is the supervisor's own; each component's is this plus
 	// a fixed offset.
 	TelemetryPort int `koanf:"master_telemetry_port"`
@@ -3185,6 +3188,7 @@ func Defaults() *Config {
 		AuthUser:       "yarilo-auth",
 		LoginUser:      "yarilo-login",
 		DeliveryUser:   "yarilo-delivery",
+		LogUser:        "yarilo-log",
 		TelemetryPort:  18079,
 	}
 	c.DictService.DictMaxConns = 8

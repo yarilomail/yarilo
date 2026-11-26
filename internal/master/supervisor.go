@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -84,9 +85,12 @@ type Supervisor struct {
 	procs []*proc
 	byNm  map[string]*proc
 	lock  *os.File
-	own   *sink // the supervisor's own lines
-	ownW  *os.File
-	ownFd chan struct{}
+	// pipes are every output the log process reads, the supervisor's own
+	// first. The supervisor holds both ends for its life, so a log process
+	// that dies costs no component an error on write (#2715).
+	pipes []*outPipe
+	logUp atomic.Bool // a log process is running and reading
+	drain drainer
 
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -96,9 +100,12 @@ type Supervisor struct {
 }
 
 type proc struct {
-	s    *Supervisor
-	c    Component
-	sink *sink
+	s   *Supervisor
+	c   Component
+	out *outPipe // its stdout and stderr; nil for the log process
+	// quickFails counts the log process's young exits in a row: after three
+	// it backs off like any other component.
+	quickFails int
 
 	mu        sync.Mutex
 	state     State
@@ -136,34 +143,26 @@ func New(plan *Plan, opts Options) (*Supervisor, error) {
 		return nil, err
 	}
 	s.lock = lock
+	own, err := newOutPipe("master")
+	if err != nil {
+		_ = lock.Close()
+		return nil, err
+	}
+	s.pipes = append(s.pipes, own)
 	for _, c := range plan.Components {
-		dst, err := s.openDest(c.Name)
-		if err != nil {
-			_ = s.closeSinks()
-			_ = lock.Close()
-			return nil, err
-		}
 		p := &proc{s: s, c: c, state: StateStopped, kick: make(chan struct{}, 1), firstUp: make(chan struct{})}
-		p.sink = newSink(c.Name, dst, s.m, s.logDrop)
+		if c.Name != LogComponent {
+			if p.out, err = newOutPipe(c.Name); err != nil {
+				_ = lock.Close()
+				return nil, err
+			}
+			s.pipes = append(s.pipes, p.out)
+		}
 		s.procs = append(s.procs, p)
 		s.byNm[c.Name] = p
 	}
+	s.drain.s = s
 	return s, nil
-}
-
-func (s *Supervisor) openDest(name string) (destination, error) {
-	if s.plan.Syslog() {
-		return openSyslogDest(s.plan.Facility, "yarilo-"+name, s.m.logTruncated.WithLabelValues(name))
-	}
-	return openFileDest(s.plan.LogPath, name)
-}
-
-func (s *Supervisor) logDrop(name string, dropping bool, err error) {
-	if dropping {
-		s.log.Error("master: a component's log is dropping lines", "component", name, "err", err)
-		return
-	}
-	s.log.Info("master: a component's log takes lines again", "component", name)
 }
 
 func (s *Supervisor) prepareRunDir() error {
@@ -318,6 +317,9 @@ func (p *proc) loop() {
 			return
 		}
 		p.drainKick() // a kick from before this start is not a reason to skip the next wait
+		if p.c.Name == LogComponent {
+			p.s.drain.stop() // never two readers on one pipe
+		}
 		ran, how, err := p.runOnce()
 		if p.s.ctx.Err() != nil {
 			return
@@ -326,11 +328,15 @@ func (p *proc) loop() {
 		if err != nil {
 			how = "exit"
 			p.s.log.Error("master: component could not be started", "component", p.c.Name, "err", err)
+			p.markFirstUp() // one that cannot start does not hold the rest
 		}
 		p.mu.Lock()
 		requested, down := p.requested, p.down
 		p.requested = false
 		delay := p.nextDelay(ran)
+		if p.c.Name == LogComponent {
+			delay = p.logDelay(ran)
+		}
 		if requested {
 			delay = 0
 			how = "requested"
@@ -348,10 +354,29 @@ func (p *proc) loop() {
 			p.s.log.Warn("master: component exited", "component", p.c.Name, "how", how,
 				"why", p.why, "uptime", ran.Round(time.Millisecond).String(), "next_start_in", delay.String())
 		}
+		if p.c.Name == LogComponent && delay > 0 {
+			p.s.drain.start() // the components must not block on a full pipe
+		}
 		if !p.waitKick(delay, false) {
 			return
 		}
 	}
+}
+
+// logDelay: a log process that had been working comes back at once, since
+// every component's output waits on it; after three young exits in a row the
+// usual backoff applies, so one that cannot start does not loop. Caller holds
+// p.mu.
+func (p *proc) logDelay(ran time.Duration) time.Duration {
+	if ran >= p.s.opts.Timings.WorkingUptime {
+		p.quickFails = 0
+		return 0
+	}
+	p.quickFails++
+	if p.quickFails < 3 {
+		return 0
+	}
+	return p.nextDelay(ran)
 }
 
 // nextDelay: none for a component that has worked; doubling from FirstDelay
@@ -406,27 +431,39 @@ func (p *proc) runOnce() (time.Duration, string, error) {
 	for _, sock := range p.c.Ready {
 		_ = os.Remove(sock) // a dead process's socket must not read as ready
 	}
-	r, w, err := os.Pipe()
-	if err != nil {
-		return 0, "", err
-	}
-	cmd := exec.Command(p.c.Bin) //nolint:gosec,noctx // the binary is a checked, root-owned path from the plan; the supervisor stops it itself
+	cmd := exec.Command(p.c.Bin, p.c.Args...) //nolint:gosec,noctx // the binary is a checked, root-owned path from the plan; the supervisor stops it itself
 	cmd.Env = p.c.Env
 	cmd.Dir = "/"
-	cmd.Stdout, cmd.Stderr = w, w
+	if p.c.Name == LogComponent {
+		// Every read end, in order, from fd 3; the log process's own lines go
+		// where the supervisor's fallback goes.
+		fds := make([]string, 0, len(p.s.pipes))
+		for i, op := range p.s.pipes {
+			f, err := dup(op.r, false)
+			if err != nil {
+				closeAll(cmd.ExtraFiles)
+				return 0, "", err
+			}
+			cmd.ExtraFiles = append(cmd.ExtraFiles, f)
+			fds = append(fds, fmt.Sprintf("%d=%s", 3+i, op.name))
+		}
+		defer closeAll(cmd.ExtraFiles) // the child has its own; these copies were for exec
+		cmd.Env = append(append([]string{}, cmd.Env...), LogFDsEnv+"="+strings.Join(fds, ","))
+		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	} else {
+		cmd.Stdout, cmd.Stderr = p.out.w, p.out.w
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	setDeathSignal(cmd.SysProcAttr)
 	if p.s.opts.AsRoot {
 		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: p.c.Account.UID, Gid: p.c.Account.GID, Groups: p.c.Account.Groups}
 	}
 	if err := cmd.Start(); err != nil {
-		_ = r.Close()
-		_ = w.Close()
 		return 0, "", err
 	}
-	_ = w.Close()
-	fed := make(chan struct{})
-	go func() { defer close(fed); p.sink.feed(r); _ = r.Close() }()
+	if p.c.Name == LogComponent {
+		p.s.logUp.Store(true)
+	}
 
 	started := time.Now()
 	exited := make(chan struct{})
@@ -454,13 +491,21 @@ func (p *proc) runOnce() (time.Duration, string, error) {
 
 	werr := <-waited
 	ran := time.Since(started)
-	<-fed
+	if p.c.Name == LogComponent {
+		p.s.logUp.Store(false)
+	}
 	close(exited)
 	_ = os.Remove(p.pidFile())
 	p.s.m.up.WithLabelValues(p.c.Name).Set(0)
 	how, why := exitReason(werr)
 	p.set(func() { p.cmd, p.pid, p.why = nil, 0, why })
 	return ran, how, nil
+}
+
+func closeAll(fs []*os.File) {
+	for _, f := range fs {
+		_ = f.Close()
+	}
 }
 
 // waitReady waits until every ready socket accepts a connection, the process
@@ -539,21 +584,11 @@ func (s *Supervisor) Stop() {
 			s.procs[i].terminate()
 		}
 		s.wg.Wait()
-		_ = s.closeSinks()
+		s.drain.stop()
 		if s.lock != nil {
 			_ = s.lock.Close()
 		}
 	})
-}
-
-func (s *Supervisor) closeSinks() error {
-	var errs []error
-	for _, p := range s.procs {
-		if err := p.sink.close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
 }
 
 func (s *Supervisor) find(names []string) ([]*proc, error) {
@@ -578,6 +613,9 @@ func (s *Supervisor) StopComponents(names ...string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseLog(ps, "stop"); err != nil {
+		return err
+	}
 	for _, p := range ps {
 		p.set(func() { p.down = true })
 		p.terminate()
@@ -591,11 +629,26 @@ func (s *Supervisor) StartComponents(names ...string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseLog(ps, "start"); err != nil {
+		return err
+	}
 	for _, p := range ps {
 		p.set(func() { p.down = false; p.delay = 0 })
 		select {
 		case p.kick <- struct{}{}:
 		default:
+		}
+	}
+	return nil
+}
+
+// refuseLog keeps the log process out of stop and start: kept down it would
+// leave every pipe without a reader, and every component would block once
+// 64 KiB of lines were waiting. restart is allowed.
+func refuseLog(ps []*proc, cmd string) error {
+	for _, p := range ps {
+		if p.c.Name == LogComponent {
+			return fmt.Errorf("%s does not take the log process: with it down every component blocks on its output; use restart", cmd)
 		}
 	}
 	return nil
@@ -624,50 +677,28 @@ func (s *Supervisor) Restart(names ...string) error {
 	return nil
 }
 
-// OwnLog is where the supervisor's own lines go: the same destination as the
-// components', as master.log or under the tag yarilo-master. Close it with
-// CloseOwnLog once the last line is written.
-func (s *Supervisor) OwnLog() (io.Writer, error) {
-	dst, err := s.openDest("master")
-	if err != nil {
-		return nil, err
-	}
-	r, w, err := os.Pipe()
-	if err != nil {
-		_ = dst.close()
-		return nil, err
-	}
-	s.own = newSink("master", dst, s.m, nil)
-	s.ownW = w
-	s.ownFd = make(chan struct{})
-	go func() { defer close(s.ownFd); s.own.feed(r); _ = r.Close() }()
-	return w, nil
+// OwnLog is where the supervisor's own lines go: its own pipe, which the log
+// process reads as the component "master". The supervisor never waits on it:
+// the pipe's end is written without blocking, and a line that does not fit,
+// or any line while no log process runs, goes to fallback (stderr, which the
+// port's rc script sends to syslog).
+func (s *Supervisor) OwnLog(fallback io.Writer) io.Writer {
+	return &ownWriter{s: s, pipe: s.pipes[0].w, fallback: fallback}
 }
 
-// CloseOwnLog flushes and closes the supervisor's own log.
-func (s *Supervisor) CloseOwnLog() {
-	if s.own == nil {
-		return
-	}
-	_ = s.ownW.Close()
-	<-s.ownFd
-	_ = s.own.close()
-}
-
-// Reopen reopens every log file.
+// Reopen has the log process reopen every file.
 func (s *Supervisor) Reopen() error {
-	var errs []error
-	if s.own != nil {
-		if err := s.own.reopen(); err != nil {
-			errs = append(errs, err)
-		}
+	p := s.byNm[LogComponent]
+	if p == nil {
+		return nil
 	}
-	for _, p := range s.procs {
-		if err := p.sink.reopen(); err != nil {
-			errs = append(errs, err)
-		}
+	p.mu.Lock()
+	cmd := p.cmd
+	p.mu.Unlock()
+	if cmd == nil || cmd.Process == nil {
+		return errors.New("no log process runs to reopen the files")
 	}
-	return errors.Join(errs...)
+	return cmd.Process.Signal(syscall.SIGHUP)
 }
 
 // Status is every component's state, in start order.

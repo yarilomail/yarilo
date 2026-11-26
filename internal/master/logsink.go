@@ -1,16 +1,19 @@
 package master
 
 import (
-	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/syslog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -24,10 +27,14 @@ var facilities = map[string]syslog.Priority{
 	"local6": syslog.LOG_LOCAL6, "local7": syslog.LOG_LOCAL7,
 }
 
-// syslogMax is the longest message sent to the local syslog socket; a longer
-// line is cut to it and marked. The figure is the host's syslogd, measured
-// before the port uses syslog (#2715).
-var syslogMax = 8192
+// syslogDatagram is the largest datagram the local syslog socket takes,
+// header and all: on the FreeBSD host 8191 bytes arrived and 8192 was dropped
+// whole, not cut (net.local.dgram.maxdgram 8192, measured 2026-11-26). A line
+// that would pass it is cut to fit and marked.
+var syslogDatagram = 8191
+
+// syslogSockets are where the local syslog listens, by system.
+var syslogSockets = []string{"/var/run/log", "/dev/log", "/var/run/syslog"}
 
 // queued is how many lines a sink holds while its destination is slow. Past
 // it lines are dropped and counted: a full disk must never block a component
@@ -70,18 +77,33 @@ func newSink(name string, dst destination, m *metrics, onDrop func(string, bool,
 	return s
 }
 
-// feed reads r line by line until it ends. Each process of the component
-// gets its own pipe, and every one of them feeds the same sink.
+// feed reads r until it ends and hands on whole lines a chunk at a time:
+// one queue entry and one write for as many lines as one read brought, not
+// one each. A part line waits for its end; one longer than the buffer is
+// handed on as it is.
 func (s *sink) feed(r io.Reader) {
-	br := bufio.NewReaderSize(r, 64<<10)
+	const size = 64 << 10
+	buf := make([]byte, size)
+	have := 0
 	for {
-		line, err := br.ReadBytes('\n')
-		if len(line) > 0 {
+		n, err := r.Read(buf[have:])
+		have += n
+		end := bytes.LastIndexByte(buf[:have], '\n') + 1
+		if end == 0 && have == size {
+			end = have // a line longer than the buffer
+		}
+		if err != nil {
+			end = have // what is left when the pipe ends
+		}
+		if end > 0 {
+			chunk := make([]byte, end)
+			copy(chunk, buf[:end])
 			select {
-			case s.lines <- line:
+			case s.lines <- chunk:
 			default:
-				s.drop(fmt.Errorf("the log queue is full"))
+				s.drop(fmt.Errorf("the log queue is full"), lineCount(chunk))
 			}
+			have = copy(buf, buf[end:have])
 		}
 		if err != nil {
 			return
@@ -89,11 +111,20 @@ func (s *sink) feed(r io.Reader) {
 	}
 }
 
+// lineCount is how many lines a chunk holds, a part line at its end counted.
+func lineCount(chunk []byte) int {
+	n := bytes.Count(chunk, []byte{'\n'})
+	if len(chunk) > 0 && chunk[len(chunk)-1] != '\n' {
+		n++
+	}
+	return n
+}
+
 func (s *sink) writeLoop() {
 	defer close(s.done)
-	for line := range s.lines {
-		if err := s.dst.write(line); err != nil {
-			s.drop(err)
+	for chunk := range s.lines {
+		if err := s.dst.write(chunk); err != nil {
+			s.drop(err, lineCount(chunk))
 			continue
 		}
 		s.mu.Lock()
@@ -106,8 +137,8 @@ func (s *sink) writeLoop() {
 	}
 }
 
-func (s *sink) drop(err error) {
-	s.dropped.Inc()
+func (s *sink) drop(err error, lines int) {
+	s.dropped.Add(float64(lines))
 	s.mu.Lock()
 	was := s.dropping
 	s.dropping = true
@@ -168,55 +199,91 @@ func (d *fileDest) close() error {
 	return d.f.Close()
 }
 
-// syslogDest sends each line at the priority of its JSON level.
+// syslogDest sends each line as one datagram at the priority of its JSON
+// level, in the local format the system's own syslog(3) writes:
+// "<pri>Mmm dd hh:mm:ss tag[pid]: msg".
 type syslogDest struct {
-	w   *syslog.Writer
-	cut prometheus.Counter
+	conn     net.Conn
+	facility syslog.Priority
+	tag      string
+	max      int // the whole datagram
+	cut      prometheus.Counter
+	now      func() time.Time
 }
 
 func openSyslogDest(facility, tag string, cut prometheus.Counter) (*syslogDest, error) {
-	w, err := syslog.New(facilities[facility]|syslog.LOG_INFO, tag)
-	if err != nil {
-		return nil, fmt.Errorf("syslog: %w", err)
+	var last error
+	for _, path := range syslogSockets {
+		c, err := new(net.Dialer).DialContext(context.Background(), "unixgram", path)
+		if err == nil {
+			return &syslogDest{conn: c, facility: facilities[facility], tag: tag, max: syslogDatagram, cut: cut, now: time.Now}, nil
+		}
+		last = err
 	}
-	return &syslogDest{w: w, cut: cut}, nil
+	return nil, fmt.Errorf("syslog: no local socket: %w", last)
 }
 
-func (d *syslogDest) write(line []byte) error {
+// write sends each line of the chunk as a datagram of its own.
+func (d *syslogDest) write(chunk []byte) error {
+	var first error
+	for _, line := range bytes.SplitAfter(chunk, []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		if err := d.writeLine(line); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func (d *syslogDest) writeLine(line []byte) error {
 	msg := strings.TrimRight(string(line), "\n")
-	level := levelOf(msg)
-	msg, cut := fitSyslog(msg, syslogMax)
+	pri := d.facility | severity(levelOf(msg))
+	header := fmt.Sprintf("<%d>%s %s[%d]: ", pri, d.now().Format(time.Stamp), d.tag, os.Getpid())
+	msg, cut := fitSyslog(msg, d.max-len(header))
 	if cut {
 		d.cut.Inc()
 	}
+	_, err := d.conn.Write([]byte(header + msg))
+	return err
+}
+
+func severity(level string) syslog.Priority {
 	switch level {
 	case "ERROR":
-		return d.w.Err(msg)
+		return syslog.LOG_ERR
 	case "WARN":
-		return d.w.Warning(msg)
+		return syslog.LOG_WARNING
 	case "DEBUG":
-		return d.w.Debug(msg)
+		return syslog.LOG_DEBUG
 	default:
-		return d.w.Info(msg)
+		return syslog.LOG_INFO
 	}
 }
 
 func (d *syslogDest) reopen() error { return nil }
-func (d *syslogDest) close() error  { return d.w.Close() }
+func (d *syslogDest) close() error  { return d.conn.Close() }
 
-// fitSyslog cuts msg to max bytes, the cut marked at its end with how much
-// went. A line is never split into several messages: a reader would take
-// each half for an event of its own.
+// fitSyslog cuts msg to at most max bytes, its end marked with how many went.
+// A line is never split into several messages: a reader would take each half
+// for an event of its own.
 func fitSyslog(msg string, max int) (string, bool) {
 	if len(msg) <= max {
 		return msg, false
 	}
-	tail := fmt.Sprintf(" …[truncated %d bytes]", len(msg)-max)
-	keep := max - len(tail)
-	for keep > 0 && !utf8.RuneStart(msg[keep]) {
+	keep := max
+	for keep > 0 {
+		for keep > 0 && !utf8.RuneStart(msg[keep]) {
+			keep--
+		}
+		tail := fmt.Sprintf(" …[truncated %d bytes]", len(msg)-keep)
+		if keep+len(tail) <= max {
+			return msg[:keep] + tail, true
+		}
 		keep--
 	}
-	return msg[:keep] + tail, true
+	return "", true
 }
 
 // levelOf reads the level of a component's JSON line; a line it cannot read
