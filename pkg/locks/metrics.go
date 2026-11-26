@@ -16,6 +16,7 @@ type Metrics struct {
 	grantUndeliv   prometheus.Counter
 	callerGone     prometheus.Counter
 	expiredUnrel   prometheus.Counter
+	silentConns    prometheus.Counter
 }
 
 // NewMetrics constructs and registers the metric set on r. If r is nil the
@@ -76,6 +77,13 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 			Help:        "Locks whose holder came to release them after they had already expired. Each one is a hand-off nobody could publish.",
 			ConstLabels: prometheus.Labels{"mode": mode},
 		}),
+		// A connection closed before its first byte: a readiness probe or a
+		// pool that dialled and let go. Not a handshake that failed (#2715).
+		silentConns: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "yarilo_locks_silent_connections_total",
+			Help:        "Connections closed before they sent a byte: probes and abandoned dials, not failed handshakes.",
+			ConstLabels: prometheus.Labels{"mode": mode},
+		}),
 		renewFailed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name:        "yarilo_locks_renew_failed_total",
 			Help:        "Total RENEW requests rejected because the lock had already expired.",
@@ -84,7 +92,7 @@ func NewMetrics(r prometheus.Registerer, mode string) *Metrics {
 	}
 	// MustRegister is fine here - duplicate registration in tests is caught
 	// loud, and parameters above guarantee non-conflicting metric identity.
-	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed, m.queueDepth, m.waitBackstop, m.grantUndeliv, m.callerGone, m.expiredUnrel)
+	r.MustRegister(m.acquireSeconds, m.busyTotal, m.renewFailed, m.queueDepth, m.waitBackstop, m.grantUndeliv, m.callerGone, m.expiredUnrel, m.silentConns)
 	return m
 }
 
@@ -114,6 +122,13 @@ func (m *Metrics) incUndeliveredGrant() {
 		return
 	}
 	m.grantUndeliv.Inc()
+}
+
+func (m *Metrics) incSilentConn() {
+	if m == nil || m.silentConns == nil {
+		return
+	}
+	m.silentConns.Inc()
 }
 
 func (m *Metrics) incCallerGone() {
