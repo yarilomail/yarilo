@@ -63,11 +63,47 @@ runs() {
   done
 }
 
+# login_metrics <file>: yarilo-lmtp-login's metrics page, through a forward.
+login_metrics() {
+  local pod pf
+  pod=$(k -n "$NS" get pods -o name | grep -m1 'lmtp-login' | cut -d/ -f2)
+  k -n "$NS" port-forward "pod/$pod" 18680:8080 > /dev/null 2>&1 &
+  pf=$!
+  for _ in $(seq 1 30); do curl -fsS -o "$1" http://127.0.0.1:18680/metrics 2>/dev/null && break; sleep 1; done
+  kill "$pf" 2>/dev/null || true
+}
+
+# phases <before> <after> <messages>: each phase of the proxy's RCPT and
+# backend histograms as ms a message, and the share of resumed handshakes.
+phases() {
+  awk -v n="$3" '
+    FNR == 1 { f++ }
+    /^yarilo_lmtp_login_(rcpt|backend)_phase_seconds_sum\{/ {
+      match($0, /phase="[^"]*"/); ph = substr($0, RSTART + 7, RLENGTH - 8)
+      kind = ($0 ~ /backend_phase/) ? "backend " : ""
+      s[kind ph] += (f == 1 ? -$2 : $2)
+    }
+    /^yarilo_lmtp_login_backend_tls_handshakes_total\{/ {
+      r = ($0 ~ /resumed="true"/) ? "yes" : "no"
+      h[r] += (f == 1 ? -$2 : $2)
+    }
+    END {
+      line = "  proxy phases, ms a message:"
+      for (k in s) line = line sprintf(" %s=%.2f", k, s[k] * 1000 / n)
+      t = h["yes"] + h["no"]
+      line = line sprintf("; backend TLS handshakes %d, resumed %d (%.0f %%)", t, h["yes"], t > 0 ? 100 * h["yes"] / t : 0)
+      print line
+    }' "$1" "$2"
+}
+
 limit=$(k -n "$NS" get pod yarilo-backend-0 -o jsonpath='{.spec.containers[?(@.name=="yarilo-lmtp")].resources.limits.cpu}')
 image=$(k -n "$NS" get pod yarilo-backend-0 -o jsonpath='{.spec.containers[0].image}')
 echo "== $LABEL yarilo $image, yarilo-lmtp cpu limit ${limit:-none}" | tee "$L"
 
+login_metrics "$OUT/lmtp-login-$LABEL-before.prom"
 runs "$NS" yarilo yarilo-backend-0 yarilo-imap yarilo-lmtp-login
+login_metrics "$OUT/lmtp-login-$LABEL-after.prom"
+phases "$OUT/lmtp-login-$LABEL-before.prom" "$OUT/lmtp-login-$LABEL-after.prom" "$((RUNS * MSGS * $(echo "$USERS" | wc -w)))" >> "$L"
 
 restore() {
   k -n "$REF_NS" delete pod lmtpc --ignore-not-found --wait=false > /dev/null 2>&1 || true
