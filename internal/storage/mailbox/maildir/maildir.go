@@ -2771,6 +2771,10 @@ func nameOr(name, fallback string) string {
 
 // renameForFlags renames the file if it is where the name says. An empty name
 // back means it is not there, which is the caller's to answer.
+//
+// The rename itself is the lookup: a source gone by then, renamed by another
+// writer or expunged, is "not there" like one never found (#2701, as the
+// reference does). Any other failure stays an error.
 func (u *userMailbox) renameForFlags(folder, filename string, flags []string, letters string) (string, error) {
 	want := renameWithFlags(filename, encodeFlags(flags)+letters)
 	if want == filename {
@@ -2779,13 +2783,17 @@ func (u *userMailbox) renameForFlags(folder, filename string, flags []string, le
 	dir := u.folderPath(folder)
 	for _, sub := range []string{"cur", "new"} {
 		from := filepath.Join(dir, sub, filename)
-		if _, serr := statPath(from); serr != nil {
-			continue
+		if beforeFlagRenameCall != nil {
+			beforeFlagRenameCall(from)
 		}
 		// A name that carries flags cannot stay in new/: the flags land in
 		// cur/ with the file, which is the move the sync would have made
 		// anyway (#1959).
-		if rerr := os.Rename(from, filepath.Join(dir, "cur", want)); rerr != nil {
+		rerr := os.Rename(from, filepath.Join(dir, "cur", want))
+		if errors.Is(rerr, fs.ErrNotExist) {
+			continue
+		}
+		if rerr != nil {
 			return "", fmt.Errorf("maildir/flags: rename %s: %w", filename, rerr)
 		}
 		u.afterFlagRename(folder, sub, filename, want)
@@ -2793,6 +2801,10 @@ func (u *userMailbox) renameForFlags(folder, filename string, flags []string, le
 	}
 	return "", nil
 }
+
+// beforeFlagRenameCall runs between a name being known and its rename, with
+// the source path. Test seam: another writer moves the file in that gap.
+var beforeFlagRenameCall func(from string)
 
 // afterFlagRename keeps the listing this process just changed, under the name
 // it now wears.
