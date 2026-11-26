@@ -96,21 +96,52 @@ func TestAWaitIsMeasuredOncePerAcquisitionNotPerAttempt(t *testing.T) {
 }
 
 // A contender that runs out of time is counted where it happened, with how many
-// attempts it had burned. That count is the stall, in the raw.
+// attempts it had burned. That count is the stall, in the raw. The deadline
+// comes from the attempts, not the clock: the locker cancels on its third
+// call, so a slow runner does not move the bucket (#2730).
 func TestAContenderThatRunsOutOfTimeIsCountedWithItsAttempts(t *testing.T) {
 	const key = "mbox:u@x/INBOX"
-	before := counterLabelled(t, clientGaveUp, "mbox", "2-3")
+	buckets := []string{"1", "2-3", "4-7", "8-15", "16-31"}
+	before := map[string]float64{}
+	for _, b := range buckets {
+		before[b] = counterLabelled(t, clientGaveUp, "mbox", b)
+	}
 
-	l := &busyLocker{busyFor: 1 << 30}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	l := &cancellingLocker{cancelOn: 3, cancel: cancel}
 	if _, err := Acquire(WithSite(ctx, "write"), l, key, "test.bin/1/alice@example.com/sess1", time.Second); err == nil {
 		t.Fatal("the acquisition succeeded against a locker that never yields")
 	}
-	if got := counterLabelled(t, clientGaveUp, "mbox", "2-3") - before; got != 1 {
-		t.Errorf("gave-up count in the 2-3 bucket moved by %v, want 1 -- a 4ms deadline against "+
-			"1ms and 2ms backoffs gives up on the third attempt", got)
+	moved := map[string]float64{}
+	for _, b := range buckets {
+		if d := counterLabelled(t, clientGaveUp, "mbox", b) - before[b]; d != 0 {
+			moved[b] = d
+		}
 	}
+	if len(moved) != 1 || moved["2-3"] != 1 {
+		t.Errorf("gave-up counts moved %v after %d attempts, want map[2-3:1] -- the deadline passed during the third attempt", moved, l.calls)
+	}
+}
+
+// cancellingLocker is always busy and cancels the caller's context on its
+// cancelOn-th call, as a deadline that passes during that attempt.
+type cancellingLocker struct {
+	busyLocker
+	cancelOn int
+	cancel   context.CancelFunc
+	calls    int
+}
+
+func (c *cancellingLocker) Lock(context.Context, string, string, time.Duration) (Lock, error) {
+	c.calls++
+	if c.calls == c.cancelOn {
+		c.cancel()
+	}
+	return Lock{}, ErrBusy
+}
+func (c *cancellingLocker) LockShared(ctx context.Context, r, o string, ttl time.Duration) (Lock, error) {
+	return c.Lock(ctx, r, o, ttl)
 }
 
 // Attempts become a bucket, not a number: the label is written by whoever
