@@ -194,6 +194,15 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	peer := conn.RemoteAddr().String()
 	r := newReader(conn)
 
+	// A peer that closes before its first byte is a probe (the supervisor's
+	// ready check, a kubelet's) or a dial it gave up, not a failed handshake:
+	// nobody can act on a warning about it. A partial version line, garbage
+	// or another version is still a WARN.
+	if _, err := r.br.Peek(1); errors.Is(err, io.EOF) {
+		s.metrics.incSilentConn()
+		s.logger.Debug("locks: connection closed before its first byte", "peer", peer)
+		return
+	}
 	if err := s.handshake(r, conn); err != nil {
 		s.logger.Warn("locks: handshake failed", "peer", peer, "err", err)
 		return
