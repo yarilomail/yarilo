@@ -30,8 +30,12 @@ CLIENT="${ACCEPT_CLIENT_USER:-support}"
 CA="${ACCEPT_CA:-/home/$CLIENT/host-cert.pem}"
 IMAPTEST="${ACCEPT_IMAPTEST:-/home/$CLIENT/imaptest/src/imaptest}"
 MBOX="${ACCEPT_MBOX:-/home/$CLIENT/test.mbox}"
-# yarilo processes: the components and yarilo-master (#2715).
-PROCS="${ACCEPT_PROCS:-18}"
+# yarilo processes: the components, the log process and yarilo-master (#2715).
+PROCS="${ACCEPT_PROCS:-19}"
+# CPU of the supervisor and of the log process over the imaptest part, at
+# info: measured on the host at 0.4-0.7 % and 2.1-4.3 % (2026-11-26).
+MASTER_CPU_MAX="${ACCEPT_MASTER_CPU_MAX:-3}"
+LOG_CPU_MAX="${ACCEPT_LOG_CPU_MAX:-15}"
 # The hard open-files limit a session process had before yarilo-master,
 # measured on the host (procstat -l); unset, the limit is recorded and the
 # criterion skipped.
@@ -98,13 +102,19 @@ master_pid() {
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "$pid"; fi
   return 0
 }
-# Every yarilo process: the components in libexec, and the supervisor.
+log_pid() { pgrep -f '^/usr/local/sbin/yarilo-master log' | head -1 || true; }
+# Every yarilo process: the components in libexec, the log process, and the
+# supervisor.
 yarilo_procs() {
   local n
   n=$(ps -axo command | grep -cE '^/usr/local/libexec/yarilo/yarilo-' || true)
   [ -n "$(master_pid)" ] && n=$((n + 1))
+  [ -n "$(log_pid)" ] && n=$((n + 1))
   echo "$n"
 }
+cpu_s() { ps -o time= -p "$1" 2>/dev/null | awk '{n=split($1,a,":"); s=0; for(i=1;i<=n;i++) s=s*60+a[i]; print s+0}'; }
+# starts: every component process with its start time, one a line.
+starts() { ps -axo pid,lstart,command | grep -E '/usr/local/libexec/yarilo/yarilo-' | grep -v grep | sort; }
 # comp_uptime name: seconds the component has run, from status.
 comp_uptime() { { service yarilo status "$1" 2>/dev/null || true; } | awk -F'\t' -v c="$1" '$1 == c {print $4}'; }
 comp_pid() { { service yarilo status "$1" 2>/dev/null || true; } | awk -F'\t' -v c="$1" '$1 == c {print $3}'; }
@@ -244,6 +254,33 @@ rootc=$(ps -axo uid,ruid,command | awk '$3 ~ /^\/usr\/local\/libexec\/yarilo\/ya
 [ "$rootc" = 0 ] && [ -n "$mpid" ] && [ "$(ps -o uid= -p "$mpid" | tr -d ' ')" = 0 ] &&
   verdict "only yarilo-master runs as root" ok "master pid $mpid" ||
   verdict "only yarilo-master runs as root" fail "components as root: $rootc, master pid '${mpid:-none}'"
+
+# The log process runs as yarilo-log, which may not read yarilo.yaml.
+lpid=$(log_pid)
+luser=$(ps -o user= -p "${lpid:-0}" 2>/dev/null | tr -d ' ')
+if [ -n "$lpid" ] && [ "$luser" = yarilo-log ] && ! su -m yarilo-log -c "cat $CONF" > /dev/null 2>&1; then
+  verdict "the log process cannot read yarilo.yaml" ok "pid $lpid as yarilo-log, $CONF refused"
+else
+  verdict "the log process cannot read yarilo.yaml" fail "log pid '${lpid:-none}' as '${luser:-?}', or yarilo-log reads $CONF"
+fi
+
+# kill -KILL of the log process: it is back within 1 s, and no component
+# restarted, their start times all unchanged.
+starts > "$OUT/logs/starts-before-log-kill.txt"
+kill -KILL "$lpid" 2>/dev/null || true
+back=""
+for _ in $(seq 1 10); do
+  back=$(log_pid)
+  [ -n "$back" ] && [ "$back" != "$lpid" ] && break
+  sleep 0.1
+done
+sleep 1
+starts > "$OUT/logs/starts-after-log-kill.txt"
+if [ -n "$back" ] && [ "$back" != "$lpid" ] && cmp -s "$OUT/logs/starts-before-log-kill.txt" "$OUT/logs/starts-after-log-kill.txt"; then
+  verdict "log process killed comes back" ok "pid $lpid -> $back within 1 s; every component kept its start time"
+else
+  verdict "log process killed comes back" fail "log pid '${back:-none}' (was $lpid); components $(diff "$OUT/logs/starts-before-log-kill.txt" "$OUT/logs/starts-after-log-kill.txt" | grep -c '^>') changed"
+fi
 
 ipid=$(comp_pid imap)
 procstat -e "$ipid" > "$OUT/logs/imap-env.txt" 2>&1 || true
@@ -394,6 +431,7 @@ grep -q "\"$mark\"" "$OUT/logs/metadata.log" && [ "$oks" = 4 ] && verdict "METAD
   verdict "METADATA round trip" fail "ok=$oks of 4 (LOGOUT included), value $(grep -c "$mark" "$OUT/logs/metadata.log" || true)"
 
 echo "== imaptest, one type at a time"
+cm=$(master_pid); cl=$(log_pid); m0=$(cpu_s "$cm"); l0=$(cpu_s "$cl"); t0=$(date +%s)
 for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do
   dom=${spec%%:*}
   as_client "$IMAPTEST host=127.0.0.1 port=143 user=u%d@$dom users=${spec##*:} pass='$PASS' clients=50 msgs=500 secs=90 mbox=$MBOX" > "$OUT/logs/imaptest-$dom.log" 2>&1 || true
@@ -403,6 +441,25 @@ for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do
   [ "$errors" = 0 ] && [ "$stalls" = 0 ] && [ -n "$logins" ] && verdict "imaptest $dom" ok "logins=$logins" ||
     verdict "imaptest $dom" fail "errors=$errors stalled=$stalls logins=${logins:-?}"
 done
+t1=$(date +%s)
+mc=$(awk -v a="$m0" -v b="$(cpu_s "$cm")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", t > 0 ? (b - a) / t * 100 : 0 }')
+lc=$(awk -v a="$l0" -v b="$(cpu_s "$cl")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", t > 0 ? (b - a) / t * 100 : 0 }')
+# A process that went away during the part reads as no CPU at all: a restart
+# under load is what the run is there to catch, so a changed pid fails.
+if [ -z "$cm" ] || [ "$(master_pid)" != "$cm" ]; then
+  verdict "supervisor CPU during imaptest" fail "the supervisor changed or went away during imaptest: $cm -> $(master_pid)"
+elif awk -v c="$mc" -v m="$MASTER_CPU_MAX" 'BEGIN { exit !(c >= 0 && c < m) }'; then
+  verdict "supervisor CPU during imaptest" ok "$mc % (< $MASTER_CPU_MAX %)"
+else
+  verdict "supervisor CPU during imaptest" fail "$mc %, limit $MASTER_CPU_MAX %"
+fi
+if [ -z "$cl" ] || [ "$(log_pid)" != "$cl" ]; then
+  verdict "log process CPU during imaptest" fail "the log process changed or went away during imaptest: $cl -> $(log_pid)"
+elif awk -v c="$lc" -v m="$LOG_CPU_MAX" 'BEGIN { exit !(c >= 0 && c < m) }'; then
+  verdict "log process CPU during imaptest" ok "$lc % (< $LOG_CPU_MAX %)"
+else
+  verdict "log process CPU during imaptest" fail "$lc %, limit $LOG_CPU_MAX %"
+fi
 
 echo "== FTS short tokens"
 U=u101@d00003.test; T=$(date +%s)
