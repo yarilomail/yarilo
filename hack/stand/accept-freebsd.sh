@@ -36,10 +36,10 @@ PROCS="${ACCEPT_PROCS:-19}"
 # info: measured on the host at 0.4-0.7 % and 2.1-4.3 % (2026-11-26).
 MASTER_CPU_MAX="${ACCEPT_MASTER_CPU_MAX:-3}"
 LOG_CPU_MAX="${ACCEPT_LOG_CPU_MAX:-15}"
-# The hard open-files limit a session process had before yarilo-master,
-# measured on the host (procstat -l); unset, the limit is recorded and the
-# criterion skipped.
-MIN_NOFILE="${ACCEPT_MIN_NOFILE:-}"
+# The hard open-files limit a session process must keep: by default the
+# kernel's per-process limit, read at the run, since the kernel sets it at
+# boot from the memory (116928 before a reboot of the host, 116919 after).
+MIN_NOFILE="${ACCEPT_MIN_NOFILE:-$(sysctl -n kern.maxfilesperproc)}"
 MASTER_METRICS="${ACCEPT_MASTER_METRICS:-http://127.0.0.1:18079/metrics}"
 CLOCK_MAX_MS="${ACCEPT_CLOCK_MAX_MS:-1000}"
 # Both whole-server stalls on the host came with 12 % free and none of the
@@ -331,24 +331,24 @@ master_env() {
 menv=$(master_env)
 case "$menv" in *UNREADABLE*) echo "accept-freebsd: master_environment in $CONF is neither a block nor a one-line map" >&2; exit 2 ;; esac
 want_gmp=$(printf '%s\n' "$menv" | sed -n 's/^GOMAXPROCS=//p' | head -1)
-if [ -z "$want_gmp" ]; then
-  verdict "GOMAXPROCS from master_environment" skip "not set in $CONF"
-elif grep -qw "GOMAXPROCS=$want_gmp" "$OUT/logs/imap-env.txt"; then
-  verdict "GOMAXPROCS from master_environment" ok "GOMAXPROCS=$want_gmp in yarilo-imap"
+# Unset in master_environment, the supervisor gives the default, 2.
+gmp_from="master_environment"
+[ -z "$want_gmp" ] && { want_gmp=2; gmp_from="the default"; }
+if grep -qw "GOMAXPROCS=$want_gmp" "$OUT/logs/imap-env.txt"; then
+  verdict "GOMAXPROCS from master_environment, else 2" ok "GOMAXPROCS=$want_gmp in yarilo-imap, from $gmp_from"
 else
-  verdict "GOMAXPROCS from master_environment" fail "yarilo-imap lacks GOMAXPROCS=$want_gmp (logs/imap-env.txt)"
+  verdict "GOMAXPROCS from master_environment, else 2" fail "yarilo-imap lacks GOMAXPROCS=$want_gmp from $gmp_from (logs/imap-env.txt)"
 fi
-# Only the variables yarilo-master gives: its fixed four and master_environment.
-allowed="PATH CONFIG LOG_LEVEL TELEMETRY_LISTEN $(printf '%s\n' "$menv" | cut -d= -f1 | tr '\n' ' ')"
+# Only the variables yarilo-master gives: its fixed four, GOMAXPROCS, which it
+# always gives, and master_environment.
+allowed="PATH CONFIG LOG_LEVEL TELEMETRY_LISTEN GOMAXPROCS $(printf '%s\n' "$menv" | cut -d= -f1 | tr '\n' ' ')"
 extra=$(tail -n +2 "$OUT/logs/imap-env.txt" | tr ' ' '\n' | grep '=' | cut -d= -f1 | sort -u | while read -r v; do
   case " $allowed " in (*" $v "*) ;; (*) printf '%s ' "$v" ;; esac
 done)
 [ -z "$extra" ] && verdict "a component's environment is its own" ok "only: $allowed" ||
   verdict "a component's environment is its own" fail "yarilo-imap also has: $extra"
 nofile=$(awk '$3 == "openfiles" {print $5}' "$OUT/logs/imap-limits.txt" | head -1)
-if [ -z "$MIN_NOFILE" ]; then
-  verdict "open-files limit kept" skip "hard limit ${nofile:-?} recorded; ACCEPT_MIN_NOFILE unset"
-elif [ -n "$nofile" ] && { [ "$nofile" = infinity ] || [ "$nofile" -ge "$MIN_NOFILE" ]; }; then
+if [ -n "$nofile" ] && { [ "$nofile" = infinity ] || [ "$nofile" -ge "$MIN_NOFILE" ]; }; then
   verdict "open-files limit kept" ok "hard $nofile >= $MIN_NOFILE"
 else
   verdict "open-files limit kept" fail "hard ${nofile:-?} < $MIN_NOFILE (logs/imap-limits.txt)"
