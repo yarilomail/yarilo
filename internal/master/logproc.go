@@ -172,11 +172,18 @@ func (d *retryDest) write(chunk []byte) error {
 		}
 		d.logger.Info("log: destination opens again", "component", d.name)
 	}
-	err := d.dst.write(chunk)
-	if err != nil && d.target.Path == "syslog" {
-		// syslogd may have restarted under us: dial again and resend once.
+	sd, isSyslog := d.dst.(*syslogDest)
+	if !isSyslog {
+		return d.dst.write(chunk)
+	}
+	sent, err := sd.writeFrom(chunk)
+	if err != nil {
+		// syslogd may have restarted under us: dial again and send once more
+		// what did not go, never the lines that already went.
 		if oerr := d.openLocked(); oerr == nil {
-			err = d.dst.write(chunk)
+			if again, ok := d.dst.(*syslogDest); ok {
+				_, err = again.writeFrom(chunk[sent:])
+			}
 		}
 	}
 	return err

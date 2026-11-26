@@ -225,16 +225,24 @@ func openSyslogDest(facility, tag string, cut prometheus.Counter) (*syslogDest, 
 
 // write sends each line of the chunk as a datagram of its own.
 func (d *syslogDest) write(chunk []byte) error {
-	var first error
+	_, err := d.writeFrom(chunk)
+	return err
+}
+
+// writeFrom sends the chunk's lines in order and stops at the first that
+// fails; sent is how many bytes of the chunk went out whole, so a caller
+// that dials again resends only what did not (#2725 review).
+func (d *syslogDest) writeFrom(chunk []byte) (sent int, err error) {
 	for _, line := range bytes.SplitAfter(chunk, []byte{'\n'}) {
 		if len(line) == 0 {
 			continue
 		}
-		if err := d.writeLine(line); err != nil && first == nil {
-			first = err
+		if err := d.writeLine(line); err != nil {
+			return sent, err
 		}
+		sent += len(line)
 	}
-	return first
+	return sent, nil
 }
 
 func (d *syslogDest) writeLine(line []byte) error {
