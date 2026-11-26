@@ -1094,3 +1094,113 @@ func TestTheLogAccountMustExistAndNotBeRoot(t *testing.T) {
 		}
 	}
 }
+
+// stop and start refuse the log process, since with it down every component
+// blocks on its output; restart takes it.
+func TestStopAndStartRefuseTheLogProcessAndRestartTakesIt(t *testing.T) {
+	r := newRig(t, func(r *rig) []Component { return []Component{r.comp("imap")} })
+	go r.sup.Run()
+	before := r.waitState(LogComponent, StateRunning, 3*time.Second)
+	for name, f := range map[string]func(...string) error{"stop": r.sup.StopComponents, "start": r.sup.StartComponents} {
+		if err := f(LogComponent); err == nil || !strings.Contains(err.Error(), "restart") {
+			t.Errorf("%s log = %v, want a refusal pointing at restart", name, err)
+		}
+	}
+	if err := r.sup.Restart(LogComponent); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { st := r.status(LogComponent); return st.State == StateRunning && st.PID != before.PID })
+}
+
+// A file destination that could not open comes back at the next reopen, as
+// after a full disk is cleared and newsyslog signals.
+func TestAFileThatCouldNotOpenComesBackOnReopen(t *testing.T) {
+	dir := shortDir(t)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	d := &retryDest{target: LogTarget{Path: dir}, name: "imap", m: newMetrics(nil), logger: slog.New(slog.DiscardHandler)}
+	if err := d.open(); err == nil {
+		t.Fatal("a directory that refuses writes let the file open")
+	}
+	if err := d.write([]byte("lost\n")); err == nil {
+		t.Error("a write to a destination that is not open succeeded")
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.reopen(); err != nil {
+		t.Fatalf("reopen after the directory came back: %v", err)
+	}
+	if err := d.write([]byte("back\n")); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "imap.log"))
+	if string(b) != "back\n" {
+		t.Errorf("imap.log = %q, want the line written after the reopen", b)
+	}
+}
+
+// A syslog socket that went away and came back (syslogd restarted) is dialled
+// again on the failed write, and the line is not lost.
+func TestSyslogIsDialledAgainAfterSyslogdRestarts(t *testing.T) {
+	sock := filepath.Join(shortDir(t), "log.sock")
+	listen := func() net.PacketConn {
+		pc, err := new(net.ListenConfig).ListenPacket(t.Context(), "unixgram", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pc
+	}
+	pc := listen()
+	old := syslogSockets
+	syslogSockets = []string{sock}
+	t.Cleanup(func() { syslogSockets = old })
+	d := &retryDest{target: LogTarget{Path: "syslog", Facility: "mail"}, name: "imap", m: newMetrics(nil), logger: slog.New(slog.DiscardHandler)}
+	if err := d.open(); err != nil {
+		t.Fatal(err)
+	}
+	read := func(pc net.PacketConn) string {
+		buf := make([]byte, 8192)
+		_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, _, err := pc.ReadFrom(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(buf[:n])
+	}
+	if err := d.write([]byte("first\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(pc); !strings.HasSuffix(got, "first") {
+		t.Fatalf("first datagram %q", got)
+	}
+	_ = pc.Close()
+	_ = os.Remove(sock)
+	pc = listen() // syslogd back on the same path
+	t.Cleanup(func() { _ = pc.Close() })
+	if err := d.write([]byte("second\n")); err != nil {
+		t.Fatalf("the write after syslogd came back: %v", err)
+	}
+	if got := read(pc); !strings.HasSuffix(got, "second") {
+		t.Errorf("after the restart %q, want the line", got)
+	}
+}
+
+// The log process gets what it needs from its environment, and no CONFIG:
+// the log account never reads yarilo.yaml and its passwords.
+func TestTheLogProcessIsNotGivenTheConfig(t *testing.T) {
+	p := newPlanRig(t, "imap")
+	plan, err := p.chk.Build(p.cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOf(plan, LogComponent)
+	if _, ok := env["CONFIG"]; ok {
+		t.Error("the log process is given CONFIG")
+	}
+	if env[LogPathEnv] != p.logs || env[LogFacilityEnv] != "mail" || env[LogPprofEnv] == "" {
+		t.Errorf("log process environment lacks its settings: %v", env)
+	}
+}

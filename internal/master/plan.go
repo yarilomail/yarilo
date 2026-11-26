@@ -216,11 +216,17 @@ func (c Checker) Build(cfg *config.Config, configPath string) (*Plan, error) {
 	sort.Strings(extra)
 
 	// The log process first: it reads every other component's output.
+	// No CONFIG: the log account does not read yarilo.yaml and the
+	// passwords in it; what the log process needs comes from here.
 	logEnv := append([]string{}, c.BaseEnv...)
 	logEnv = append(logEnv,
-		"CONFIG="+configPath,
 		"LOG_LEVEL="+cfg.Log.Level,
-		fmt.Sprintf("TELEMETRY_LISTEN=127.0.0.1:%d", m.TelemetryPort+telemetryOffset[LogComponent]))
+		fmt.Sprintf("TELEMETRY_LISTEN=127.0.0.1:%d", m.TelemetryPort+telemetryOffset[LogComponent]),
+		LogPathEnv+"="+m.LogPath,
+		LogFacilityEnv+"="+m.SyslogFacility,
+		fmt.Sprintf("%s=%t", LogPprofEnv, cfg.Telemetry.PprofEnabled),
+		fmt.Sprintf("%s=%d", LogPprofBlockEnv, cfg.Telemetry.PprofBlockProfileRate),
+		fmt.Sprintf("%s=%d", LogPprofMutexEnv, cfg.Telemetry.PprofMutexProfileFraction))
 	logEnv = append(logEnv, extra...)
 	p.Components = append(p.Components, Component{Name: LogComponent, Bin: c.Self, Args: []string{"log"}, Env: logEnv, Account: p.Accounts[roleLog]})
 

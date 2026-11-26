@@ -18,6 +18,17 @@ import (
 // which component's output: "3=master,4=locks,...".
 const LogFDsEnv = "YARILO_LOG_FDS"
 
+// The log process's settings come through its environment from the
+// supervisor, so the log account never needs to read yarilo.yaml and the
+// passwords in it.
+const (
+	LogPathEnv       = "YARILO_LOG_PATH"
+	LogFacilityEnv   = "YARILO_LOG_FACILITY"
+	LogPprofEnv      = "YARILO_LOG_PPROF"
+	LogPprofBlockEnv = "YARILO_LOG_PPROF_BLOCK_RATE"
+	LogPprofMutexEnv = "YARILO_LOG_PPROF_MUTEX_FRACTION"
+)
+
 // LogTarget is where the log process writes: a directory, or syslog.
 type LogTarget struct {
 	Path     string // a directory, or "syslog"
@@ -48,12 +59,12 @@ func RunLog(target LogTarget, fds string, reg prometheus.Registerer, sigs <-chan
 		if !ok || err != nil || name == "" {
 			return fmt.Errorf("log: %s %q: not fd=name", LogFDsEnv, pair)
 		}
-		dst, err := openDest(target, name, m)
-		if err != nil {
+		dst := &retryDest{target: target, name: name, m: m, logger: logger}
+		if err := dst.open(); err != nil {
 			// A destination that cannot open is a component whose lines are
-			// dropped and counted, not a log process that does not run.
-			logger.Error("log: destination does not open; its lines are dropped", "component", name, "err", err)
-			dst = refusedDest{err: err}
+			// dropped and counted until it opens, not a log process that
+			// does not run.
+			logger.Error("log: destination does not open; its lines are dropped until it does", "component", name, "err", err)
 		}
 		onDrop := func(c string, dropping bool, err error) {
 			if dropping {
@@ -113,9 +124,80 @@ func openDest(t LogTarget, name string, m *metrics) (destination, error) {
 	return openFileDest(t.Path, name)
 }
 
-// refusedDest stands for a destination that could not open.
-type refusedDest struct{ err error }
+// retryDest is a destination that comes back. One that could not open, as
+// with a full disk, is tried again at every reopen and at most every few
+// seconds on a write; a syslog socket that fails a write (syslogd
+// restarted) is dialled again once and the line sent again.
+type retryDest struct {
+	target LogTarget
+	name   string
+	m      *metrics
+	logger *slog.Logger
 
-func (d refusedDest) write([]byte) error { return d.err }
-func (d refusedDest) reopen() error      { return d.err }
-func (d refusedDest) close() error       { return nil }
+	mu    sync.Mutex
+	dst   destination
+	tried time.Time
+}
+
+const retryEvery = 5 * time.Second
+
+func (d *retryDest) open() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.openLocked()
+}
+
+func (d *retryDest) openLocked() error {
+	d.tried = time.Now()
+	dst, err := openDest(d.target, d.name, d.m)
+	if err != nil {
+		return err
+	}
+	if d.dst != nil {
+		_ = d.dst.close()
+	}
+	d.dst = dst
+	return nil
+}
+
+func (d *retryDest) write(chunk []byte) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.dst == nil {
+		if time.Since(d.tried) < retryEvery {
+			return errNotOpen
+		}
+		if err := d.openLocked(); err != nil {
+			return err
+		}
+		d.logger.Info("log: destination opens again", "component", d.name)
+	}
+	err := d.dst.write(chunk)
+	if err != nil && d.target.Path == "syslog" {
+		// syslogd may have restarted under us: dial again and resend once.
+		if oerr := d.openLocked(); oerr == nil {
+			err = d.dst.write(chunk)
+		}
+	}
+	return err
+}
+
+func (d *retryDest) reopen() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.dst == nil {
+		return d.openLocked()
+	}
+	return d.dst.reopen()
+}
+
+func (d *retryDest) close() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.dst == nil {
+		return nil
+	}
+	return d.dst.close()
+}
+
+var errNotOpen = errors.New("the destination is not open")

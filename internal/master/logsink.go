@@ -1,7 +1,7 @@
 package master
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -77,18 +77,33 @@ func newSink(name string, dst destination, m *metrics, onDrop func(string, bool,
 	return s
 }
 
-// feed reads r line by line until it ends. Each process of the component
-// gets its own pipe, and every one of them feeds the same sink.
+// feed reads r until it ends and hands on whole lines a chunk at a time:
+// one queue entry and one write for as many lines as one read brought, not
+// one each. A part line waits for its end; one longer than the buffer is
+// handed on as it is.
 func (s *sink) feed(r io.Reader) {
-	br := bufio.NewReaderSize(r, 64<<10)
+	const size = 64 << 10
+	buf := make([]byte, size)
+	have := 0
 	for {
-		line, err := br.ReadBytes('\n')
-		if len(line) > 0 {
+		n, err := r.Read(buf[have:])
+		have += n
+		end := bytes.LastIndexByte(buf[:have], '\n') + 1
+		if end == 0 && have == size {
+			end = have // a line longer than the buffer
+		}
+		if err != nil {
+			end = have // what is left when the pipe ends
+		}
+		if end > 0 {
+			chunk := make([]byte, end)
+			copy(chunk, buf[:end])
 			select {
-			case s.lines <- line:
+			case s.lines <- chunk:
 			default:
-				s.drop(fmt.Errorf("the log queue is full"))
+				s.drop(fmt.Errorf("the log queue is full"), lineCount(chunk))
 			}
+			have = copy(buf, buf[end:have])
 		}
 		if err != nil {
 			return
@@ -96,11 +111,20 @@ func (s *sink) feed(r io.Reader) {
 	}
 }
 
+// lineCount is how many lines a chunk holds, a part line at its end counted.
+func lineCount(chunk []byte) int {
+	n := bytes.Count(chunk, []byte{'\n'})
+	if len(chunk) > 0 && chunk[len(chunk)-1] != '\n' {
+		n++
+	}
+	return n
+}
+
 func (s *sink) writeLoop() {
 	defer close(s.done)
-	for line := range s.lines {
-		if err := s.dst.write(line); err != nil {
-			s.drop(err)
+	for chunk := range s.lines {
+		if err := s.dst.write(chunk); err != nil {
+			s.drop(err, lineCount(chunk))
 			continue
 		}
 		s.mu.Lock()
@@ -113,8 +137,8 @@ func (s *sink) writeLoop() {
 	}
 }
 
-func (s *sink) drop(err error) {
-	s.dropped.Inc()
+func (s *sink) drop(err error, lines int) {
+	s.dropped.Add(float64(lines))
 	s.mu.Lock()
 	was := s.dropping
 	s.dropping = true
@@ -199,7 +223,21 @@ func openSyslogDest(facility, tag string, cut prometheus.Counter) (*syslogDest, 
 	return nil, fmt.Errorf("syslog: no local socket: %w", last)
 }
 
-func (d *syslogDest) write(line []byte) error {
+// write sends each line of the chunk as a datagram of its own.
+func (d *syslogDest) write(chunk []byte) error {
+	var first error
+	for _, line := range bytes.SplitAfter(chunk, []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		if err := d.writeLine(line); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func (d *syslogDest) writeLine(line []byte) error {
 	msg := strings.TrimRight(string(line), "\n")
 	pri := d.facility | severity(levelOf(msg))
 	header := fmt.Sprintf("<%d>%s %s[%d]: ", pri, d.now().Format(time.Stamp), d.tag, os.Getpid())

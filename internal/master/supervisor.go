@@ -613,6 +613,9 @@ func (s *Supervisor) StopComponents(names ...string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseLog(ps, "stop"); err != nil {
+		return err
+	}
 	for _, p := range ps {
 		p.set(func() { p.down = true })
 		p.terminate()
@@ -626,11 +629,26 @@ func (s *Supervisor) StartComponents(names ...string) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseLog(ps, "start"); err != nil {
+		return err
+	}
 	for _, p := range ps {
 		p.set(func() { p.down = false; p.delay = 0 })
 		select {
 		case p.kick <- struct{}{}:
 		default:
+		}
+	}
+	return nil
+}
+
+// refuseLog keeps the log process out of stop and start: kept down it would
+// leave every pipe without a reader, and every component would block once
+// 64 KiB of lines were waiting. restart is allowed.
+func refuseLog(ps []*proc, cmd string) error {
+	for _, p := range ps {
+		if p.c.Name == LogComponent {
+			return fmt.Errorf("%s does not take the log process: with it down every component blocks on its output; use restart", cmd)
 		}
 	}
 	return nil

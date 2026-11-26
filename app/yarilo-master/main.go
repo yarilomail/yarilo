@@ -51,7 +51,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		return run(cfgPath)
 	case "log":
 		logTo(stderr)
-		return logRole(cfgPath)
+		return logRole()
 	case "check":
 		logTo(stderr)
 		return check(cfgPath, stdout, stderr)
@@ -107,22 +107,19 @@ func setGOMAXPROCS(v string) {
 // logRole is the log process: it reads the pipes the supervisor handed it and
 // writes each component's lines to the configured destination, as the log
 // account. Its counters are on its own telemetry port.
-func logRole(cfgPath string) int {
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		slog.Error("log: load config", "err", err)
-		return 1
-	}
+func logRole() int {
 	setGOMAXPROCS(os.Getenv("GOMAXPROCS"))
+	block, _ := strconv.Atoi(os.Getenv(master.LogPprofBlockEnv))
+	mutex, _ := strconv.Atoi(os.Getenv(master.LogPprofMutexEnv))
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}), collectors.NewGoCollector())
 	tel := telemetry.NewWithOptions(telemetry.Options{
 		Addr:     telemetry.Addr(""),
 		Registry: reg,
 		Pprof: telemetry.PprofOptions{
-			Enabled:       cfg.Telemetry.PprofEnabled,
-			BlockRate:     cfg.Telemetry.PprofBlockProfileRate,
-			MutexFraction: cfg.Telemetry.PprofMutexProfileFraction,
+			Enabled:       os.Getenv(master.LogPprofEnv) == "true",
+			BlockRate:     block,
+			MutexFraction: mutex,
 		},
 	})
 	if err := tel.Start(context.Background()); err != nil {
@@ -131,7 +128,7 @@ func logRole(cfgPath string) int {
 	}
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	target := master.LogTarget{Path: cfg.Master.LogPath, Facility: cfg.Master.SyslogFacility}
+	target := master.LogTarget{Path: os.Getenv(master.LogPathEnv), Facility: os.Getenv(master.LogFacilityEnv)}
 	if err := master.RunLog(target, os.Getenv(master.LogFDsEnv), reg, sigs, slog.Default()); err != nil {
 		slog.Error("log: stopped", "err", err)
 		return 1
