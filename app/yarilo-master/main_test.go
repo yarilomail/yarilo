@@ -75,3 +75,15 @@ func TestCtlAnswersOnStdoutAndLogsOnStderr(t *testing.T) {
 		t.Errorf("check wrote a log line to stdout: %q", stdout.String())
 	}
 }
+
+// check says which GOMAXPROCS the components will get and where it comes from.
+func TestCheckNamesTheGOMAXPROCSTheComponentsGet(t *testing.T) {
+	for _, tc := range []struct{ value, from, want string }{
+		{"2", "default", "GOMAXPROCS=2 (default)"},
+		{"3", "master_environment", "GOMAXPROCS=3 (master_environment)"},
+	} {
+		if got := checkLine(&master.Plan{GOMAXPROCS: tc.value, GOMAXPROCSFrom: tc.from}); !strings.Contains(got, tc.want) {
+			t.Errorf("checkLine = %q, want it to say %q", got, tc.want)
+		}
+	}
+}

@@ -74,12 +74,19 @@ func plan(cfgPath string) (*master.Plan, *config.Config, error) {
 }
 
 func check(cfgPath string, stdout, stderr io.Writer) int {
-	if _, _, err := plan(cfgPath); err != nil {
+	p, _, err := plan(cfgPath)
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "yarilo-master: %v\n", err)
 		return 1
 	}
-	_, _ = fmt.Fprintln(stdout, "yarilo-master: configuration OK")
+	_, _ = fmt.Fprintln(stdout, checkLine(p))
 	return 0
+}
+
+// checkLine is check's answer: the configuration is good, and the GOMAXPROCS
+// the components will get, with where it comes from.
+func checkLine(p *master.Plan) string {
+	return fmt.Sprintf("yarilo-master: configuration OK; components get GOMAXPROCS=%s (%s)", p.GOMAXPROCS, p.GOMAXPROCSFrom)
 }
 
 func ctl(cfgPath string, args []string, stdout, stderr io.Writer) int {
@@ -163,6 +170,7 @@ func run(cfgPath string) int {
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	slog.Info("master: starting", "components", len(p.Components), "config", cfgPath)
+	slog.Info("master: components get GOMAXPROCS", "value", p.GOMAXPROCS, "from", p.GOMAXPROCSFrom)
 	go sup.Run()
 	for sig := range sigs {
 		if sig == syscall.SIGHUP {
