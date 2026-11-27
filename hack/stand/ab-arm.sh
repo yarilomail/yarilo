@@ -360,6 +360,10 @@ step "deploy"
 echo "== arm $ARM: $TAG types=[$TYPES] fill=$FILL"
 . "$REPO/hack/stand/deploy.sh"
 mkdir -p "$OUT/deploy-$ARM"
+# GOMAXPROCS in the yarilo-lmtp container alone: the chart's extraEnv reaches
+# every container, and the LMTP pair counts the CPU of every tier
+# (docs-internal#318). Empty means absent, and the deploy removes it then.
+STAND_LMTP_GOMAXPROCS="${YARILO_ARM_LMTP_GOMAXPROCS:-}" \
 stand_deploy "$OUT/deploy-$ARM" "$TAG" "$CHART/helm" \
   -f "$CHART/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} ||
   { echo "ab-arm: the deploy did not settle ($OUT/deploy-$ARM/deploy.txt)" >&2; exit 1; }
@@ -370,22 +374,9 @@ until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ];
   sleep 10
 done
 
-# LMTP_GOMAXPROCS sets GOMAXPROCS in the yarilo-lmtp container alone, after the
-# deploy: the chart's extraEnv reaches every container, and the LMTP pair counts
-# the CPU of every tier (docs-internal#318). The next arm's deploy undoes it.
-LMTP_GOMAXPROCS="${YARILO_ARM_LMTP_GOMAXPROCS:-}"
-if [ -n "$LMTP_GOMAXPROCS" ]; then
-  case "$LMTP_GOMAXPROCS" in (*[!0-9]*) echo "ab-arm: YARILO_ARM_LMTP_GOMAXPROCS is not a number: $LMTP_GOMAXPROCS" >&2; exit 1 ;; esac
-  kube set env statefulset/yarilo-backend -c yarilo-lmtp GOMAXPROCS="$LMTP_GOMAXPROCS" > /dev/null
-  kube rollout status statefulset/yarilo-backend --timeout=600s > /dev/null ||
-    { echo "ab-arm: the backends did not roll out with GOMAXPROCS=$LMTP_GOMAXPROCS in yarilo-lmtp" >&2; exit 1; }
-  deadline=$(( $(date +%s) + 600 ))
-  until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ]; do
-    [ "$(date +%s)" -lt "$deadline" ] || { echo "ab-arm: pods did not settle after the GOMAXPROCS change" >&2; exit 1; }
-    sleep 10
-  done
-  echo "-- arm $ARM runs yarilo-lmtp with GOMAXPROCS=$LMTP_GOMAXPROCS" | tee -a "$OUT/overlay-$ARM.txt"
-fi
+# The arm's lmtp GOMAXPROCS, read from the StatefulSet after the deploy made it
+# what YARILO_ARM_LMTP_GOMAXPROCS asks (deploy.sh, stand_lmtp_gomaxprocs).
+cp "$OUT/deploy-$ARM/lmtp-gomaxprocs.txt" "$OUT/lmtp-gomaxprocs-$ARM.txt"
 
 # What actually runs, read from the pods: a rollout that quietly left the old
 # pod in place, or a tag that resolved elsewhere, is otherwise invisible -- and
