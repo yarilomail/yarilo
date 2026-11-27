@@ -341,7 +341,9 @@ else
 fi
 # Only the variables yarilo-master gives: its fixed four, GOMAXPROCS, which it
 # always gives, and master_environment.
-allowed="PATH CONFIG LOG_LEVEL TELEMETRY_LISTEN GOMAXPROCS $(printf '%s\n' "$menv" | cut -d= -f1 | tr '\n' ' ')"
+# Each name once: GOMAXPROCS set in master_environment is the same variable.
+allowed=$(printf '%s\n' PATH CONFIG LOG_LEVEL TELEMETRY_LISTEN GOMAXPROCS $(printf '%s\n' "$menv" | cut -d= -f1) |
+  awk 'NF && !seen[$0]++' | tr '\n' ' ')
 extra=$(tail -n +2 "$OUT/logs/imap-env.txt" | tr ' ' '\n' | grep '=' | cut -d= -f1 | sort -u | while read -r v; do
   case " $allowed " in (*" $v "*) ;; (*) printf '%s ' "$v" ;; esac
 done)
