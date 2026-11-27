@@ -98,7 +98,12 @@ phases() {
 
 limit=$(k -n "$NS" get pod yarilo-backend-0 -o jsonpath='{.spec.containers[?(@.name=="yarilo-lmtp")].resources.limits.cpu}')
 image=$(k -n "$NS" get pod yarilo-backend-0 -o jsonpath='{.spec.containers[0].image}')
-echo "== $LABEL yarilo $image, yarilo-lmtp cpu limit ${limit:-none}" | tee "$L"
+# GOMAXPROCS as the runtime took it, not as anything asked for it: under a
+# CPU limit Go derives it from the cgroup, so the limit and the figure move
+# together unless something sets it (docs-internal#318).
+gmp=$(k -n "$NS" exec yarilo-backend-0 -c yarilo-lmtp -- sh -c 'wget -qO- http://127.0.0.1:8083/metrics 2>/dev/null' 2>/dev/null |
+  awk '$1 == "go_sched_gomaxprocs_threads" { print $2 }' || true)
+echo "== $LABEL yarilo $image, yarilo-lmtp cpu limit ${limit:-none}, GOMAXPROCS ${gmp:-unread}" | tee "$L"
 
 login_metrics "$OUT/lmtp-login-$LABEL-before.prom"
 runs "$NS" yarilo yarilo-backend-0 yarilo-imap yarilo-lmtp-login
