@@ -360,6 +360,10 @@ step "deploy"
 echo "== arm $ARM: $TAG types=[$TYPES] fill=$FILL"
 . "$REPO/hack/stand/deploy.sh"
 mkdir -p "$OUT/deploy-$ARM"
+# GOMAXPROCS in the yarilo-lmtp container alone: the chart's extraEnv reaches
+# every container, and the LMTP pair counts the CPU of every tier
+# (docs-internal#318). Empty means absent, and the deploy removes it then.
+STAND_LMTP_GOMAXPROCS="${YARILO_ARM_LMTP_GOMAXPROCS:-}" \
 stand_deploy "$OUT/deploy-$ARM" "$TAG" "$CHART/helm" \
   -f "$CHART/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} ||
   { echo "ab-arm: the deploy did not settle ($OUT/deploy-$ARM/deploy.txt)" >&2; exit 1; }
@@ -369,6 +373,10 @@ until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ];
   [ "$(date +%s)" -lt "$deadline" ] || { echo "ab-arm: pods did not settle" >&2; exit 1; }
   sleep 10
 done
+
+# The arm's lmtp GOMAXPROCS, read from the StatefulSet after the deploy made it
+# what YARILO_ARM_LMTP_GOMAXPROCS asks (deploy.sh, stand_lmtp_gomaxprocs).
+cp "$OUT/deploy-$ARM/lmtp-gomaxprocs.txt" "$OUT/lmtp-gomaxprocs-$ARM.txt"
 
 # What actually runs, read from the pods: a rollout that quietly left the old
 # pod in place, or a tag that resolved elsewhere, is otherwise invisible -- and

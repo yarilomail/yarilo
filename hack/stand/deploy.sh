@@ -36,6 +36,7 @@ stand_deploy() {
   for i in $(seq 1 100); do [ -s "$out/backend-downtime.txt" ] && break; sleep 0.1; done
   helm --kubeconfig="${KCFG:-$KUBECONFIG}" upgrade yarilo "$chart" -n "$NS" "$@" --set image.tag="$tag" --wait --timeout 10m > "$out/deploy.txt" 2>&1 || rc=1
   kube rollout status sts/yarilo-backend --timeout=280s >> "$out/deploy.txt" 2>&1 || rc=1
+  stand_lmtp_gomaxprocs "$out" || rc=1
   kill "$watcher" 2>/dev/null
   wait "$watcher" 2>/dev/null
   stand_backend_pending > "$out/backend-pending.txt"
@@ -47,6 +48,35 @@ stand_deploy() {
     rc=1
   fi
   return "$rc"
+}
+
+# stand_lmtp_gomaxprocs makes GOMAXPROCS in the yarilo-lmtp container what
+# STAND_LMTP_GOMAXPROCS asks: set to it, or absent when it is empty. kubectl set
+# env writes onto the live object, and helm upgrade keeps what it did not
+# render, so an upgrade alone does not take it away. The spec as it stands
+# afterwards goes to <out-dir>/lmtp-gomaxprocs.txt: "set N" or "absent".
+lmtp_gomaxprocs_spec() {
+  kube get sts yarilo-backend -o jsonpath='{.spec.template.spec.containers[?(@.name=="yarilo-lmtp")].env[?(@.name=="GOMAXPROCS")].value}' 2>/dev/null
+}
+stand_lmtp_gomaxprocs() {
+  local out="$1" want="${STAND_LMTP_GOMAXPROCS:-}" have
+  case "$want" in (*[!0-9]*) echo "stand_deploy: STAND_LMTP_GOMAXPROCS is not a number: $want" >&2; return 1 ;; esac
+  have=$(lmtp_gomaxprocs_spec)
+  if [ "$have" != "$want" ]; then
+    if [ -n "$want" ]; then
+      kube set env sts/yarilo-backend -c yarilo-lmtp GOMAXPROCS="$want" >> "$out/deploy.txt" 2>&1 || return 1
+    else
+      kube set env sts/yarilo-backend -c yarilo-lmtp GOMAXPROCS- >> "$out/deploy.txt" 2>&1 || return 1
+    fi
+    kube rollout status sts/yarilo-backend --timeout=600s >> "$out/deploy.txt" 2>&1 || return 1
+  fi
+  have=$(lmtp_gomaxprocs_spec)
+  if [ "$have" != "$want" ]; then
+    echo "stand_deploy: yarilo-lmtp GOMAXPROCS is '${have}', asked '${want}'" >&2
+    return 1
+  fi
+  if [ -n "$have" ]; then echo "set $have"; else echo "absent"; fi > "$out/lmtp-gomaxprocs.txt"
+  echo "-- yarilo-lmtp GOMAXPROCS in the StatefulSet: $(cat "$out/lmtp-gomaxprocs.txt")"
 }
 
 # stand_prepull pulls every image the release renders onto every node its pods
