@@ -169,3 +169,19 @@ func TestASizeOfNothingIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// A conversation limit above what one stored member list holds is refused;
+// the most it holds loads.
+func TestAThreadLimitPastOneMemberListIsRefused(t *testing.T) {
+	const key = "threading.threading_max_thread"
+	cases := []struct {
+		value   int
+		refused bool
+	}{{MaxThreadMembers, false}, {MaxThreadMembers + 1, true}}
+	for _, c := range cases {
+		_, err := loadYAML(t, yamlAt(key, fmt.Sprint(c.value)))
+		if refused := err != nil && strings.Contains(err.Error(), key); refused != c.refused {
+			t.Errorf("%d: %v, want refused %v", c.value, err, c.refused)
+		}
+	}
+}

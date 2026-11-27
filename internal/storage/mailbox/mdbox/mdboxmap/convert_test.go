@@ -17,16 +17,6 @@ func seedV1(t *testing.T, dir string, entries []MapEntry, nextUID, highestFileID
 	if err != nil {
 		t.Fatalf("seed NewFile: %v", err)
 	}
-	for _, e := range entries {
-		f.Records = append(f.Records, &mailindex.Record{
-			UID: e.UID,
-			Ext: map[string][]byte{
-				extMap:  encodeMapExt(e.FileID, e.Offset, e.Size),
-				extRef:  encodeRefExt(e.RefCount),
-				extGUID: encodeGUIDExt(e.GUID),
-			},
-		})
-	}
 	ext := findExt(f.Extensions, extMap)
 	ext.HdrData = encodeMapHeader(highestFileID, rebuildCount, 0, 0)
 	ext.HdrSize = uint32(len(ext.HdrData))
@@ -43,8 +33,16 @@ func seedV1(t *testing.T, dir string, entries []MapEntry, nextUID, highestFileID
 	f.Header.RecordSize = layout.RecordSize
 	f.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	f.Header.NextUID = nextUID
-	f.Header.MessagesCount = uint32(len(f.Records))
-	if _, err := mailindex.Recreate(f.ToRecreateInput(path)); err != nil {
+	f.Header.MessagesCount = uint32(len(entries))
+	in := f.ToRecreateInput(path)
+	for _, e := range entries {
+		rec, err := encodeEntry(layout, e)
+		if err != nil {
+			t.Fatalf("seed record: %v", err)
+		}
+		in.RecordBytes = append(in.RecordBytes, rec...)
+	}
+	if _, err := mailindex.Recreate(in); err != nil {
 		t.Fatalf("seed Recreate: %v", err)
 	}
 	return path
@@ -70,9 +68,11 @@ func seedLogAppend(t *testing.T, dir string, indexID uint32, entries ...MapEntry
 	if err != nil {
 		t.Fatalf("seed log layout: %v", err)
 	}
-	recs := make([]*mailindex.Record, len(entries))
+	recs := make([][]byte, len(entries))
 	for i, e := range entries {
-		recs[i] = entryToLogRecord(e)
+		if recs[i], err = encodeEntry(layout, e); err != nil {
+			t.Fatalf("seed log record: %v", err)
+		}
 	}
 	payload, err := mailindex.EncodeTxAppendPayload(layout, recs)
 	if err != nil {

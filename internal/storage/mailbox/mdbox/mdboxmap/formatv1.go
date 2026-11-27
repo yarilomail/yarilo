@@ -13,38 +13,33 @@ import (
 
 // readBaseV1Locked loads a v1 base into the record area.
 func (m *Map) readBaseV1Locked() error {
-	f, err := mailindex.Open(m.path)
+	f, recs, err := mailindex.OpenLazy(m.path)
 	if err != nil {
 		return fmt.Errorf("mdboxmap/load v1: %w", err)
 	}
-	entries := make([]MapEntry, 0, len(f.Records))
+	if err := recs.LoadAll(); err != nil {
+		return fmt.Errorf("mdboxmap/load v1: %w", err)
+	}
+	layout := recs.Layout()
+	entries := make([]MapEntry, 0, recs.Len())
 	var maxUID, maxFileID uint32
-	for _, rec := range f.Records {
-		fileID, offset, size, derr := decodeMapExt(rec.Ext[extMap])
+	for i := 0; i < recs.Len(); i++ {
+		e, derr := decodeEntry(layout, recs.Raw(i))
 		if derr != nil {
-			return fmt.Errorf("mdboxmap/load v1: uid=%d: %w", rec.UID, derr)
+			return fmt.Errorf("mdboxmap/load v1: uid=%d: %w", recs.UID(i), derr)
 		}
-		entries = append(entries, MapEntry{
-			UID:      rec.UID,
-			FileID:   fileID,
-			Offset:   offset,
-			Size:     size,
-			RefCount: decodeRefExt(rec.Ext[extRef]),
-			GUID:     decodeGUIDExt(rec.Ext[extGUID]),
-		})
-		if rec.UID > maxUID {
-			maxUID = rec.UID
+		entries = append(entries, e)
+		if e.UID > maxUID {
+			maxUID = e.UID
 		}
-		if fileID > maxFileID {
-			maxFileID = fileID
+		if e.FileID > maxFileID {
+			maxFileID = e.FileID
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].UID < entries[j].UID })
 
-	m.st = store{recs: make([]byte, len(entries)*baseRecordLen)}
-	for i, e := range entries {
-		m.st.setAt(i, e)
-	}
+	m.st.base.release()
+	m.st = store{base: memBase(entries, ^uint32(0)), count: len(entries)}
 	m.loaded = true
 	m.onDisk = FormatV1
 
@@ -71,21 +66,23 @@ func (m *Map) readBaseV1Locked() error {
 
 // writeBaseV1Locked rewrites the whole base in v1. mailindex.Recreate is
 // atomic (.tmp + rename), the same guarantee the v2 writer gives.
-func (m *Map) writeBaseV1Locked() error {
+func (m *Map) writeBaseV1Locked(keep func(*MapEntry) bool) error {
 	f, err := mailindex.NewFile(m.indexID, defaultExtensions(m.highestFileID))
 	if err != nil {
 		return fmt.Errorf("mdboxmap/write v1: NewFile: %w", err)
 	}
-	m.st.each(func(e MapEntry) {
-		f.Records = append(f.Records, &mailindex.Record{
-			UID: e.UID,
-			Ext: map[string][]byte{
-				extMap:  encodeMapExt(e.FileID, e.Offset, e.Size),
-				extRef:  encodeRefExt(e.RefCount),
-				extGUID: encodeGUIDExt(e.GUID),
-			},
-		})
-	})
+	sn := m.st.snapshot()
+	defer sn.release()
+	var kept []MapEntry
+	if err := sn.each(func(e MapEntry) error {
+		if keep != nil && !keep(&e) {
+			return nil
+		}
+		kept = append(kept, e)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("mdboxmap/write v1: %w", err)
+	}
 	ext := findExt(f.Extensions, extMap)
 	if ext == nil {
 		return fmt.Errorf("mdboxmap/write v1: missing %q extension", extMap)
@@ -105,11 +102,22 @@ func (m *Map) writeBaseV1Locked() error {
 	f.Header.RecordSize = layout.RecordSize
 	f.Header.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	f.Header.NextUID = m.nextMapUID
-	f.Header.MessagesCount = uint32(m.st.count())
-	if _, err := mailindex.Recreate(f.ToRecreateInput(m.path)); err != nil {
+	f.Header.MessagesCount = uint32(len(kept))
+	in := f.ToRecreateInput(m.path)
+	in.RecordBytes = make([]byte, 0, len(kept)*int(layout.RecordSize))
+	for _, e := range kept {
+		rec, err := encodeEntry(layout, e)
+		if err != nil {
+			return fmt.Errorf("mdboxmap/write v1: %w", err)
+		}
+		in.RecordBytes = append(in.RecordBytes, rec...)
+	}
+	if _, err := mailindex.Recreate(in); err != nil {
 		return fmt.Errorf("mdboxmap/write v1: %w", err)
 	}
 	m.onDisk = FormatV1
+	m.st.base.release()
+	m.st = store{base: memBase(kept, ^uint32(0)), count: len(kept)}
 	return nil
 }
 

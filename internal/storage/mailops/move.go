@@ -28,12 +28,25 @@ type Moved struct {
 	// srcFile is the copied source body, removed once its record is gone.
 	srcFile   string
 	relocated bool
+	// srcBefore is the source's directory times before the move began.
+	srcBefore    mailbox.DirTimes
+	srcBeforeSet bool
 }
 
 // MoveIn puts each message into the destination: relocated within one store,
 // copied between stores. It stops at the first failure and answers what landed.
 func (o *Ops) MoveIn(req MoveRequest) ([]Moved, error) {
 	var out []Moved
+	var before mailbox.DirTimes
+	timer, timed := mailbox.Driver(req.Src.Store()).(mailbox.DirTimer)
+	if timed {
+		before = timer.DirTimes(req.SrcName)
+	}
+	defer func() {
+		for i := range out {
+			out[i].srcBefore, out[i].srcBeforeSet = before, timed
+		}
+	}()
 	for _, m := range req.Msgs {
 		if req.Src != req.Dst {
 			mv, err := o.moveCopy(req, m)
@@ -61,7 +74,7 @@ func (o *Ops) MoveIn(req MoveRequest) ([]Moved, error) {
 			_ = req.Src.Restore(req.SrcName, srcFile, req.DstName, name, nm)
 			return out, fmt.Errorf("mailops/move record: %w", err)
 		}
-		o.Committed(req.DstFolder, locks.EventDelivered, nm.UID, UsageDelta(nm), nm.GUID)
+		o.CommittedIn(req.Dst, req.DstFolder, locks.EventDelivered, nm.UID, UsageDelta(nm), nm.GUID)
 		out = append(out, Moved{Src: m, Dst: nm, DstFile: name, relocated: true})
 	}
 	return out, nil
@@ -92,6 +105,21 @@ func (o *Ops) moveCopy(req MoveRequest, m *mailbox.MessageMeta) (Moved, error) {
 // ExpungeMoved expunges the sources through tx, the transaction they were read
 // in (#1805), and answers the uids another session changed meanwhile.
 func (o *Ops) ExpungeMoved(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map[uint32]bool {
+	if bf, ok := mailbox.Driver(req.Src.Store()).(mailbox.BodyFirstExpunger); ok && bf.ExpungesBodyFirst() && copiedBodies(moved) {
+		var kept map[uint32]bool
+		herr := req.Src.HoldFolder(req.SrcName, "move", func() error {
+			kept = o.expungeMovedBodyFirst(req, tx, moved)
+			return nil
+		})
+		if herr != nil {
+			slog.Warn(o.cfg.Protocol+": MOVE could not hold the source, so it was not expunged", "folder", req.SrcName, "err", herr)
+			kept = make(map[uint32]bool, len(moved))
+			for _, mv := range moved {
+				kept[mv.Src.UID] = true
+			}
+		}
+		return kept
+	}
 	kept := o.expungeSource(req, tx, moved)
 	for _, mv := range moved {
 		if kept[mv.Src.UID] {
@@ -103,12 +131,61 @@ func (o *Ops) ExpungeMoved(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map
 					"folder", req.SrcName, "uid", mv.Src.UID, "err", err)
 			}
 		}
-		o.Committed(req.SrcFolder, locks.EventExpunged, mv.Src.UID, UsageDelta(mv.Src), mv.Src.GUID)
+		o.CommittedIn(req.Src, req.SrcFolder, locks.EventExpunged, mv.Src.UID, UsageDelta(mv.Src), mv.Src.GUID)
+	}
+	return kept
+}
+
+// copiedBodies says whether a source body is still where it was: only a copy
+// between stores leaves one.
+func copiedBodies(moved []Moved) bool {
+	for _, mv := range moved {
+		if !mv.relocated && mv.srcFile != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// expungeMovedBodyFirst removes the copied source bodies under the source's
+// hold, then the records of those that went: a body that stays keeps its
+// record, and a stop between leaves a record with no file (#2663).
+func (o *Ops) expungeMovedBodyFirst(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map[uint32]bool {
+	kept := make(map[uint32]bool)
+	going := make([]Moved, 0, len(moved))
+	for _, mv := range moved {
+		if !mv.relocated && mv.srcFile != "" {
+			if err := req.Src.RemoveHeld(req.SrcName, mv.srcFile); err != nil {
+				slog.Warn(o.cfg.Protocol+": moved message's source body not removed, so its record stays",
+					"folder", req.SrcName, "uid", mv.Src.UID, "err", err)
+				kept[mv.Src.UID] = true
+				continue
+			}
+			mv.relocated = true // its body is gone from the source now
+		}
+		going = append(going, mv)
+	}
+	for uid := range o.expungeSource(req, tx, going) {
+		kept[uid] = true
+	}
+	for _, mv := range going {
+		if !kept[mv.Src.UID] {
+			o.CommittedIn(req.Src, req.SrcFolder, locks.EventExpunged, mv.Src.UID, UsageDelta(mv.Src), mv.Src.GUID)
+		}
 	}
 	return kept
 }
 
 func (o *Ops) expungeSource(req MoveRequest, tx mailbox.BoxTx, moved []Moved) map[uint32]bool {
+	// The stamp of the source rides the same commit: the move took files out
+	// of its cur/ (#2661).
+	if len(moved) > 0 && moved[0].srcBeforeSet {
+		if c, ok := tx.(mailbox.DirCarryTx); ok {
+			if timer, ok := mailbox.Driver(req.Src.Store()).(mailbox.DirTimer); ok {
+				c.CarryDirTimes(moved[0].srcBefore, timer.DirTimes(req.SrcName))
+			}
+		}
+	}
 	relocated := make(map[uint32]bool, len(moved))
 	for _, mv := range moved {
 		tx.Expunge(mv.Src.UID)

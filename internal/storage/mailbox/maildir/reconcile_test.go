@@ -82,7 +82,9 @@ func TestReconcile_ImportsFromNewAndIsFetchable(t *testing.T) {
 	}
 	got, _ := io.ReadAll(rc)
 	rc.Close()
-	if string(got) != "hello body\n" {
+	// Served with CRLF, as RFC822.SIZE counts it: the file's bare LF is not
+	// what goes on the wire (#2581).
+	if string(got) != "hello body\r\n" {
 		t.Fatalf("fetched body = %q", got)
 	}
 	if entries, _ := os.ReadDir(filepath.Join(box.folderPath("INBOX"), "new")); len(entries) != 0 {
@@ -164,7 +166,7 @@ func TestReconcile_VanishedFileWritesTombstone(t *testing.T) {
 	if st.Expunged != 1 || st.Imported != 0 {
 		t.Fatalf("stats = %+v, want expunged=1", st)
 	}
-	vanished, err := idx.Vanished(folder.ID, 0)
+	vanished, _, err := idx.Vanished(folder.ID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

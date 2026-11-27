@@ -11,7 +11,7 @@ import (
 	imaplib "github.com/emersion/go-imap/v2"
 
 	"github.com/yarilomail/yarilo/v2/internal/mailboxcreate"
-	"github.com/yarilomail/yarilo/v2/internal/userstate/acl"
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/specialuse"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -190,7 +190,7 @@ func (s *Server) handleFolderDelete(w http.ResponseWriter, r *http.Request) {
 			"user", req.User, "folder", req.Folder, "err", err)
 	}
 
-	s.emitFolderEvent(uc, req.Folder, locks.EventExpunged, 0)
+	s.emitFolderEvent(bundle, req.Folder, locks.EventExpunged, 0)
 	apiJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -255,8 +255,8 @@ func (s *Server) handleFolderRename(w http.ResponseWriter, r *http.Request) {
 			"user", req.User, "from", req.OldFolder, "to", req.NewFolder, "err", err)
 	}
 
-	s.emitFolderEvent(uc, req.OldFolder, locks.EventExpunged, 0)
-	s.emitFolderEvent(uc, req.NewFolder, locks.EventDelivered, 0)
+	s.emitFolderEvent(bundle, req.OldFolder, locks.EventExpunged, 0)
+	s.emitFolderEvent(bundle, req.NewFolder, locks.EventDelivered, 0)
 	apiJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -314,7 +314,7 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 	}
 	scoped := len(req.UIDs) > 0
 
-	var expunged []uint32
+	var doomed []*mailbox.MessageMeta
 	for _, m := range msgs {
 		if !hasDeletedFlag(m.Flags) {
 			continue
@@ -324,17 +324,23 @@ func (s *Server) handleFolderExpunge(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if err := bundle.idx.ExpungeMessage(folder.ID, m.UID); err != nil {
-			slog.Warn("backendapi/folder: expunge message failed",
-				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
-			continue
-		}
-		if err := bundle.mbox.RemoveMessage(req.Folder, m); err != nil {
-			slog.Warn("backendapi/folder: remove blob failed",
-				"user", req.User, "folder", req.Folder, "uid", m.UID, "err", err)
-		}
+		doomed = append(doomed, m)
+	}
+	// The protocols' expunge: under the folder hold, and in the store's order
+	// of body and record (#2663).
+	removed, failed, err := bundle.mbox.ExpungeMarked(folder, req.Folder, doomed)
+	if err != nil {
+		apiError(w, "expunge: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if failed > 0 {
+		slog.Warn("backendapi/folder: some messages were not expunged",
+			"user", req.User, "folder", req.Folder, "failed", failed)
+	}
+	expunged := make([]uint32, 0, len(removed))
+	for _, m := range removed {
 		expunged = append(expunged, m.UID)
-		s.emitFolderEvent(uc, req.Folder, locks.EventExpunged, m.UID)
+		s.emitFolderEvent(bundle, req.Folder, locks.EventExpunged, m.UID)
 	}
 
 	apiJSON(w, map[string]any{
@@ -359,62 +365,38 @@ func hasDeletedFlag(flags []string) bool {
 // made through the admin API would resolve its rights differently from one made
 // by a client (#1111).
 func (s *Server) materialiseFolderACL(bundle *nsBundle, folder string) error {
-	store := acl.New(
-		bundle.folderHome(),
-		bundle.info.MailPath,
-		bundle.info.Driver,
-		bundle.info.Separator,
-		bundle.info.StorageEscapeChar,
-		bundle.info.Username,
-		locks.Owner(bundle.info.Username, bundle.info.LockID()),
-		acl.Policy{},
-		s.opts.Locker)
+	store := nsopen.ACL(bundle.folderHome(), bundle.info, bundle.info.Username,
+		locks.Owner(bundle.info.Username, bundle.info.LockID()), adminACLPolicy, s.opts.Locker)
 	return store.MaterialiseOnCreate(folder)
 }
 
 // dropFolderACL removes the per-folder yarilo-acl file and its namespace-wide
 // list entry. Idempotent: acl.Store.Remove is a no-op when no file exists.
 func (s *Server) dropFolderACL(bundle *nsBundle, folder string) error {
-	store := acl.New(
-		bundle.folderHome(),
-		bundle.info.MailPath,
-		bundle.info.Driver,
-		bundle.info.Separator,
-		bundle.info.StorageEscapeChar,
-		bundle.info.Username,
-		locks.Owner(bundle.info.Username, bundle.info.LockID()),
-		acl.Policy{},
-		s.opts.Locker)
+	store := nsopen.ACL(bundle.folderHome(), bundle.info, bundle.info.Username,
+		locks.Owner(bundle.info.Username, bundle.info.LockID()), adminACLPolicy, s.opts.Locker)
 	return store.Remove(folder)
 }
 
 // renameFolderACL moves the per-folder yarilo-acl file across index dirs and
 // rewrites the namespace-wide list entries. Idempotent.
 func (s *Server) renameFolderACL(bundle *nsBundle, oldFolder, newFolder string) error {
-	store := acl.New(
-		bundle.folderHome(),
-		bundle.info.MailPath,
-		bundle.info.Driver,
-		bundle.info.Separator,
-		bundle.info.StorageEscapeChar,
-		bundle.info.Username,
-		locks.Owner(bundle.info.Username, bundle.info.LockID()),
-		acl.Policy{},
-		s.opts.Locker)
+	store := nsopen.ACL(bundle.folderHome(), bundle.info, bundle.info.Username,
+		locks.Owner(bundle.info.Username, bundle.info.LockID()), adminACLPolicy, s.opts.Locker)
 	return store.Rename(oldFolder, newFolder)
 }
 
 // emitFolderEvent pushes an advisory wake-up to IDLE sessions on other pods.
 // Fire-and-forget: errors are logged at Debug only, since the authoritative
 // state already lives on disk and the next poll picks it up.
-func (s *Server) emitFolderEvent(uc *userContext, folder string, eventType locks.EventType, uid uint32) {
-	if s.opts.Locker == nil || uc.info == nil {
+func (s *Server) emitFolderEvent(bundle *nsBundle, folder string, eventType locks.EventType, uid uint32) {
+	if s.opts.Locker == nil || bundle == nil || bundle.info == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), folderEventTimeout)
 	defer cancel()
 	payload := uintPayload(uid)
-	key := locks.MailboxKey(uc.info.Username, folder)
+	key := locks.MailboxKey(bundle.info.LockUser(), folder)
 	if err := s.opts.Locker.Emit(ctx, key, eventType, payload); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			slog.Debug("backendapi/folder: event emit timed out",

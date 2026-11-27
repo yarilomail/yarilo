@@ -59,6 +59,9 @@ type FilterResult struct {
 	Notifications []interp.ActionNotify
 	// Reports lists vnd.yarilo.report actions (ARF abuse reports, RFC 5965).
 	Reports []interp.ActionReport
+	// discarded: the script ran discard, so a redirect refused by the send
+	// limit does not bring the implicit keep back.
+	discarded bool
 	// Message is the substituted message bytes when a script rewrote the
 	// message (vnd.yarilo.filter, or RFC 5703 replace / enclose). Nil means the
 	// message is unchanged and the caller should deliver the original.

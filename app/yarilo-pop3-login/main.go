@@ -103,7 +103,7 @@ func main() {
 	localIP := os.Getenv("POD_IP")
 	// See yarilo-imap-login/main.go for why this must be the component's
 	// own director_addr, not cfg.DirectorService.Listen (#735).
-	if err := config.ValidateBackendOrDirector("pop3_login_service", cfg.POP3LoginService.BackendAddr, cfg.POP3LoginService.DirectorAddr); err != nil {
+	if err := cfg.CheckRole("yarilo-pop3-login"); err != nil {
 		slog.Error("config validation failed", "err", err)
 		os.Exit(1)
 	}

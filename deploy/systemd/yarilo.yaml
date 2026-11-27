@@ -156,7 +156,6 @@ storage:
   mail_driver: maildir
   maildir_root: /var/mail/vhosts
   mail_home: "%d/%u"
-  index: fileindex
 
 protocol:
   jmap:

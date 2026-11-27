@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -11,7 +10,8 @@ import (
 // A key that slid one level in during an edit still renders, and the chart only
 // fails at apply time: the director carried volumes inside its container (#1906).
 func TestEveryWorkloadCarriesItsVolumesOnThePodSpec(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml").Output()
+	t.Parallel()
+	out, err := helmOutput(t, "template", "../../helm", "-f", "../../helm_values/values-sandbox.yaml")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

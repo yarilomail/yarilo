@@ -2,7 +2,6 @@ package guard_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -38,17 +37,19 @@ func TestEveryKeptValuesFileLoads(t *testing.T) {
 	if len(sets) < 4 {
 		t.Fatalf("found only %v: the row would pass by reading nothing", sets)
 	}
+	// Rendered ahead and concurrently: the rows below set env, so they cannot run in parallel.
+	prefetch := make([][]string, 0, len(sets))
+	for _, set := range sets {
+		prefetch = append(prefetch, renderArgs(set))
+	}
+	helmPrefetch(prefetch...)
 	for _, set := range sets {
 		name := "chart defaults"
 		if len(set) > 0 {
 			name = filepath.Base(set[len(set)-1])
 		}
 		t.Run(name, func(t *testing.T) {
-			args := []string{"template", "../../helm"}
-			for _, f := range set {
-				args = append(args, "-f", f)
-			}
-			out, err := exec.CommandContext(t.Context(), "helm", args...).Output()
+			out, err := helmOutput(t, renderArgs(set)...)
 			if err != nil {
 				t.Fatalf("helm template: %v", err)
 			}
@@ -96,4 +97,12 @@ func renderedConfig(t *testing.T, manifests string) string {
 	}
 	t.Fatal("the chart rendered no ConfigMap carrying yarilo.yaml")
 	return ""
+}
+
+func renderArgs(set []string) []string {
+	args := []string{"template", "../../helm"}
+	for _, f := range set {
+		args = append(args, "-f", f)
+	}
+	return args
 }

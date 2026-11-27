@@ -70,7 +70,7 @@ func TestTheTicketKeyIsCheckedAtStart(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			warn, err := checkTicketKey(tc.key, tc.ttl)
+			warn, err := config.CheckTicketKey(tc.key, tc.ttl)
 			if (warn != "") != tc.warn || (err != nil) != tc.err {
 				t.Errorf("checkTicketKey = %q, %v; want warn %v, err %v", warn, err, tc.warn, tc.err)
 			}

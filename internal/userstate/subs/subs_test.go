@@ -3,6 +3,9 @@ package subs
 import (
 	"sort"
 	"testing"
+
+	"github.com/yarilomail/yarilo/v2/pkg/config"
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 func TestSubsAddSnapshotRemove(t *testing.T) {
@@ -68,4 +71,26 @@ func equalSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// A namespace that keeps its own subscriptions keeps them in its store; a
+// shared store's file is locked under the store's name, not the user's (#2598).
+func TestForNamespaceLocksASharedStoreByItsName(t *testing.T) {
+	pub := t.TempDir()
+	namespaces := []config.NamespaceConfig{
+		{Type: "personal", Prefix: "", Separator: "/", Inbox: true},
+		{Type: "shared", Prefix: "Public/", Separator: "/", Location: "maildir:" + pub},
+	}
+	personal := &mailbox.UserInfo{Username: "alice@example.com", Home: t.TempDir()}
+	nsUI, err := mailbox.NamespaceUserInfo(personal, mailbox.Location{Driver: "maildir", Path: pub}, "/", mailbox.SharedByAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := ForNamespace(namespaces, 1, nsUI, personal, "proc/1/alice@example.com/t", nil)
+	if !namespaces[1].KeepsSubscriptions() {
+		t.Skip("the namespace keeps no subscriptions of its own")
+	}
+	if got := store.lockUser(); got != "store:"+pub {
+		t.Fatalf("lock name %q, want store:%s", got, pub)
+	}
 }

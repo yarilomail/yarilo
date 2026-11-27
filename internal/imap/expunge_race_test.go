@@ -2,6 +2,7 @@ package imap
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"testing"
 
@@ -48,23 +49,23 @@ func TestARecordWithNoFileStillMarks(t *testing.T) {
 	}
 }
 
-// A read error means "expunged under us" only when the record is gone too:
-// a record the index still holds is damage, and stays counted as such.
-func TestExpungedUnderUsAsksTheIndex(t *testing.T) {
+// A read error means "expunged under us" only when the box decided it: the
+// box asks the index (mailboxbase TestABodyGoneWithItsRecordIsExpunged), and a
+// body gone while its record stays is the store's error, not an expunge.
+func TestExpungedUnderUsIsTheBoxDecision(t *testing.T) {
 	corrupt := errors.Join(errors.New("uid 7 is in no list entry"), mailbox.ErrCorruptStorage)
 	for _, tc := range []struct {
-		name    string
-		present bool
-		err     error
-		want    bool
+		name string
+		err  error
+		want bool
 	}{
-		{"the file is gone", true, fs.ErrNotExist, true},
-		{"corrupt, the record expunged", false, corrupt, true},
-		{"corrupt, the record still there", true, corrupt, false},
-		{"another read error", false, errors.New("i/o error"), false},
+		{"the box said expunged", fmt.Errorf("x: %w", mailbox.ErrExpunged), true},
+		{"the file is gone, the record still there", fs.ErrNotExist, false},
+		{"corrupt, the record still there", corrupt, false},
+		{"another read error", errors.New("i/o error"), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &session{mbox: &markingBox{present: map[uint32]bool{7: tc.present}}, folder: &mailbox.Folder{ID: 1}}
+			s := &session{mbox: &markingBox{present: map[uint32]bool{}}, folder: &mailbox.Folder{ID: 1}}
 			if got := s.expungedUnderUs(&mailbox.MessageMeta{UID: 7}, tc.err); got != tc.want {
 				t.Errorf("expungedUnderUs = %v, want %v", got, tc.want)
 			}

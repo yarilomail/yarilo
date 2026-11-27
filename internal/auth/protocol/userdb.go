@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -201,6 +202,39 @@ func (c UserdbChain) Lookup(username string) (*UserInfo, error) {
 	}
 	return nil, nil
 }
+
+// Iterate lists the users of every entry that can enumerate, in chain order,
+// each name once; an entry that cannot is passed over, as the reference's
+// master LIST does. The chain enumerates nothing only when no entry can.
+func (c UserdbChain) Iterate() ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	can := false
+	for _, db := range c {
+		it, ok := db.(UserdbIterator)
+		if !ok {
+			continue
+		}
+		can = true
+		users, err := it.Iterate()
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range users {
+			if !seen[u] {
+				seen[u] = true
+				out = append(out, u)
+			}
+		}
+	}
+	if !can {
+		return nil, ErrNoEnumeration
+	}
+	return out, nil
+}
+
+// ErrNoEnumeration says no userdb of the chain can list its users.
+var ErrNoEnumeration = errors.New("userdb does not support enumeration")
 
 // UserdbIterator lists every known user, for `yarctl backend user
 // iterate` and the master-protocol `LIST` command. Optional - a backend

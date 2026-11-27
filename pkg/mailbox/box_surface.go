@@ -79,12 +79,15 @@ type SelfSyncing interface {
 	SyncFolder(idx UserIndex, f *Folder, open bool) (changed bool, err error)
 }
 
-// BackingRef is the folder of the personal namespace a virtual record's copy
-// lives in, by the id the record names it with.
+// BackingRef is the folder a virtual record's copy lives in, by the id the
+// record names it with. Name is the folder in its own store.
 type BackingRef struct {
 	Name        string
 	GUID        [16]byte
 	UIDValidity uint32
+	// FullName is the IMAP name of a folder outside the personal namespace,
+	// empty for a personal one (#2603).
+	FullName string
 }
 
 // VirtualCopies says where a derived folder's copies live; asserted where it

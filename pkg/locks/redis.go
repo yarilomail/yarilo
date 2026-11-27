@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,6 +19,7 @@ type RedisBackend struct {
 	rdb       redis.UniversalClient
 	keyPrefix string
 	chPrefix  string
+	wakes     *wakeHub
 }
 
 // RedisOption tunes the backend at construction time.
@@ -46,7 +48,20 @@ func NewRedisBackend(rdb redis.UniversalClient, opts ...RedisOption) *RedisBacke
 	for _, opt := range opts {
 		opt(b)
 	}
+	b.wakes = newWakeHub(rdb, b.wakeChannel(""))
 	return b
+}
+
+// RegisterMetrics puts the backend's own counters on r.
+func (b *RedisBackend) RegisterMetrics(r prometheus.Registerer) {
+	r.MustRegister(b.wakes.resubscribed)
+}
+
+// ListenWakes takes the replica's release subscription now rather than at
+// the first waiting acquire. A store not yet reachable is not an error here:
+// the first wait subscribes instead.
+func (b *RedisBackend) ListenWakes(ctx context.Context) error {
+	return b.wakes.start(ctx)
 }
 
 // lockValue is the stored value: "<resource>|<owner>|<kind>", kind ∈
@@ -106,6 +121,21 @@ local function nowMs()
   local t = redis.call("TIME")
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
+-- leaveLine takes a ticket out of the line and names whoever now stands
+-- first, in the same step, so the hand-off is not a second round trip.
+local function leaveLine(qkey, ticket, wakeCh)
+  if ticket == "" then return end
+  if redis.call("ZREM", qkey, ticket) == 0 then return end
+  local nxt = redis.call("ZRANGE", qkey, 0, 0)
+  if nxt[1] then redis.call("PUBLISH", wakeCh, nxt[1]) end
+end
+-- joinLine drops abandoned tickets, adds this one, and answers how many
+-- stand ahead of it.
+local function joinLine(qkey, ticket, windowMs)
+  redis.call("ZREMRANGEBYSCORE", qkey, "-inf", nowMs() - tonumber(windowMs))
+  redis.call("ZADD", qkey, "NX", nowMs(), ticket)
+  return redis.call("ZRANK", qkey, ticket)
+end
 `
 
 // acquireScript takes the exclusive lock: it fails if either the resource
@@ -121,9 +151,12 @@ end
 //	ARGV[2] = lockValue (resource|owner|x)
 //	ARGV[3] = ttl_ms
 //	ARGV[4] = key prefix (to reach a shared holder's id key)
+//	ARGV[5] = the caller's ticket in the line, or ""
+//	ARGV[6] = the resource's release channel
 //
-//	returns {"OK"} on success, or {"BUSY", <current_owner>} on contention.
-var acquireScript = redis.NewScript(luaParseValue + `
+//	returns {"OK"} on success, or {"BUSY", <current_owner>} on contention. A
+//	grant takes the ticket out of the line and hands the turn on.
+const acquireBody = `
 -- The queue is a right: only its head may take the lock, and a caller with no
 -- ticket waits behind anyone who has one (#1809).
 local head = redis.call("ZRANGE", KEYS[4], 0, 0)
@@ -156,8 +189,16 @@ end
 redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[3])
 redis.call("SET", KEYS[1] .. ":val", ARGV[2], "PX", ARGV[3])
 redis.call("SET", KEYS[2], ARGV[2], "PX", ARGV[3])
+leaveLine(KEYS[4], ARGV[5], ARGV[6])
 return {"OK"}
-`)
+`
+
+var acquireScript = redis.NewScript(luaParseValue + "local function take()\n" + acquireBody + "end\nreturn take()\n")
+
+// joinAcquireScript is enqueueScript and acquireScript in one step: the
+// contender joins the line and, standing first, tries at once. ARGV[7] is the
+// abandon window in ms.
+var joinAcquireScript = redis.NewScript(luaParseValue + "local function take()\n" + acquireBody + "end\n" + joinAndTake)
 
 // acquireSharedScript takes a shared lock: it only fails if the resource's
 // exclusive holder key is present. Any number of shared holders may coexist,
@@ -172,7 +213,7 @@ return {"OK"}
 //	ARGV[3] = ttl_ms
 //
 //	returns {"OK"} on success, or {"BUSY", <current_owner>} on contention.
-var acquireSharedScript = redis.NewScript(luaParseValue + `
+const acquireSharedBody = `
 local head = redis.call("ZRANGE", KEYS[4], 0, 0)
 if head[1] and head[1] ~= ARGV[5] then
   return {"BUSY", "", "queued"}
@@ -186,8 +227,21 @@ if existing then
 end
 redis.call("ZADD", KEYS[3], nowMs() + tonumber(ARGV[3]), ARGV[1])
 redis.call("SET", KEYS[2], ARGV[2], "PX", ARGV[3])
+leaveLine(KEYS[4], ARGV[5], ARGV[6])
 return {"OK"}
-`)
+`
+
+var acquireSharedScript = redis.NewScript(luaParseValue + "local function take()\n" + acquireSharedBody + "end\nreturn take()\n")
+
+var joinAcquireSharedScript = redis.NewScript(luaParseValue + "local function take()\n" + acquireSharedBody + "end\n" + joinAndTake)
+
+// joinAndTake answers {"QUEUED", rank} for a contender with others ahead of
+// it, and otherwise what take answers.
+const joinAndTake = `
+local rank = joinLine(KEYS[4], ARGV[5], ARGV[7])
+if rank > 0 then return {"QUEUED", rank} end
+return take()
+`
 
 // releaseScript deletes the lock by ID, routing to the exclusive resource
 // index or the shared ZSET depending on the lockValue's kind field,
@@ -197,8 +251,9 @@ return {"OK"}
 //	KEYS[1] = lock id key
 //	ARGV[1] = lockID
 //	ARGV[2] = key prefix (to build resource/shared index keys from lockValue)
+//	ARGV[3] = release channel prefix; the resource follows it
 //
-//	returns 1 on success, 0 if not found.
+//	returns {1, resource, next ticket} on success, 0 if not found.
 var releaseScript = redis.NewScript(luaParseValue + `
 local v = redis.call("GET", KEYS[1])
 if not v then return 0 end
@@ -216,6 +271,9 @@ else
 end
 redis.call("DEL", KEYS[1])
 local next_up = redis.call("ZRANGE", ARGV[2] .. "q:" .. resource, 0, 0)
+-- Every replica hears it, not only the one the holder was connected to: a
+-- contender waiting elsewhere is woken by this and nothing else (#1821).
+redis.call("PUBLISH", ARGV[3] .. resource, next_up[1] or "")
 return {1, resource, next_up[1] or ""}
 `)
 
@@ -261,7 +319,7 @@ func (b *RedisBackend) Acquire(ctx context.Context, resource, owner, site, ticke
 	}
 	res, err := acquireScript.Run(ctx, b.rdb,
 		[]string{b.resKey(resource), b.lockKey(id), b.sharedKey(resource), b.queueKey(resource)},
-		id, lockValue(resource, owner, "x", site), ttl.Milliseconds(), b.keyPrefix, ticket,
+		id, lockValue(resource, owner, "x", site), ttl.Milliseconds(), b.keyPrefix, ticket, b.wakeChannel(resource),
 	).Result()
 	if err != nil {
 		return "", Holder{}, fmt.Errorf("locks/redis: acquire: %w", err)
@@ -280,7 +338,7 @@ func (b *RedisBackend) AcquireShared(ctx context.Context, resource, owner, site,
 	}
 	res, err := acquireSharedScript.Run(ctx, b.rdb,
 		[]string{b.resKey(resource), b.lockKey(id), b.sharedKey(resource), b.queueKey(resource)},
-		id, lockValue(resource, owner, "s", site), ttl.Milliseconds(), b.keyPrefix, ticket,
+		id, lockValue(resource, owner, "s", site), ttl.Milliseconds(), b.keyPrefix, ticket, b.wakeChannel(resource),
 	).Result()
 	if err != nil {
 		return "", Holder{}, fmt.Errorf("locks/redis: acquire shared: %w", err)
@@ -317,21 +375,13 @@ func parseAcquireResult(res interface{}, id string) (string, Holder, error) {
 func (b *RedisBackend) Release(ctx context.Context, lockID string) error {
 	res, err := releaseScript.Run(ctx, b.rdb,
 		[]string{b.lockKey(lockID)},
-		lockID, b.keyPrefix,
+		lockID, b.keyPrefix, b.wakeChannel(""),
 	).Result()
 	if err != nil {
 		return fmt.Errorf("locks/redis: release: %w", err)
 	}
-	fields, _ := res.([]interface{})
-	if len(fields) != 3 {
+	if fields, _ := res.([]interface{}); len(fields) != 3 {
 		return ErrNotFound
-	}
-	resource, _ := fields[1].(string)
-	nextUp, _ := fields[2].(string)
-	// Every replica hears it, not only the one the holder was connected to:
-	// a contender waiting elsewhere is woken by this and nothing else (#1821).
-	if err := b.rdb.Publish(ctx, b.wakeChannel(resource), nextUp).Err(); err != nil {
-		return fmt.Errorf("locks/redis: announce release: %w", err)
 	}
 	return nil
 }
@@ -434,6 +484,7 @@ func (b *RedisBackend) counterKey(key string) string {
 
 // Close implements Backend. Closes the wrapped Redis client.
 func (b *RedisBackend) Close() error {
+	b.wakes.close()
 	if err := b.rdb.Close(); err != nil && !errors.Is(err, redis.ErrClosed) {
 		return fmt.Errorf("locks/redis: close: %w", err)
 	}

@@ -22,5 +22,17 @@ func (u *userMailbox) OpenRecord(folder string, m *mailbox.MessageMeta) (io.Read
 	if err != nil {
 		return nil, err
 	}
+	if beforeOpen != nil {
+		beforeOpen()
+	}
 	return u.Fetch(folder, name, m.AltTier)
+}
+
+var beforeOpen func()
+
+// SetTestBeforeOpen runs fn between a record's lookup and its open: a test
+// expunges the message in that gap. Test seam.
+func SetTestBeforeOpen(fn func()) func() {
+	beforeOpen = fn
+	return func() { beforeOpen = nil }
 }

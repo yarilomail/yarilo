@@ -10,10 +10,9 @@ import (
 
 func export(t *testing.T) map[string]setting {
 	t.Helper()
-	var out []setting
-	collect("", reflect.ValueOf(config.Defaults()).Elem(), &out)
 	byKey := map[string]setting{}
-	for _, s := range out {
+	for _, c := range config.Walk(config.Defaults(), true) {
+		s := setting{Key: c.Key, Section: c.Section, Type: c.Type, Kind: c.Kind, Default: c.Value}
 		if _, dup := byKey[s.Key]; dup {
 			t.Fatalf("%s exported twice", s.Key)
 		}

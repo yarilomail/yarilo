@@ -3,7 +3,6 @@ package guard_test
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -60,6 +59,7 @@ func literalsIn(t *testing.T, raw []byte) []string {
 // No values file writes a secret, and no chart render of one carries a secret
 // into the ConfigMap: each is empty or a ${…} reference to a Secret (#2507).
 func TestValuesHoldOnlySecretReferences(t *testing.T) {
+	t.Parallel()
 	const sandbox = "../../helm_values/values-sandbox.yaml"
 	files := []string{"../../helm/values.yaml"}
 	sets := [][]string{nil}
@@ -101,7 +101,7 @@ func TestValuesHoldOnlySecretReferences(t *testing.T) {
 		for _, f := range set {
 			args = append(args, "-f", f)
 		}
-		out, err := exec.CommandContext(t.Context(), "helm", args...).Output()
+		out, err := helmOutput(t, args...)
 		if err != nil {
 			t.Fatalf("helm template %s: %v", name, err)
 		}

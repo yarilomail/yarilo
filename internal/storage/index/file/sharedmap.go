@@ -4,6 +4,9 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"time"
+
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 )
 
 // errFoldNotPossible says the tail cannot be applied onto the map we hold; the
@@ -23,13 +26,28 @@ type indexMap struct {
 
 	// log identity, not only its length: a flush replaces the log, and the
 	// tail of the new one is not a continuation of the old one's offset.
-	logIdent os.FileInfo
+	logIdent *logID
 	// logSeen is how long the log was when this map was folded; committedEnd
 	// is how far the fold got. They differ when the tail ends mid-group, and
 	// the map is still current for that log (#1833).
 	logSeen      int64
 	committedEnd int64 // log offset folded into view
 	refs         int   // live views; guarded by folderState.mapMu
+	// imgRef says the map holds a reference to img: from its publication
+	// until it is neither current nor read.
+	imgRef bool
+	// prev is the map this one was extended from, unpublished by the fold:
+	// retired once this one is published, so its image reference goes.
+	prev *indexMap
+
+	// w writes the map's chunks for the next version; view.recs is its
+	// snapshot, released once the map is neither current nor read. Nil for a
+	// view with no records and for a view on the shared image.
+	w        *mailindex.Records
+	released bool
+	// broken says a fold onto w stopped part way: w holds some of a tail, so
+	// this map is never extended again, only rebuilt from the base.
+	broken bool
 
 	// ownsFile says the records are this map's own. A view built from a base
 	// with nothing in the log shares the cached base image, and extending it
@@ -55,6 +73,12 @@ func (c *counter) load() int { c.mu.Lock(); defer c.mu.Unlock(); return c.n }
 // Folds and MapCopies report the two seams this change is measured on.
 func Folds() int     { return folds.load() }
 func MapCopies() int { return mapCopies.load() }
+
+// DropBaseImages forgets every cached parse of a base, as a process that has
+// just started holds none: for a measurement of a cold open.
+func DropBaseImages() {
+	baseImages.clearAll()
+}
 
 // ResetMapCounters zeroes both, for a row that counts one folder's work.
 func ResetMapCounters() {
@@ -93,19 +117,37 @@ func (fs *folderState) openView() (*folderState, func(), error) {
 		return nil, nil, err
 	}
 	fs.mapMu.Lock()
+	old := fs.current
 	fs.current = m
 	m.refs++
+	if m.img != nil && !m.imgRef {
+		m.imgRef = true
+		baseImages.ref(m.img)
+	}
+	if p := m.prev; p != nil {
+		m.prev = nil
+		if p != m {
+			fs.retireLocked(p)
+		}
+	}
+	if old != nil && old != m {
+		fs.retireLocked(old)
+	}
 	fs.mapMu.Unlock()
 	return m.view, func() { fs.releaseView(m) }, nil
 }
 
 // viewIfCurrent takes a reference to the published map when it already holds
 // this base and this much of the log.
-func (fs *folderState) viewIfCurrent(img *baseImage, logSt os.FileInfo, ierr error) (*folderState, func(), bool) {
+func (fs *folderState) viewIfCurrent(img *baseImage, logSt *logID, ierr error) (*folderState, func(), bool) {
 	if ierr != nil || img == nil {
 		return nil, nil, false
 	}
+	asked := time.Now()
 	fs.mapMu.Lock()
+	if mapWaitSeam != nil {
+		mapWaitSeam(time.Since(asked))
+	}
 	defer fs.mapMu.Unlock()
 	m := fs.current
 	if m == nil || !sameImage(m.img, img) || !sameLog(m.logIdent, logSt) || m.logSeen != sizeOfLog(logSt) {
@@ -117,23 +159,134 @@ func (fs *folderState) viewIfCurrent(img *baseImage, logSt os.FileInfo, ierr err
 	return m.view, func() { fs.releaseView(m) }, true
 }
 
+// dropView unpublishes the map holding view and forgets the cached image of
+// the base, so the next read builds from the current one.
+func (fs *folderState) dropView(view *folderState) {
+	baseImages.Delete(fs.indexPath)
+	fs.mapMu.Lock()
+	if m := fs.current; m != nil && m.view == view {
+		fs.current = nil
+		fs.retireLocked(m)
+	}
+	fs.mapMu.Unlock()
+}
+
 func (fs *folderState) releaseView(m *indexMap) {
 	fs.mapMu.Lock()
 	m.refs--
+	fs.retireLocked(m)
 	fs.mapMu.Unlock()
+}
+
+// publishRecords turns a forked view's writer into the map's: readers get a
+// snapshot of it, and the next fold writes on.
+func (m *indexMap) publishRecords() {
+	if m.view.recs == nil || m.img != nil && m.view.recs == m.img.recs || len(m.view.pending) > 0 {
+		// No records, the shared image's, which nobody writes, or a view's
+		// own with pending, which ensureRecords replaces.
+		return
+	}
+	m.w = m.view.recs
+	m.view.recs = m.w.Snapshot()
+}
+
+// mapWaitSeam is a test seam: how long a reader waited for mapMu, the lock a
+// snapshot is published and taken under. Nil everywhere else.
+var mapWaitSeam func(time.Duration)
+
+// sibling is a folderState for the next version of a view: the same folder,
+// header and records until the fold makes them its own.
+func (v *folderState) sibling() *folderState {
+	if v.isView {
+		v.pendMu.Lock()
+		defer v.pendMu.Unlock()
+	}
+	return v.siblingLocked()
+}
+
+// siblingLocked is sibling under v.pendMu: the records and what is pending on
+// them, unless ensureRecords applied it already.
+func (v *folderState) siblingLocked() *folderState {
+	s := v.siblingBase()
+	s.recs = v.recs
+	if !v.applied.Load() {
+		s.pending = append([][]byte(nil), v.pending...)
+		if v.pendingUIDs != nil {
+			s.pendingUIDs = make(map[uint32]struct{}, len(v.pendingUIDs))
+			for u := range v.pendingUIDs {
+				s.pendingUIDs[u] = struct{}{}
+			}
+		}
+		s.countersUnknown, s.pendingExpunge = v.countersUnknown, v.pendingExpunge
+	}
+	return s
+}
+
+// holdsRecords says the view has records, read under pendMu: a reader's
+// ensureRecords may be replacing them.
+func (v *folderState) holdsRecords() bool {
+	if v.isView {
+		v.pendMu.Lock()
+		defer v.pendMu.Unlock()
+	}
+	return v.recs != nil
+}
+
+func (v *folderState) siblingBase() *folderState {
+	return &folderState{
+		user:        v.user,
+		folder:      v.folder,
+		indexDir:    v.indexDir,
+		indexPath:   v.indexPath,
+		traceID:     v.traceID,
+		file:        v.file,
+		keywords:    v.keywords,
+		lineage:     v.lineage,
+		logSize:     v.logSize,
+		vsize:       v.vsize,
+		isView:      v.isView,
+		baseNextUID: v.baseNextUID,
+		log2MaxAge:  v.log2MaxAge,
+	}
+}
+
+// retire releases a map's snapshot once nobody reads it and it is no longer
+// current: the writer may then change its chunks in place.
+func (fs *folderState) retire(m *indexMap) {
+	fs.mapMu.Lock()
+	defer fs.mapMu.Unlock()
+	if fs.current == m && m.refs == 0 {
+		fs.current = nil
+	}
+	fs.retireLocked(m)
+}
+
+func (fs *folderState) retireLocked(m *indexMap) {
+	if m.refs > 0 || fs.current == m {
+		return
+	}
+	if m.imgRef {
+		m.imgRef = false
+		baseImages.unref(m.img)
+	}
+	if m.w == nil || m.released {
+		return
+	}
+	m.view.recs.Release()
+	m.released = true
 }
 
 // fold builds the next map. It extends the published one when it can -- same
 // base, log only longer -- and rebuilds from the base otherwise. The extension
 // copies the records only when a view still holds them; with no holder the
 // records are extended in place, which is the whole point of counting.
-func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*indexMap, error) {
+func (fs *folderState) fold(img *baseImage, logSt *logID, ierr error) (*indexMap, error) {
 	folds.add()
 
 	var from *indexMap
 	if ierr == nil && img != nil {
 		fs.mapMu.Lock()
-		if m := fs.current; m != nil && sameImage(m.img, img) && sameLog(m.logIdent, logSt) &&
+		if m := fs.current; m != nil && !m.broken && sameImage(m.img, img) && sameLog(m.logIdent, logSt) &&
 			sizeOfLog(logSt) >= m.committedEnd {
 			from = m
 			// Unpublished for the duration: a map being extended in place
@@ -146,6 +299,9 @@ func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*ind
 	}
 
 	if from != nil {
+		if extendSeam != nil {
+			extendSeam()
+		}
 		m, err := fs.extend(from)
 		if err == nil {
 			return m, nil
@@ -160,9 +316,14 @@ func (fs *folderState) fold(img *baseImage, logSt os.FileInfo, ierr error) (*ind
 	if err != nil {
 		return nil, err
 	}
-	return &indexMap{view: view, img: used, logIdent: logSt, logSeen: sizeOfLog(logSt), committedEnd: end,
-		ownsFile: used.file != view.file}, nil
+	m := &indexMap{view: view, img: used, logIdent: logSt, logSeen: sizeOfLog(logSt), committedEnd: end,
+		ownsFile: used.file != view.file, prev: from}
+	m.publishRecords()
+	return m, nil
 }
+
+// extendSeam is a test seam run before a map is extended. Nil elsewhere.
+var extendSeam func()
 
 // extend folds [committedEnd, end) onto the map we already have.
 func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
@@ -171,7 +332,8 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 		return nil, err
 	}
 	defer lg.close()
-	if lg.f == nil || !lg.ok || lg.size < from.committedEnd {
+	if lg.f == nil || !lg.ok || lg.size < from.committedEnd ||
+		from.logIdent == nil || lg.hdr.FileSeq != from.logIdent.seq {
 		return nil, errFoldNotPossible
 	}
 
@@ -181,56 +343,84 @@ func (fs *folderState) extend(from *indexMap) (*indexMap, error) {
 	fs.mapMu.Lock()
 	shared := from.refs > 0 || !from.ownsFile || fs.current == from
 	fs.mapMu.Unlock()
-	if shared {
-		// Somebody is reading this image: it stays as it is, and the fold
-		// goes onto a copy (the reference's move-to-private).
-		mapCopies.add()
-		target = &folderState{
-			user:      from.view.user,
-			folder:    from.view.folder,
-			indexDir:  from.view.indexDir,
-			indexPath: from.view.indexPath,
-			traceID:   from.view.traceID,
-			file:      cloneIndexFile(from.view.file),
-			keywords:  from.view.keywords,
-			lineage:   from.view.lineage,
-			logSize:   from.view.logSize,
-			vsize:     from.view.vsize,
+	onWriter := false
+	switch {
+	case from.w != nil || from.view.holdsRecords():
+		// Chunked: the next version writes through the map's writer, which
+		// copies only a chunk a live snapshot still shares (INDEX-MEMORY.md §4).
+		target = from.view.sibling()
+		if from.w != nil {
+			fs.retire(from)
+			target.file, target.recs = cloneIndexFile(from.view.file), from.w
+			onWriter = true
+		} else {
+			target.forkRecords()
 		}
+	case shared:
+		// Somebody is reading these records: they stay as they are, and the
+		// fold goes onto a copy (the reference's move-to-private).
+		mapCopies.add()
+		target = from.view.sibling()
+		target.forkRecords()
 	}
 
 	end, aerr := target.applyLogFrom(lg, from.committedEnd)
+	if aerr == nil {
+		aerr = target.refreshExtState()
+	}
 	if aerr != nil {
+		// What the replay wrote before it stopped stays in the writer.
+		if onWriter {
+			fs.mapMu.Lock()
+			from.broken = true
+			fs.mapMu.Unlock()
+		}
 		return nil, aerr
 	}
 	target.logSize = end
-	if rerr := target.refreshExtState(); rerr != nil {
-		return nil, rerr
-	}
 	fromHeader := target.vsize
 	target.ensureVsizeLocked()
 	if target.vsize.Vsize == 0 && fromHeader.Vsize > 0 {
 		target.vsize = fromHeader
 	}
-	return &indexMap{view: target, img: from.img, logIdent: from.logIdent, logSeen: lg.size,
-		committedEnd: end, ownsFile: true}, nil
+	m := &indexMap{view: target, img: from.img, logIdent: &logID{st: lg.stat, seq: lg.hdr.FileSeq}, logSeen: lg.size,
+		committedEnd: end, ownsFile: true, prev: from}
+	m.publishRecords()
+	return m, nil
+}
+
+// logID is a log as a map last saw it: the file and the lineage its header
+// names, read through one descriptor. A file's identity alone is reused by the
+// filesystem once the old log is gone; a lineage is renewed by every fold (#2663).
+type logID struct {
+	st  os.FileInfo
+	seq uint32
 }
 
 // logStatOf answers with nil for an absent log: no log is a state a map can be
 // built on, and it is told apart from a log that is there.
-func logStatOf(indexPath string) os.FileInfo {
-	st, err := os.Stat(indexPath + ".log")
+func logStatOf(indexPath string) *logID {
+	f, err := os.Open(indexPath + ".log")
 	if err != nil {
 		return nil
 	}
-	return st
+	defer f.Close() //nolint:errcheck
+	st, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	id := &logID{st: st}
+	if hdr, herr := mailindex.DecodeLogHeader(f); herr == nil {
+		id.seq = hdr.FileSeq
+	}
+	return id
 }
 
-func sizeOfLog(st os.FileInfo) int64 {
-	if st == nil {
+func sizeOfLog(id *logID) int64 {
+	if id == nil {
 		return 0
 	}
-	return st.Size()
+	return id.st.Size()
 }
 
 // sameImage compares two parses of the base. Pointer first, then the file
@@ -251,9 +441,9 @@ func sameImage(a, b *baseImage) bool {
 // same length: a longer log is what a fold extends from. A replaced log is a
 // different file, and a log truncated in place is shorter than what the map
 // already folded, which is the other half of the test.
-func sameLog(a, b os.FileInfo) bool {
+func sameLog(a, b *logID) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return os.SameFile(a, b)
+	return a.seq == b.seq && os.SameFile(a.st, b.st)
 }

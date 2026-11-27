@@ -57,6 +57,13 @@ func (s *Sender) sendVacation(
 		return nil
 	}
 
+	// Over the send limit nothing is sent and nothing is marked: the sender
+	// gets the reply on a later message, not one :days later for a reply
+	// nobody sent.
+	if !s.limit.allow(ctx, opts.Username, opts.HomeDir, "vacation") {
+		return nil
+	}
+
 	from := oneLine(resp.From)
 	if from == "" {
 		from = (&mail.Address{Address: replyFrom}).String()

@@ -2,7 +2,6 @@ package guard_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,12 +17,13 @@ func renderOAuth2(t *testing.T, entry string) ([]byte, error) {
 	if err := os.WriteFile(f, []byte("components:\n  auth:\n    oauth2:\n"+entry), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml", "-f", f).CombinedOutput()
+	return helmCombined(t, "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml", "-f", f)
 }
 
 // A local key given as secret_ref is mounted into yarilo-auth at the path the
 // rendered config names; a file is passed through as written (#2231).
 func TestOAuth2LocalKeySecretReachesTheAuthPod(t *testing.T) {
+	t.Parallel()
 	out, err := renderOAuth2(t, `      - mode: local
         grant_url: https://idp.example/token
         client_id: yarilo-auth
@@ -115,6 +115,7 @@ func TestOAuth2LocalKeySecretReachesTheAuthPod(t *testing.T) {
 
 // A local key with both sources, or neither, is refused at render.
 func TestOAuth2LocalKeyNeedsOneSource(t *testing.T) {
+	t.Parallel()
 	for name, key := range map[string]string{
 		"both":    `{alg: RS256, file: /k, secret_ref: {name: s, key: k}}`,
 		"neither": `{alg: RS256}`,

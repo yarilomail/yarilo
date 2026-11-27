@@ -1,10 +1,10 @@
 package file
 
 import (
+	"container/list"
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
@@ -13,17 +13,24 @@ import (
 // baseImage is one version of a base file, parsed once and never written to
 // again: compaction makes a new image, old readers keep the old one (#1809).
 type baseImage struct {
-	file     *mailindex.File
+	file     *mailindex.File // no Records: they are recs, loaded by chunk
+	recs     *mailindex.Records
 	keywords keywordsHdr
 	lineage  lineageHdr
 	ident    os.FileInfo
 	size     int64
 	mod      time.Time
+	// path, refs and idleAt are the cache's, under baseImages.mu.
+	path     string
+	refs     int
+	idleAt   time.Time
+	idleElem *list.Element // on the idle list
+	idleSize int64         // what it counted there
 }
 
 // baseImages keeps one parse per base version, shared between readers. Keyed
 // by path; the identity check says whether it still describes the file.
-var baseImages sync.Map // indexPath -> *baseImage
+var baseImages = newImageCache()
 
 // baseReadAttempts bounds the re-reads a base that keeps moving costs.
 const baseReadAttempts = 3
@@ -32,9 +39,24 @@ const baseReadAttempts = 3
 // read and the stat that labels it. Nil everywhere else.
 var afterBaseRead func()
 
+// replaySeam and buildViewSeam are test seams: a replay that stops before a
+// record, a rebuild that fails. Nil everywhere else.
+var (
+	replaySeam    func() error
+	buildViewSeam func() error
+)
+
 // afterViewImage is a test seam: the base and log replaced between the image a
 // view is built on and the log it opens. Nil everywhere else.
 var afterViewImage func()
+
+// afterReloadLogOpen is a test seam: folds by another process between the log
+// a reload opened and the base it opens next. Nil everywhere else.
+var afterReloadLogOpen func()
+
+// openBaseSeam is a test seam: folds by another process while a first open
+// reads the base and its log, at the named stage. Nil everywhere else.
+var openBaseSeam func(stage string)
 
 // imageFor returns the parsed base for the file at fs.indexPath as it is now.
 // It takes no lock and writes nothing the writer can see.
@@ -43,18 +65,17 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cached, ok := baseImages.Load(fs.indexPath); ok {
-		img, _ := cached.(*baseImage)
-		if img != nil && img.ident != nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
-			return img, nil
-		}
+	if img := baseImages.load(fs.indexPath); img != nil && img.ident != nil && os.SameFile(img.ident, st) &&
+		img.size == st.Size() && img.mod.Equal(st.ModTime()) {
+		fs.pinImage(img)
+		return img, nil
 	}
 	// The label has to describe what was read: a base replaced mid-read would
 	// otherwise cache old content under the new file's identity (#2056).
 	var img *baseImage
 	for attempt := 0; ; attempt++ {
 		pre := st
-		parsed, perr := mailindex.Open(fs.indexPath)
+		parsed, recs, perr := mailindex.OpenLazy(fs.indexPath)
 		if perr != nil {
 			return nil, asCorrupt(fs.folder, perr)
 		}
@@ -66,14 +87,14 @@ func imageFor(fs *folderState) (*baseImage, error) {
 			return nil, serr
 		}
 		if os.SameFile(pre, after) && pre.Size() == after.Size() && pre.ModTime().Equal(after.ModTime()) {
-			img = &baseImage{file: parsed, ident: pre, size: pre.Size(), mod: pre.ModTime()}
+			img = &baseImage{file: parsed, recs: recs, ident: pre, size: pre.Size(), mod: pre.ModTime()}
 			break
 		}
 		st = after
 		if attempt >= baseReadAttempts {
 			// Labelled with the file it came from: older, never wrong, and the
 			// next read sees the file has moved.
-			img = &baseImage{file: parsed, ident: pre, size: pre.Size(), mod: pre.ModTime()}
+			img = &baseImage{file: parsed, recs: recs, ident: pre, size: pre.Size(), mod: pre.ModTime()}
 			metricBaseReadGaveUp.Inc()
 			break
 		}
@@ -89,7 +110,11 @@ func imageFor(fs *folderState) (*baseImage, error) {
 	if ext := findExt(parsed.Extensions, extNameLineage); ext != nil {
 		img.lineage = decodeLineageHdr(ext.HdrData)
 	}
-	baseImages.Store(fs.indexPath, img)
+	if err := orderImage(img, fs.indexPath); err != nil {
+		return nil, err
+	}
+	baseImages.store(fs.indexPath, img)
+	fs.pinImage(img)
 	return img, nil
 }
 
@@ -98,7 +123,12 @@ func imageFor(fs *folderState) (*baseImage, error) {
 // offset the view stands at -- a base that already holds the whole log stands
 // at the log's end, not at zero, and the next fold continues from there.
 func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
-	img, lg, err := fs.imageAndItsLog()
+	if buildViewSeam != nil {
+		if err := buildViewSeam(); err != nil {
+			return nil, 0, nil, err
+		}
+	}
+	img, lg, err := fs.imageAndItsLog("view")
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -114,19 +144,27 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		indexPath: fs.indexPath,
 		traceID:   traceID,
 		file:      img.file,
+		recs:      img.recs,
 		keywords:  img.keywords,
 		lineage:   img.lineage,
+		isView:    true,
+		// log2MaxAge reaches views: VANISHED and Email/changes read through them.
+		log2MaxAge: fs.log2MaxAge,
 	}
+	view.newBaseLoaded(img.file)
 
 	if lg.f == nil || !lg.ok {
 		if rerr := view.refreshExtState(); rerr != nil {
 			return nil, 0, nil, rerr
 		}
-		view.ensureVsizeLocked()
+		if verr := view.ensureVsizeView(); verr != nil {
+			return nil, 0, nil, verr
+		}
+		view.onBase = view.recs != nil
 		return view, 0, img, nil
 	}
-	// Where this log meets this base, by the lineage table: an unpaired one
-	// replays whole rather than from an offset that means nothing in it.
+	// Where this log meets this base, by the lineage table. Unpaired here is
+	// only a base or a log without a lineage (staleWith): it replays whole.
 	from, paired := replayStart(img.lineage, lg.lineage())
 	if !paired {
 		from = int64(mailindex.LogHeaderSize)
@@ -135,13 +173,16 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 		if rerr := view.refreshExtState(); rerr != nil {
 			return nil, 0, nil, rerr
 		}
-		view.ensureVsizeLocked()
+		if verr := view.ensureVsizeView(); verr != nil {
+			return nil, 0, nil, verr
+		}
+		view.onBase = view.recs != nil
 		return view, lg.size, img, nil // the base already holds everything
 	}
 
-	// Only now is a copy paid for: the tail has something to apply, and the
-	// shared image must not carry it.
-	view.file = cloneIndexFile(img.file)
+	// The tail goes onto a fork of the shared image's records, which copies a
+	// chunk before changing it: the image stays as every other view reads it.
+	view.forkRecords()
 	end, aerr := view.applyLogFrom(lg, from)
 	if aerr != nil {
 		return nil, 0, nil, aerr
@@ -167,51 +208,49 @@ func (fs *folderState) buildView() (*folderState, int64, *baseImage, error) {
 var errBaseMoving = errors.New("fileindex/view: the base kept moving while the view was built")
 
 // imageAndItsLog returns a base image and a log opened while that base was
-// still the file: a base replaced in between pairs it with the next base's log.
-func (fs *folderState) imageAndItsLog() (*baseImage, *logReader, error) {
+// still the file, and which pairs with it: a base replaced in between pairs it
+// with the next base's log. path names the reader in the metric.
+func (fs *folderState) imageAndItsLog(path string) (*baseImage, *logReader, error) {
 	for attempt := 0; ; attempt++ {
 		img, err := imageFor(fs)
 		if err != nil {
 			return nil, nil, err
 		}
-		if afterViewImage != nil {
+		if afterViewImage != nil && path == "view" {
 			afterViewImage()
+		}
+		if openBaseSeam != nil && path == "open" {
+			// Both stages of the open meet here: the stat is the image's own.
+			openBaseSeam("read")
+			openBaseSeam("stat")
 		}
 		lg, lgErr := openLogRead(fs.indexPath)
 		if lgErr != nil {
 			return nil, nil, fmt.Errorf("fileindex/view: log: %w", lgErr)
 		}
 		st, serr := os.Stat(fs.indexPath)
-		if serr == nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime()) {
+		same := serr == nil && os.SameFile(img.ident, st) && img.size == st.Size() && img.mod.Equal(st.ModTime())
+		if same && !staleWith(img.lineage, img.file.Header.IndexID, lg) {
 			return img, lg, nil
 		}
 		lg.close()
 		if serr != nil {
 			return nil, nil, serr
 		}
+		// The base moved, or stayed while the log moved on past it.
 		if attempt >= baseReadAttempts {
+			metricStalePair.WithLabelValues(path, "failed").Inc()
 			return nil, nil, errBaseMoving
 		}
+		metricStalePair.WithLabelValues(path, "retried").Inc()
 	}
 }
 
-// cloneIndexFile copies what a replay writes into: the records and their
-// extension data. The header and extension list are copied by value.
+// cloneIndexFile copies what a replay writes into besides the records: the
+// header, the extension list and the extensions' header data.
 func cloneIndexFile(src *mailindex.File) *mailindex.File {
 	out := *src
-	out.Records = make([]*mailindex.Record, len(src.Records))
-	for i, rec := range src.Records {
-		cp := *rec
-		if rec.Ext != nil {
-			cp.Ext = make(map[string][]byte, len(rec.Ext))
-			for k, v := range rec.Ext {
-				b := make([]byte, len(v))
-				copy(b, v)
-				cp.Ext[k] = b
-			}
-		}
-		out.Records[i] = &cp
-	}
+	out.Records = nil
 	out.Extensions = make([]mailindex.Extension, len(src.Extensions))
 	copy(out.Extensions, src.Extensions)
 	for i := range out.Extensions {

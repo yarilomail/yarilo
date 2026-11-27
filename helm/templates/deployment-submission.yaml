@@ -32,6 +32,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.submission.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-submission"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
@@ -89,7 +90,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- if .Values.components.submission.tls.secretName }}
         - name: tls
           secret:

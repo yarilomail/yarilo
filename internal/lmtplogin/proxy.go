@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -354,7 +355,11 @@ func (s *session) Reset() {
 	s.from = ""
 }
 
+// sessionEnded is a test seam: it runs when the MTA session is torn down.
+var sessionEnded = func() {}
+
 func (s *session) Logout() error {
+	defer sessionEnded()
 	s.Reset()
 	s.wardenMu.Lock()
 	if s.wardenConn != nil {
@@ -617,11 +622,19 @@ func dialBackend(addr string, timeout time.Duration, tlsCfg *tls.Config) (net.Co
 // fanOutOne opens a single backend connection for rcpt, writes the preamble,
 // then completes a minimal LMTP transaction: LHLO → MAIL FROM → RCPT TO → DATA.
 func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOptions, data []byte, pre loginproto.Preamble, timeout time.Duration, tlsCfg *tls.Config) error {
+	// Each phase is observed only once it completed: a phase an error ended
+	// says nothing about how long it takes (docs-internal#318).
+	start := time.Now()
 	conn, err := dialBackend(backendAddr, timeout, tlsCfg)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	observeBackendPhase(backendPhaseDial, start)
+	if tc, ok := conn.(*tls.Conn); ok {
+		backendTLSHandshakes.WithLabelValues(strconv.FormatBool(tc.ConnectionState().DidResume)).Inc()
+	}
+	start = time.Now()
 	// Not SetDeadline: the client resets it on every command.
 	stop := time.AfterFunc(timeout, func() { conn.Close() })
 	defer stop.Stop()
@@ -644,6 +657,8 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOption
 	if err := c.Rcpt(rcpt, &orcpt); err != nil {
 		return err
 	}
+	observeBackendPhase(backendPhaseSetup, start)
+	start = time.Now()
 	wc, err := c.Data()
 	if err != nil {
 		return fmt.Errorf("lmtplogin: DATA command: %w", err)
@@ -653,6 +668,9 @@ func fanOutOne(backendAddr, hostname, from, rcpt string, orcpt goSmtp.RcptOption
 		return fmt.Errorf("lmtplogin: write body: %w", err)
 	}
 	perRcpt, closeErr := wc.CloseWithLMTPResponse()
+	if _, answered := closeErr.(goSmtp.LMTPDataError); closeErr == nil || answered {
+		observeBackendPhase(backendPhaseData, start) // the backend answered for the recipient
+	}
 	if lmtpErr, ok := closeErr.(goSmtp.LMTPDataError); ok {
 		if smtpErr, found := lmtpErr[rcpt]; found {
 			// Strip the backend's per-recipient "<rcpt> " prefix; this server

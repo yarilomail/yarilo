@@ -96,7 +96,7 @@ func main() {
 	// #735: managesieve-login never wired DirectorAddr at all (BackendAddr
 	// was the only option) - director mode was silently unavailable, not
 	// just misdirected to localhost like the other three logins.
-	if err := config.ValidateBackendOrDirector("managesieve_login_service", cfg.ManageSieveLoginService.BackendAddr, cfg.ManageSieveLoginService.DirectorAddr); err != nil {
+	if err := cfg.CheckRole("yarilo-managesieve-login"); err != nil {
 		slog.Error("config validation failed", "err", err)
 		os.Exit(1)
 	}

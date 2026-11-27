@@ -68,10 +68,18 @@ type UIDSpaceAligner interface {
 	AlignUIDSpace(folderID uint64, uidValidity, nextUID uint32) (current uint32, reset bool, err error)
 }
 
+// NextUIDReader reads a folder's next uid as a writer deciding on it sees it,
+// whenever it is below want.
+type NextUIDReader interface {
+	NextUIDHeld(folderID uint64, want uint32) (uint32, error)
+}
+
 // UIDSpaceAligningStore is a store that names its own UID space, aligned with the
 // index before a uid is handed out; it answers the index's UIDVALIDITY after.
 type UIDSpaceAligningStore interface {
 	AlignUIDSpace(idx UserIndex, folderID uint64, folder string) (uint32, error)
+	// AlignUIDSpaceHeld is AlignUIDSpace inside the store's save section.
+	AlignUIDSpaceHeld(idx UserIndex, folderID uint64, folder string) (uint32, error)
 }
 
 // SaveSectioner runs a save's naming and record under the store's own locks,
@@ -91,6 +99,32 @@ type ReceivedStamper interface {
 
 // ErrUIDInUse says the folder already holds a record for this uid.
 var ErrUIDInUse = errors.New("the folder already holds this uid")
+
+// ErrUIDNotIssued says a record was offered under a uid below the folder's
+// next one that this process did not hand out: a uid the folder gave up once
+// stays given up (RFC 9051 §2.3.1.1).
+var ErrUIDNotIssued = errors.New("the uid is below the folder's next uid and was not handed out for this record")
+
+// ErrUIDSpaceFull says the folder has handed out its last uid: uids stay below
+// 2^32-1, as the reference keeps them, and a new UIDVALIDITY starts another
+// space.
+var ErrUIDSpaceFull = errors.New("the folder has no uid left to hand out")
+
+// MaxUID is the highest uid a record may carry.
+const MaxUID = 1<<32 - 2
+
+// UIDReleaser takes back a uid AllocateUID handed out whose record will never
+// be appended, so the index stops holding it open for one.
+type UIDReleaser interface {
+	ReleaseUID(folderID uint64, uid uint32)
+}
+
+// ReleaseUID releases uid through idx when the index keeps such uids.
+func ReleaseUID(idx UserIndex, folderID uint64, uid uint32) {
+	if r, ok := idx.(UIDReleaser); ok {
+		r.ReleaseUID(folderID, uid)
+	}
+}
 
 // GUIDRecord is one copy of one message, as the per-user GUID store keeps it:
 // the id a JMAP client names, and where that copy lives (INTERNALS.md §35).
@@ -133,11 +167,59 @@ type MaildirStamp struct {
 	UIDListSize                           uint32
 }
 
+// SameList says whether two stamps describe the same uid list, whatever they
+// say of the directories.
+func (s MaildirStamp) SameList(o MaildirStamp) bool {
+	return s.UIDListMtime == o.UIDListMtime && s.UIDListMtimeNsecs == o.UIDListMtimeNsecs && s.UIDListSize == o.UIDListSize
+}
+
+// HasDirs says whether the stamp records the directories at all: a stamp with
+// the list alone leaves what was recorded of them in place.
+func (s MaildirStamp) HasDirs() bool {
+	return s.NewMtime != 0 || s.CurMtime != 0 || s.NewCheckTime != 0 || s.CurCheckTime != 0
+}
+
 // MaildirStamped is an index that keeps that stamp, so opening a folder can ask
 // one stat whether the uid list is the one the index was built from.
 type MaildirStamped interface {
 	MaildirStamp(folderID uint64) (MaildirStamp, bool)
 	SetMaildirStamp(folderID uint64, s MaildirStamp) error
+}
+
+// DirTimes is when a maildir folder's new/ and cur/ last changed, to the
+// nanosecond; a directory not there reads as zero.
+type DirTimes struct {
+	NewSec, NewNsec, CurSec, CurNsec uint32
+}
+
+// DirTimer is a store that reports a folder's DirTimes.
+type DirTimer interface {
+	DirTimes(folder string) DirTimes
+}
+
+// DirCarrier is an index that moves its recorded directory times from pre to
+// post, for each directory that still reads pre: a write of ours carries the
+// stamp, and one that finds another time there leaves it for a walk.
+type DirCarrier interface {
+	CarryDirTimes(folderID uint64, pre, post DirTimes) error
+}
+
+// DirCarryTx is a transaction that carries the stamp in its own commit.
+type DirCarryTx interface {
+	CarryDirTimes(pre, post DirTimes)
+}
+
+// SyncClock is the time folder syncs decide and stamp by. Test seam: a row
+// moves it past the dirty window instead of sleeping.
+var SyncClock = time.Now
+
+// IndexSyncChecker is a store that answers, from the index's stamp and one
+// stat per directory, whether a folder needs no walk: the stamp is shared by
+// every process, so one walk serves them all (#2661).
+type IndexSyncChecker interface {
+	// dirty says the folder is settled now but changed within its check's
+	// tick, so it is walked again once the window has passed.
+	SyncedPerIndex(idx UserIndex, folderID uint64, folder string, now time.Time) (synced, dirty bool)
 }
 
 // VirtualBacking is one folder a virtual mailbox draws from. Keyed by GUID, so
@@ -222,6 +304,109 @@ type UIDAddressable interface {
 	RecordPath(folder string, m *MessageMeta) (string, error)
 }
 
+// LockNamer is a store whose lock keys name something other than the user: a
+// shared store with no owner is one store for all who open it (#2598).
+type LockNamer interface {
+	LockUser() string
+}
+
+// LockUserOf is the name box's store keys its locks and events with, or user
+// when the store keeps no name of its own: a shared store's events reach
+// every user's sessions on it (#2600).
+func LockUserOf(box Box, user string) string {
+	if box == nil {
+		return user
+	}
+	if ln, ok := Driver(box.Store()).(LockNamer); ok && ln.LockUser() != "" {
+		return ln.LockUser()
+	}
+	return user
+}
+
+// RawBody is a stored body exactly as it lies on disk: still encrypted when it
+// was saved so, with its line ends untouched.
+type RawBody interface {
+	io.ReaderAt
+	io.Closer
+	Size() int64
+}
+
+// RawReader reads a record's stored bytes, which Fetch and OpenRecord never
+// return: they decrypt and serve bare LF as CRLF (#2582). For re-encryption,
+// which must write back the bytes it read.
+type RawReader interface {
+	RawRecord(folder string, m *MessageMeta) (RawBody, error)
+}
+
+// BodyRewrite is how a record's stored body is replaced.
+type BodyRewrite struct {
+	// Fill writes the new stored body from the old one; it returns the
+	// plaintext's length and whether what it wrote is sealed.
+	Fill func(src RawBody, dst io.Writer) (plainLen int64, sealed bool, err error)
+	// Verify reads the written body back before it replaces the old one.
+	Verify func(written RawBody) error
+	// Recorded asks the index, under the driver's lock, whether the record
+	// still stands; nil for a driver whose lock already answers it.
+	Recorded func() (bool, error)
+}
+
+// ErrRecordChanged is a rewrite given up because the record's file changed
+// between the read and the replace; the file is left as it was.
+var ErrRecordChanged = errors.New("mailbox: the record changed during the rewrite")
+
+// ErrRecordBusy is a rewrite that could not get the record's lock within its
+// bound; the file is left as it was, for a rerun.
+var ErrRecordBusy = errors.New("mailbox: the record stayed busy for the rewrite")
+
+// RecordRewriter replaces a record's stored body under its own name, with its
+// sizes, identity and date unchanged, after Verify has passed.
+type RecordRewriter interface {
+	RewriteRecord(folder string, m *MessageMeta, rw BodyRewrite) error
+	// SweepRewriteTemps removes the temp files of rewrites that died, older
+	// than age, and returns how many went.
+	SweepRewriteTemps(folder string, age time.Duration) (int, error)
+}
+
+// StoreRewrite is a re-encryption of a store whose messages share files.
+type StoreRewrite struct {
+	// Needs says whether a record's stored body is to be rewritten.
+	Needs func(RawBody) (bool, error)
+	// Body rewrites one record; Recorded is not used, the map answers it.
+	Body BodyRewrite
+	// File reports each file the pass took: records rewritten, records
+	// carried over as they were, and why the file was left, if it was.
+	File func(FileRewrite)
+	// Stop is asked before each file; an error ends the pass with it.
+	Stop func() error
+	// LeftoverAge sweeps, before the pass, the rewrite's own temp files
+	// older than it: what a pass killed between its holds left. Zero sweeps
+	// nothing; no storage file is ever swept.
+	LeftoverAge time.Duration
+}
+
+// FileRewrite is one shared file's outcome.
+type FileRewrite struct {
+	FileID    uint32
+	Rewritten int
+	Copied    int
+	// Err leaves the file as it was: ErrRecordChanged when the map moved
+	// under it, a Fill or Verify error naming the record otherwise.
+	Err error
+	// Record is the storage key of the record Err is about, when one is.
+	Record uint32
+}
+
+// StoreRewriter rewrites such a store one file at a time.
+type StoreRewriter interface {
+	RewriteStore(rw StoreRewrite) error
+}
+
+// UnreferencedRawReader is a store that keeps messages no folder refers to
+// (mdbox records with no references, until purge).
+type UnreferencedRawReader interface {
+	RawUnreferenced(fn func(storageKey uint32, b RawBody) error) error
+}
+
 // StorageKeyer is a driver whose messages have a storage key of their own: the
 // mdbox map_uid, which the mailbox index carries per record as the reference does.
 type StorageKeyer interface {
@@ -243,6 +428,31 @@ type NamingAppender interface {
 	// AllocateAndAppendNamed assigns the uid, calls name with it, records the
 	// answer as the message's filename, and appends -- all under one hold.
 	AllocateAndAppendNamed(folderID uint64, m *MessageMeta, name func(uid uint32) (string, error)) error
+}
+
+// StampingAppender is a NamingAppender that also records, in the same hold,
+// the stamp of the uid list the naming left: the next save then need not read
+// the list for its UID space (#2643).
+type StampingAppender interface {
+	AllocateAndAppendStamped(folderID uint64, m *MessageMeta, name func(uid uint32) (string, *MaildirStamp, error)) error
+}
+
+// DirCarry is a write's directory times either side of it: the stamp moves
+// from Pre to Post where it still reads Pre (see DirCarrier).
+type DirCarry struct{ Pre, Post DirTimes }
+
+// CarryingAppender is a StampingAppender whose naming also reports the
+// directory times its save moved, carried in the append's own journal write:
+// a hold of its own would load a large folder's records for one delivery.
+type CarryingAppender interface {
+	AllocateAndAppendCarried(folderID uint64, m *MessageMeta, name func(uid uint32) (string, *MaildirStamp, *DirCarry, error)) error
+}
+
+// AppendedListStamper is a driver that knows the stamp of its uid list after
+// the row it just appended, when that row is all that changed since the list
+// last agreed with the index.
+type AppendedListStamper interface {
+	AppendedListStamp(folder string) (MaildirStamp, bool)
 }
 
 // StaleTemp is when a body a save left behind stops meaning "in flight" and
@@ -414,12 +624,15 @@ type MessageMeta struct {
 
 // Folder holds index-level folder metadata.
 type Folder struct {
-	ID            uint64
-	Name          string
-	UIDValidity   uint32
-	NextUID       uint32
-	Messages      uint32
-	Unseen        uint32
+	ID          uint64
+	Name        string
+	UIDValidity uint32
+	NextUID     uint32
+	Messages    uint32
+	Unseen      uint32
+	// Deleted counts the messages flagged \Deleted, from the header as the
+	// other two: STATUS answers without reading the records (#2661).
+	Deleted       uint32
 	HighestModSeq uint64
 	// FirstRecentUID is the lowest UID no session has claimed as \Recent; an
 	// index that never recorded one reads 1 (RFC 3501 §2.3.2).
@@ -515,6 +728,9 @@ type SyncStats struct {
 	// Relinked counts records whose list row was written back rather than
 	// their message being imported a second time (#1785).
 	Relinked int
+	// Deferred counts files a pass left to the second pass of the same call;
+	// none is left once the call returns (#2663).
+	Deferred int
 	Changed  bool
 }
 
@@ -666,13 +882,17 @@ type UserIndex interface {
 	ExpungeMessage(folderID uint64, uid uint32) error
 	// Vanished returns UIDs expunged from folderID with modseq strictly
 	// greater than sinceModSeq. Drives QRESYNC (RFC 7162) SELECT and
-	// UID FETCH (CHANGEDSINCE N VANISHED) responses.
-	Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error)
+	// UID FETCH (CHANGEDSINCE N VANISHED) responses. reaches is false when
+	// the history no longer goes back to sinceModSeq, decided under the same
+	// lock as the read: the caller then answers from the folder itself.
+	Vanished(folderID uint64, sinceModSeq uint64) (uids []uint32, reaches bool, err error)
 	// VanishedGUIDs answers the same question as Vanished by message identity:
 	// a protocol that addresses messages by GUID cannot report a UID, and the
 	// message is gone, so its GUID can be read from nowhere else afterwards.
-	// complete is false when a record in range cannot be named, and the caller
-	// must degrade rather than report a shorter list as the whole truth.
+	// complete is false when a record in range cannot be named, or when the
+	// history no longer goes back to sinceModSeq, decided under the same lock
+	// as the read; the caller must degrade rather than report a shorter list
+	// as the whole truth.
 	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
 	// FolderStamp describes the folder's files without opening it: the sizes
 	// and modification times of the base index and its log. It is a proof of
@@ -885,6 +1105,12 @@ type SaveDiscarder interface {
 // holds, from wherever the destination's cycle left it.
 type MoveRestorer interface {
 	RestoreMoved(srcFolder, orig, dstFolder, moved string, m *MessageMeta) error
+}
+
+// BodyFirstExpunger is a store whose expunge removes the body before the
+// record: a file left behind without its record would come back under a uid.
+type BodyFirstExpunger interface {
+	ExpungesBodyFirst() bool
 }
 
 // BatchRemover unlinks several bodies as one operation. A driver whose removal

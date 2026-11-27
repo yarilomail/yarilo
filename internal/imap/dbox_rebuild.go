@@ -3,7 +3,6 @@ package imap
 import (
 	"errors"
 	"io"
-	"io/fs"
 	"log/slog"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mdbox"
@@ -174,11 +173,10 @@ func (s *session) dboxRestoreIfIndexLost(h *nsHandle, rel string, f *mailbox.Fol
 
 // expungedUnderUs is whether a selected-folder read failed because another
 // session expunged the message after this one's snapshot (#1690).
-func (s *session) expungedUnderUs(m *mailbox.MessageMeta, err error) bool {
-	if errors.Is(err, fs.ErrNotExist) {
-		return true
-	}
-	return errors.Is(err, mailbox.ErrCorruptStorage) && !s.folderMailbox().RecordExists(s.folder.ID, m.UID)
+// The box decides it (ErrExpunged): a body gone while its record stays is the
+// store's error, not an expunge.
+func (s *session) expungedUnderUs(_ *mailbox.MessageMeta, err error) bool {
+	return errors.Is(err, mailbox.ErrExpunged)
 }
 
 // undoCopies takes back what a COPY saved before it failed. Best-effort: a

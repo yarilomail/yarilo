@@ -219,7 +219,7 @@ func (s *session) imapSieveExpunge(h *nsHandle, rel string, folder *mailbox.Fold
 	// account-wide sweep, and this path runs per Sieve rule, not per client
 	// expunge. Getting a size would mean reading the record back after removing
 	// it.
-	s.emitMailboxChangeSized(folder, locks.EventExpunged, uid, 0, guid)
+	s.emitMailboxChangeIn(h.mailbox(), folder, locks.EventExpunged, uid, 0, guid)
 }
 
 // expungeOne expunges uid as read, and once more when another session moved

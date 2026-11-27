@@ -119,6 +119,7 @@ spec:
           image: {{ include "yarilo.image" $root }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" ((index $root.Values.components $p.vkey).resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: {{ $p.component | quote }}
             {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
@@ -197,6 +198,7 @@ spec:
           image: {{ include "yarilo.image" $root }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" ($root.Values.components.fts.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-fts"
             {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
@@ -232,6 +234,7 @@ spec:
           image: {{ include "yarilo.image" $root }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" ($root.Values.components.backendAPI.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-backend-api"
             {{- include "yarilo.redisPasswordEnv" $root | nindent 12 }}
@@ -278,6 +281,7 @@ spec:
           image: {{ include "yarilo.image" $root }}
           imagePullPolicy: {{ $root.Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" ($root.Values.components.backend.regResources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-backend-reg"
             - name: LOG_LEVEL
@@ -332,7 +336,7 @@ spec:
               {{- end }}
         {{- end }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.sieveGlobalVolume" . | nindent 8 }}
         {{- include "yarilo.imapsieveVolume" . | nindent 8 }}
         # shared readiness signal (#788): protocol containers touch, sidecar reads
@@ -355,6 +359,7 @@ spec:
         {{- $itlsRoles := list "fts" "backend-api" "backend-reg" }}
         {{- range $p := $protocols }}{{ $itlsRoles = append $itlsRoles $p.name }}{{ end }}
         {{- include "yarilo.adminTLSVolume" (dict "root" $root "role" "admin") | nindent 8 }}
+        {{- include "yarilo.mailCryptVolume" $ | nindent 8 }}
         {{- range $role := $itlsRoles }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $root "itls" $itls "role" $role "vol" (printf "internal-tls-%s" $role)) | nindent 8 }}
         {{- end }}

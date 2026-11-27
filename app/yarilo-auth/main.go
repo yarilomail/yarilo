@@ -43,6 +43,10 @@ func main() {
 		slog.Error("config load failed", "err", err, "path", cfgPath)
 		os.Exit(1)
 	}
+	if err := cfg.CheckRole("yarilo-auth"); err != nil {
+		slog.Error("config validation failed", "err", err)
+		os.Exit(1)
+	}
 
 	slog.Info("yarilo-auth starting",
 		"version", build.Version,
@@ -352,10 +356,7 @@ func authLivenessCheck(cache *protocol.Cache, gate *telemetry.Gate) telemetry.Li
 func buildTokenStore(cfg config.AuthTokenConfig, dialRetries int) (protocol.TokenStore, func()) {
 	ttl := time.Duration(cfg.TTLSeconds) * time.Second
 	if cfg.Backend == "redis" {
-		if cfg.RedisAddr == "" {
-			slog.Error("auth.token.backend=redis requires auth.token.redis_addr")
-			os.Exit(1)
-		}
+		// Address present and parsable: CheckRole("yarilo-auth") at start.
 		opt, err := redisopt.Parse(cfg.RedisAddr, cfg.RedisPassword)
 		if err != nil {
 			slog.Error("auth.token.redis_addr invalid", "err", err)

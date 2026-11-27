@@ -42,7 +42,7 @@ func (u *userMailbox) HealCorruptFolder(box mailbox.Box, idx mailbox.UserIndex, 
 			if gerr != nil {
 				return gerr
 			}
-			key := healBarrierKey(u.username, folder.ID)
+			key := healBarrierKey(u.lockUser, folder.ID)
 			if v, ok := healBarrier.Load(key); ok {
 				if last, ok := v.(uint32); ok && last == gen {
 					return ErrHealDeferred

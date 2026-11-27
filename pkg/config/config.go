@@ -82,6 +82,47 @@ type Config struct {
 	ManageSieveLoginService ManageSieveLoginServiceConfig `koanf:"managesieve_login_service"`
 	Telemetry               TelemetryConfig               `koanf:"telemetry"`
 	Log                     LogConfig                     `koanf:"log"`
+	Master                  MasterConfig                  `koanf:"master"`
+}
+
+// MasterConfig is yarilo-master's: the supervisor of the FreeBSD port, which
+// starts the components in order and starts again one that dies (#2715).
+// Kubernetes and the Linux packages do not run it.
+type MasterConfig struct {
+	// Components are the processes to run, in start order; they stop in
+	// reverse. Each is yarilo-<name> in LibexecDir. An unknown name or a
+	// missing binary stops the start.
+	Components []string `koanf:"master_components"`
+	// LibexecDir holds the component binaries. It and they must be root's
+	// and not writable by group or others.
+	LibexecDir string `koanf:"master_libexec_dir"`
+	// RunDir holds the components' sockets, their pid files, the lock and
+	// the control socket.
+	RunDir string `koanf:"master_run_dir"`
+	// EnvDir holds the optional auth.env and dict.env, root's with mode 0600;
+	// each reaches only its own component.
+	EnvDir string `koanf:"master_env_dir"`
+	// LogPath is a directory, one <name>.log per component, or "syslog".
+	LogPath string `koanf:"master_log_path"`
+	// SyslogFacility is the facility with LogPath "syslog".
+	SyslogFacility string `koanf:"master_syslog_facility"`
+	// StopTimeout is how many seconds a component has to exit on SIGTERM
+	// before it is killed.
+	StopTimeout int `koanf:"master_stop_timeout"`
+	// The users of the four roles. None may be root.
+	User         string `koanf:"master_user"`
+	AuthUser     string `koanf:"master_auth_user"`
+	LoginUser    string `koanf:"master_login_user"`
+	DeliveryUser string `koanf:"master_delivery_user"`
+	// LogUser runs the log process and owns the log directory; no component
+	// that handles mail can rewrite the logs.
+	LogUser string `koanf:"master_log_user"`
+	// TelemetryPort is the supervisor's own; each component's is this plus
+	// a fixed offset.
+	TelemetryPort int `koanf:"master_telemetry_port"`
+	// Environment is added to every component's environment, which holds
+	// nothing else of the supervisor's.
+	Environment map[string]string `koanf:"master_environment"`
 }
 
 // SieveConfig controls per-user Sieve email filtering (RFC 5228) in the LMTP delivery path.
@@ -92,6 +133,16 @@ type SieveConfig struct {
 	MaxScriptSize int `koanf:"sieve_max_script_size"`
 	// MaxRedirects caps a message's redirects, :copy and :list included; 0 forbids redirect. Default: 32.
 	MaxRedirects int `koanf:"sieve_max_redirects"`
+	// SendRateLimit caps the mail a mailbox's Sieve sends in a clock hour,
+	// every recipient of redirect, vacation, notify and report counted; over it the
+	// send is refused. 0 = off. Default: 0. Counted where the duplicate test
+	// keeps its state: a home-dir file, or the sieve_duplicate dict on the
+	// redis driver.
+	SendRateLimit int `koanf:"sieve_send_rate_limit"`
+	// RedirectDuplicatePeriod is how long, in seconds, a forward is
+	// remembered: the same message to the same address within it is not
+	// sent again. 0 = not remembered. Default: 43200 (12 hours).
+	RedirectDuplicatePeriod int `koanf:"sieve_redirect_duplicate_period"`
 	// MaxScripts caps a user's stored scripts; replacing one adds none. 0 = unlimited.
 	MaxScripts int `koanf:"sieve_max_num_scripts"`
 	// MaxStorage caps the bytes of a user's stored scripts. 0 = unlimited.
@@ -145,7 +196,7 @@ type SieveConfig struct {
 	// SubmissionAuthSecret names the Kubernetes Secret with SMTP AUTH
 	// credentials (keys: user, password), mounted by the chart as
 	// YARILO_SIEVE_SUBMISSION_USER/PASSWORD env vars. Empty = no auth.
-	SubmissionAuthSecret string `koanf:"sieve_submission_auth_secret"`
+	SubmissionAuthSecret string `koanf:"sieve_submission_auth_secret" secret:"true"`
 
 	// DefaultName is the reserved name of the per-user default Sieve script.
 	// Default: "yarilo".
@@ -291,7 +342,7 @@ func (c DictServiceConfig) Socket() sockaddr.Perm { return socketPerm(c.SocketMo
 //	home_dir    - passed as OpSettings.HomeDir when callers omit it
 type DictConfig struct {
 	Driver     string         `koanf:"driver"`
-	Settings   map[string]any `koanf:"settings"`
+	Settings   map[string]any `koanf:"settings" secret:"true"`
 	ExpireSecs uint32         `koanf:"expire_secs"`
 	Username   string         `koanf:"username"`
 	HomeDir    string         `koanf:"home_dir"`
@@ -906,9 +957,9 @@ type RelayConfig struct {
 	User string `koanf:"submission_relay_user"` // %u is the session's user
 	// MasterUser, when set, authenticates as this user acting for User.
 	MasterUser string `koanf:"submission_relay_master_user"`
-	Password   string `koanf:"submission_relay_password"`   // supports ${ENV_VAR}
-	SSL        string `koanf:"submission_relay_ssl"`        // no | smtps | starttls
-	SSLVerify  bool   `koanf:"submission_relay_ssl_verify"` // default true
+	Password   string `koanf:"submission_relay_password" secret:"true"` // supports ${ENV_VAR}
+	SSL        string `koanf:"submission_relay_ssl"`                    // no | smtps | starttls
+	SSLVerify  bool   `koanf:"submission_relay_ssl_verify"`             // default true
 	// SSLCA is a PEM file the relay is verified against; empty = system roots.
 	SSLCA          string `koanf:"submission_relay_ssl_ca"`
 	Trusted        bool   `koanf:"submission_relay_trusted"`         // send XCLIENT to relay (Postfix)
@@ -918,7 +969,7 @@ type RelayConfig struct {
 	HostAlias           string `koanf:"host"`
 	PortAlias           int    `koanf:"port"`
 	UserAlias           string `koanf:"user"`
-	PasswordAlias       string `koanf:"password"`
+	PasswordAlias       string `koanf:"password" secret:"true"`
 	SSLAlias            string `koanf:"ssl"`
 	SSLVerifyAlias      bool   `koanf:"ssl_verify"`
 	TrustedAlias        bool   `koanf:"trusted"`
@@ -1180,13 +1231,13 @@ type WardenServiceConfig struct {
 	// Format: redis://[password@]host:port/db
 	RedisAddr string `koanf:"redis_addr"`
 	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
-	RedisPassword string `koanf:"redis_password"`
+	RedisPassword string `koanf:"redis_password" secret:"true"`
 	// SentinelAddrs and SentinelMaster find the master through Sentinel; the
 	// db and password still come from RedisAddr, its host is not used (#2505).
 	SentinelAddrs    []string `koanf:"sentinel_addrs"`
 	SentinelMaster   string   `koanf:"sentinel_master"`
 	SentinelUser     string   `koanf:"sentinel_user"`
-	SentinelPassword string   `koanf:"sentinel_password"`
+	SentinelPassword string   `koanf:"sentinel_password" secret:"true"`
 	// KeyPrefix / ChannelPrefix namespace warden's Redis keys and Pub/Sub
 	// channels. Empty = defaults "yarilo:warden:" / "yarilo:warden:events:".
 	KeyPrefix     string `koanf:"key_prefix"`
@@ -1271,7 +1322,19 @@ type ThreadingConfig struct {
 	// ThreadingCacheIdle: seconds an account's fold is kept after its last use (#1396).
 	// Unset 300; 0 never caches.
 	ThreadingCacheIdle int `koanf:"threading_cache_idle"`
+	// ThreadingTailSize is the thread log's size past which it is merged into
+	// its sorted base; unset 128 KiB, "0" never merges (#2641).
+	ThreadingTailSize    int64  `koanf:"-"` // resolved from ThreadingTailSizeRaw at load
+	ThreadingTailSizeRaw string `koanf:"threading_tail_size"`
+	// ThreadingMaxThread is how many messages a conversation holds; the next
+	// one that would join a full conversation starts a new one (#2641). Unset
+	// 1000; at most MaxThreadMembers, what one stored member list holds.
+	ThreadingMaxThread int `koanf:"threading_max_thread"`
 }
+
+// MaxThreadMembers is the most members one thread's stored list holds: 32
+// bytes a member in a value of at most 65535 bytes.
+const MaxThreadMembers = 65535 / 32
 
 // CacheIdle reports the fold cache's idle period.
 func (c ThreadingConfig) CacheIdle() time.Duration {
@@ -1595,19 +1658,19 @@ type FTSConfig struct {
 // Mode "remote" runs a Redis-backed server on TCP+mTLS (backend deployment per tag).
 // Empty Mode disables the locks server in this process.
 type LocksServiceConfig struct {
-	Mode          string `koanf:"mode"`           // embedded | remote | ""
-	Socket        string `koanf:"socket"`         // embedded: /run/yarilo/locks.sock
-	Listen        string `koanf:"listen"`         // remote: ":9104"
-	SocketMode    string `koanf:"socket_mode"`    // embedded: octal mode of the socket
-	SocketGroup   string `koanf:"socket_group"`   // embedded: group name; empty keeps the process's
-	Redis         string `koanf:"redis"`          // remote: "redis://host:6379/0"
-	RedisPassword string `koanf:"redis_password"` // overrides the URL's; ${ENV} from a Secret
+	Mode          string `koanf:"mode"`                         // embedded | remote | ""
+	Socket        string `koanf:"socket"`                       // embedded: /run/yarilo/locks.sock
+	Listen        string `koanf:"listen"`                       // remote: ":9104"
+	SocketMode    string `koanf:"socket_mode"`                  // embedded: octal mode of the socket
+	SocketGroup   string `koanf:"socket_group"`                 // embedded: group name; empty keeps the process's
+	Redis         string `koanf:"redis"`                        // remote: "redis://host:6379/0"
+	RedisPassword string `koanf:"redis_password" secret:"true"` // overrides the URL's; ${ENV} from a Secret
 	// Sentinel: the master found through these; the db and password still
 	// come from Redis, its host is not used (#2505).
 	SentinelAddrs    []string       `koanf:"sentinel_addrs"`
 	SentinelMaster   string         `koanf:"sentinel_master"`
 	SentinelUser     string         `koanf:"sentinel_user"`
-	SentinelPassword string         `koanf:"sentinel_password"`
+	SentinelPassword string         `koanf:"sentinel_password" secret:"true"`
 	KeyPrefix        string         `koanf:"key_prefix"`     // remote: default "yarilo:locks:"
 	ChannelPrefix    string         `koanf:"channel_prefix"` // remote: default "yarilo:events:"
 	Shutdown         ShutdownConfig `koanf:"shutdown"`
@@ -1632,9 +1695,9 @@ type MailServerConfig struct {
 
 // DirectorAPIConfig configures the HTTP admin API on yarilo-director.
 type DirectorAPIConfig struct {
-	Listen      string   `koanf:"listen"`       // default "127.0.0.1:9103"
-	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR}
-	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
+	Listen      string   `koanf:"listen"`              // default "127.0.0.1:9103"
+	Token       string   `koanf:"token" secret:"true"` // Bearer token; supports ${ENV_VAR}
+	AllowedNets []string `koanf:"allowed_nets"`        // CIDRs allowed to call the API
 	// AuthDisabled is the only way to run the API without a token.
 	AuthDisabled bool `koanf:"auth_disabled"`
 }
@@ -1702,7 +1765,7 @@ type DirectorServiceConfig struct {
 	// release the same way director_service.api.token is (see
 	// helm/templates/secret-director-ring.yaml). Empty disables ring auth:
 	// every JOIN is rejected and this node can only run as a singleton.
-	RingSecret string `koanf:"ring_secret"`
+	RingSecret string `koanf:"ring_secret" secret:"true"`
 	// RingTLSServerName is the TLS ServerName used when dialling ring peers
 	// (JOIN + right-neighbor + seed polls) under internal_tls (#753). Ring
 	// peers are dialled by ephemeral pod IP, so without a stable name Go would
@@ -1860,7 +1923,7 @@ type JMAPLoginServiceConfig struct {
 	DirectorTag  string `koanf:"director_tag"`
 	// WebSocketTicketKey signs WebSocket tickets; every jmap-login replica
 	// needs the same one.
-	WebSocketTicketKey string `koanf:"websocket_ticket_key"`
+	WebSocketTicketKey string `koanf:"websocket_ticket_key" secret:"true"`
 	// ClientIPHeader names the header a proxy in general.haproxy's trusted
 	// networks puts the client address in; empty reads none.
 	ClientIPHeader string `koanf:"client_ip_header"`
@@ -1992,9 +2055,9 @@ type LMTPLoginServiceConfig struct {
 // CLI surfaces both through nested subcommands (`yarctl
 // director ...` vs `yarctl backend ...`).
 type BackendAPIConfig struct {
-	Listen      string   `koanf:"listen"`       // "127.0.0.1:9105" default
-	Token       string   `koanf:"token"`        // Bearer token; supports ${ENV_VAR} via koanf
-	AllowedNets []string `koanf:"allowed_nets"` // CIDRs allowed to call the API
+	Listen      string   `koanf:"listen"`              // "127.0.0.1:9105" default
+	Token       string   `koanf:"token" secret:"true"` // Bearer token; supports ${ENV_VAR} via koanf
+	AllowedNets []string `koanf:"allowed_nets"`        // CIDRs allowed to call the API
 	// AuthDisabled is the only way to run the API without a token.
 	AuthDisabled bool `koanf:"auth_disabled"`
 
@@ -2156,7 +2219,7 @@ type OAuth2Entry struct {
 	// ClientID / ClientSecret authenticate the introspection call
 	// itself. Ignored in JWKS and tokeninfo modes.
 	ClientID     string `koanf:"oauth2_client_id"`
-	ClientSecret string `koanf:"oauth2_client_secret"`
+	ClientSecret string `koanf:"oauth2_client_secret" secret:"true"`
 
 	// Issuers is the allow-list of `iss` claim values. Empty =
 	// no check (any signed token from a key in JWKS passes).
@@ -2235,7 +2298,7 @@ type OAuth2Entry struct {
 	IntrospectionModeAlias        string   `koanf:"introspection_mode"`
 	PreferIntrospectionAlias      bool     `koanf:"prefer_introspection"`
 	ClientIDAlias                 string   `koanf:"client_id"`
-	ClientSecretAlias             string   `koanf:"client_secret"`
+	ClientSecretAlias             string   `koanf:"client_secret" secret:"true"`
 	IssuersAlias                  []string `koanf:"issuers"`
 }
 
@@ -2274,13 +2337,13 @@ type AuthTokenConfig struct {
 	// Format: redis://[password@]host:port/db
 	RedisAddr string `koanf:"redis_addr"`
 	// RedisPassword overrides the URL's; ${ENV} keeps it out of the ConfigMap.
-	RedisPassword string `koanf:"redis_password"`
+	RedisPassword string `koanf:"redis_password" secret:"true"`
 	// SentinelAddrs and SentinelMaster find the master through Sentinel; the
 	// db and password still come from RedisAddr, its host is not used (#2505).
 	SentinelAddrs    []string `koanf:"sentinel_addrs"`
 	SentinelMaster   string   `koanf:"sentinel_master"`
 	SentinelUser     string   `koanf:"sentinel_user"`
-	SentinelPassword string   `koanf:"sentinel_password"`
+	SentinelPassword string   `koanf:"sentinel_password" secret:"true"`
 	// KeyPrefix namespaces token keys in Redis (#939). The installation
 	// boundary: two installs sharing one Redis need distinct prefixes or their
 	// token keys collide. Empty keeps the default "yarilo:authtoken:".
@@ -2296,7 +2359,7 @@ type AuthPolicyConfig struct {
 	// APIHeader is added to every request. Two formats:
 	//   "Key: value"  → custom header
 	//   "value"       → X-API-Key: value
-	APIHeader string `koanf:"auth_policy_server_api_header"`
+	APIHeader string `koanf:"auth_policy_server_api_header" secret:"true"`
 
 	// HashMech is the digest for the pwhash field. "sha256"
 	// (default) or "sha512". Must match the policy server's
@@ -2306,7 +2369,7 @@ type AuthPolicyConfig struct {
 	// HashNonce is the per-deployment salt. REQUIRED when URL is
 	// set; empty nonce is rejected at startup so two deployments
 	// don't share pwhash space.
-	HashNonce string `koanf:"auth_policy_hash_nonce"`
+	HashNonce string `koanf:"auth_policy_hash_nonce" secret:"true"`
 
 	// HashTruncateBits caps the MSB bits of the digest. Default
 	// 12 (4096 buckets - useful for rate-limit patterns, useless
@@ -2342,9 +2405,9 @@ type AuthPolicyConfig struct {
 	RequestAttributes map[string]string `koanf:"auth_policy_request_attributes"`
 	// Pre-beta spellings, accepted as aliases and removed after beta.
 	URLAlias              string `koanf:"url"`
-	APIHeaderAlias        string `koanf:"api_header"`
+	APIHeaderAlias        string `koanf:"api_header" secret:"true"`
 	HashMechAlias         string `koanf:"hash_mech"`
-	HashNonceAlias        string `koanf:"hash_nonce"`
+	HashNonceAlias        string `koanf:"hash_nonce" secret:"true"`
 	HashTruncateBitsAlias uint   `koanf:"hash_truncate_bits"`
 	RejectOnFailAlias     bool   `koanf:"reject_on_fail"`
 	LogOnlyAlias          bool   `koanf:"log_only"`
@@ -2428,7 +2491,7 @@ type MasterUsersConfig struct {
 // PassdbEntry is one backend of a passdb or masterdb chain.
 type PassdbEntry struct {
 	Driver            string `koanf:"driver"`                         // sqlite | mysql | postgres | passwd-file
-	DSN               string `koanf:"dsn"`                            // SQL drivers
+	DSN               string `koanf:"dsn" secret:"true"`              // SQL drivers
 	PasswdFile        string `koanf:"passwd_file_path"`               // passwd-file driver: path to the file
 	PasswordQuery     string `koanf:"passdb_sql_query"`               // custom SELECT; %u/%n/%d substituted as parameters
 	UserQuery         string `koanf:"userdb_sql_query"`               // optional userdb lookup; %u/%n/%d substituted
@@ -2443,9 +2506,9 @@ type PassdbEntry struct {
 	ConnMaxIdleTime *int `koanf:"conn_max_idle_time"` // seconds; unset 60; 0 never
 
 	// static driver: one shared credential + templated fields for every user.
-	StaticPassword string            `koanf:"static_password"` // shared password ({SCHEME} or default scheme)
-	Nopassword     bool              `koanf:"nopassword"`      // accept any password (proxy front); requires empty static_password
-	Fields         map[string]string `koanf:"fields"`          // templated fields (%u/%n/%d); userdb_-prefixed → userdb, bare → passdb
+	StaticPassword string            `koanf:"static_password" secret:"true"` // shared password ({SCHEME} or default scheme)
+	Nopassword     bool              `koanf:"nopassword"`                    // accept any password (proxy front); requires empty static_password
+	Fields         map[string]string `koanf:"fields"`                        // templated fields (%u/%n/%d); userdb_-prefixed → userdb, bare → passdb
 	// UsernameFilter limits the entry to matching names: masks split on spaces
 	// and commas, * and ?, a leading ! excludes. Empty takes every name.
 	UsernameFilter string `koanf:"username_filter"`
@@ -2485,6 +2548,10 @@ type StorageConfig struct {
 	// it; unset keeps 32 KiB, "0" purges at any size.
 	MailCachePurgeMinSize    int64  `koanf:"-"` // resolved from MailCachePurgeMinSizeRaw at load
 	MailCachePurgeMinSizeRaw string `koanf:"mail_cache_purge_min_size"`
+	// MailIndexIdleCacheSize is what folder index images no session uses may
+	// hold together, kept for the next open; unset 64 MiB, "0" frees at once.
+	MailIndexIdleCacheSize    int64  `koanf:"-"` // resolved from MailIndexIdleCacheSizeRaw at load
+	MailIndexIdleCacheSizeRaw string `koanf:"mail_index_idle_cache_size"`
 	// MailFsync is what reaches the disk before a delivery is acknowledged:
 	// never, optimized (default, the body) or always (#1847).
 	MailFsync string `koanf:"mail_fsync"`
@@ -2493,7 +2560,6 @@ type StorageConfig struct {
 	MailHome      string `koanf:"mail_home"`
 	MailPath      string `koanf:"mail_path"`
 	MailInboxPath string `koanf:"mail_inbox_path"`
-	Index         string `koanf:"index"`
 	// MailIndexPath is the INDEX= template. Canonical spelling; "index_dir" is
 	// the pre-beta alias.
 	MailIndexPath string `koanf:"mail_index_path"`
@@ -2580,6 +2646,16 @@ type StorageConfig struct {
 	// MailIndexLogRotateMinAge is the minimum log age in seconds before a
 	// min-size fold fires. Default 60 s.
 	MailIndexLogRotateMinAge int `koanf:"mail_index_log_rotate_min_age"`
+	// MailIndexLog2MaxAge is how long, in seconds, a fold keeps the log it
+	// folded as .log.2: the expunge history JMAP and QRESYNC answer from.
+	// Default 2 days; 0 keeps none.
+	MailIndexLog2MaxAge int `koanf:"mail_index_log2_max_age"`
+	// MailSyncWalkMemory is the memory the whole-folder walks of one process
+	// may hold together: a walk weighs its folder's messages times a measured
+	// cost per file, waits for room, and a folder larger than the whole budget
+	// walks alone. "0" leaves walks unbounded.
+	MailSyncWalkMemory    int64  `koanf:"-"` // resolved from MailSyncWalkMemoryRaw at load
+	MailSyncWalkMemoryRaw string `koanf:"mail_sync_walk_memory"`
 
 	// Pre-beta spellings of the triple above, accepted as aliases and removed
 	// after beta. Setting both spellings of one knob to different values is
@@ -2678,6 +2754,27 @@ type StorageConfig struct {
 	// access to a folder that exists -- so it is configurable. Empty disables
 	// it. Default: the layout directories.
 	MailboxListReservedSegments []string `koanf:"mailbox_list_reserved_segments"`
+	// MailCrypt encrypts message bodies at rest (MAILCRYPT phase).
+	MailCrypt MailCryptConfig `koanf:"mail_crypt"`
+	// MailTempDir holds plaintext a process must spill, such as decrypted
+	// reference-format bodies; never on the mail volume.
+	MailTempDir string `koanf:"mail_temp_dir"`
+}
+
+// MailCryptConfig is storage.mail_crypt.
+type MailCryptConfig struct {
+	// Write is off (bodies stored as given) or age (encrypted to PublicKey).
+	Write string `koanf:"write"`
+	// PublicKey is a file of age recipients, read only with Write: age.
+	PublicKey string `koanf:"public_key"`
+	// PrivateKeys is a file of age identities, one per line during a
+	// rotation; read when it exists.
+	PrivateKeys string `koanf:"private_keys"`
+	// ReferenceKeys are PEM private keys opening reference-format bodies.
+	ReferenceKeys []string `koanf:"reference_keys"`
+	// ReferenceCacheSize bounds the decrypted reference bodies kept in
+	// MailTempDir, summed over the process; 0 streams every one.
+	ReferenceCacheSize string `koanf:"reference_cache_size"`
 }
 
 // TelemetryConfig is the telemetry section: health, metrics and profiling.
@@ -2800,7 +2897,18 @@ func Defaults() *Config {
 			},
 		},
 		Storage: StorageConfig{
-			MaildirSyncOnSelect: true,
+			// What the code takes for an empty value, written here so the
+			// defaults read as the binary behaves; the code keeps its own
+			// fallback for a StorageConfig built without Defaults.
+			MailDriver:                "maildir",
+			MaildirRoot:               "/var/mail/vhosts",
+			MailHome:                  "%d/%u",
+			MailFsync:                 "optimized",
+			LockMethod:                "flock",
+			MdboxMapFormat:            "v2",
+			MailCachePurgeMinSizeRaw:  "32k",
+			MailIndexIdleCacheSizeRaw: "64M",
+			MaildirSyncOnSelect:       true,
 			// Both are documented as defaulting to true and neither was
 			// defaulted, so ByDriver passed false and every folder name went
 			// to disk as modified-UTF-7 with no NFC normalisation -- the
@@ -2813,6 +2921,13 @@ func Defaults() *Config {
 			// and 2338 dbox folders found no user folder colliding with one,
 			// so the default costs nothing there.
 			MailboxListReservedSegments: []string{"cur", "new", "tmp", "dbox-Mails", "fts-flatcurve"},
+			MailCrypt: MailCryptConfig{
+				Write:              "off",
+				PublicKey:          "/etc/yarilo/mail-crypt/public",
+				PrivateKeys:        "/etc/yarilo/mail-crypt/private",
+				ReferenceCacheSize: "256M",
+			},
+			MailTempDir: "/tmp/yarilo-mail",
 		},
 		InternalTLS: InternalTLSConfig{
 			Enabled: true,
@@ -2821,9 +2936,12 @@ func Defaults() *Config {
 			CA:      "/etc/yarilo/tls/ca.crt",
 		},
 		WardenService: WardenServiceConfig{
-			Listen:     "127.0.0.1:9101",
-			SocketMode: "0660",
-			Shutdown:   ShutdownConfig{},
+			Listen:        "127.0.0.1:9101",
+			SocketMode:    "0660",
+			StateBackend:  "memory",
+			KeyPrefix:     "yarilo:warden:",
+			ChannelPrefix: "yarilo:warden:events:",
+			Shutdown:      ShutdownConfig{},
 		},
 		AuthService: AuthServiceConfig{
 			Listen:             "127.0.0.1:9100",
@@ -2847,7 +2965,8 @@ func Defaults() *Config {
 			// flushes from user-management tooling.
 			Cache: AuthCacheConfig{},
 			Token: AuthTokenConfig{
-				Backend: "memory",
+				Backend:   "memory",
+				KeyPrefix: "yarilo:authtoken:",
 			},
 			Policy: AuthPolicyConfig{
 				HashMech:    "sha256",
@@ -2917,7 +3036,9 @@ func Defaults() *Config {
 			Listen: "127.0.0.1:9105",
 		},
 		LocksService: LocksServiceConfig{
-			SocketMode: "0660",
+			SocketMode:    "0660",
+			KeyPrefix:     "yarilo:locks:",
+			ChannelPrefix: "yarilo:events:",
 		},
 		Telemetry: TelemetryConfig{
 			Listen:       ":8080",
@@ -2929,6 +3050,7 @@ func Defaults() *Config {
 		Log: LogConfig{Level: "info"},
 		Sieve: SieveConfig{
 			DefaultName:            "yarilo",
+			ScriptsDriver:          "fs",
 			DuplicateDriver:        "file",
 			DuplicateFile:          ".yarilo.sieve-duplicate",
 			VacationEnabled:        true,
@@ -2949,10 +3071,14 @@ func Defaults() *Config {
 	}
 	c.Threading.Enabled = true
 	c.Threading.ThreadingCacheIdle = 300
+	c.Threading.ThreadingTailSizeRaw = "128k"
+	c.Threading.ThreadingMaxThread = 1000
 	c.Storage.LockStaleTimeout = 180
 	c.Storage.MailCachePurgeDeletePercentage = 20
 	c.Storage.MailCachePurgeContinuedPercentage = 200
 	c.Storage.MailIndexLogRotateMinAge = 60
+	c.Storage.MailIndexLog2MaxAge = 2 * 24 * 3600
+	c.Storage.MailSyncWalkMemoryRaw = "64M"
 	c.AuthService.StartupWaitSeconds = 30
 	c.LocksClient.StartupWaitSeconds = 30
 	c.AuthClient.PoolSize = 4
@@ -2996,6 +3122,8 @@ func Defaults() *Config {
 	c.Protocol.ManageSieve.MaxInvalidCommands = 3
 	c.Sieve.MaxScriptSize = 65536
 	c.Sieve.MaxRedirects = 32
+	c.Sieve.SendRateLimit = 0
+	c.Sieve.RedirectDuplicatePeriod = 43200
 	c.Sieve.MaxActions = 32
 	c.Sieve.DuplicateMaxPeriod = 604800
 	c.Sieve.VacationMinPeriod = 86400
@@ -3048,6 +3176,21 @@ func Defaults() *Config {
 	c.DirectorService.DomainExpire = 900
 	c.DirectorService.DomainRebalanceInterval = 60
 	c.DirectorService.FlushProgramTimeoutSeconds = 10
+	c.Master = MasterConfig{
+		Components:     []string{"locks", "auth", "warden", "dict", "imap", "pop3", "lmtp", "submission", "managesieve", "imap-login", "pop3-login", "lmtp-login", "submission-login", "managesieve-login"},
+		LibexecDir:     "/usr/local/libexec/yarilo",
+		RunDir:         "/var/run/yarilo",
+		EnvDir:         "/usr/local/etc/yarilo",
+		LogPath:        "/var/log/yarilo",
+		SyslogFacility: "mail",
+		StopTimeout:    60,
+		User:           "yarilo",
+		AuthUser:       "yarilo-auth",
+		LoginUser:      "yarilo-login",
+		DeliveryUser:   "yarilo-delivery",
+		LogUser:        "yarilo-log",
+		TelemetryPort:  18079,
+	}
 	c.DictService.DictMaxConns = 8
 	c.DictService.SocketMode = "0660"
 	c.LocksClient.WaitPoolSize = 64
@@ -3111,6 +3254,9 @@ func Load(path string) (*Config, error) {
 	}
 	listEntryDefaults(k, cfg)
 	if err := refuseRemovedKeys(k, removedKeys()); err != nil {
+		return nil, err
+	}
+	if err := refuseUnknownKeys(unknownKeys(k), cfg.ConfigSchemaVersion); err != nil {
 		return nil, err
 	}
 	warnRetiredKeys(k, retiredKeys())
@@ -3183,6 +3329,9 @@ func validateMailDriver(driver string) error {
 }
 
 func (cfg *Config) validate() error {
+	if err := checkMinTLS(cfg); err != nil {
+		return err
+	}
 	if err := checkNumbers(cfg); err != nil {
 		return err
 	}
@@ -3285,7 +3434,10 @@ func (cfg *Config) validate() error {
 	resolve("fts.fts_prefetch_max_bytes", cfg.FTS.PrefetchMaxBytesRaw, &cfg.FTS.PrefetchMaxBytes)
 	resolve("storage.mail_index_log_rotate_min_size", cfg.Storage.MailIndexLogRotateMinSizeRaw, &cfg.Storage.MailIndexLogRotateMinSize)
 	resolve("storage.mail_index_log_rotate_max_size", cfg.Storage.MailIndexLogRotateMaxSizeRaw, &cfg.Storage.MailIndexLogRotateMaxSize)
+	resolve("storage.mail_sync_walk_memory", cfg.Storage.MailSyncWalkMemoryRaw, &cfg.Storage.MailSyncWalkMemory)
 	resolve("storage.mail_cache_purge_min_size", cfg.Storage.MailCachePurgeMinSizeRaw, &cfg.Storage.MailCachePurgeMinSize)
+	resolve("threading.threading_tail_size", cfg.Threading.ThreadingTailSizeRaw, &cfg.Threading.ThreadingTailSize)
+	resolve("storage.mail_index_idle_cache_size", cfg.Storage.MailIndexIdleCacheSizeRaw, &cfg.Storage.MailIndexIdleCacheSize)
 	resolve("protocol.jmap.jmap_max_size_upload", cfg.Protocol.JMAP.MaxSizeUploadRaw, &cfg.Protocol.JMAP.MaxSizeUpload)
 	resolve("protocol.jmap.jmap_max_size_request", cfg.Protocol.JMAP.MaxSizeRequestRaw, &cfg.Protocol.JMAP.MaxSizeRequest)
 	resolve("protocol.jmap.jmap_max_body_value_bytes", cfg.Protocol.JMAP.MaxBodyValueBytesRaw, &cfg.Protocol.JMAP.MaxBodyValueBytes)
@@ -3305,6 +3457,9 @@ func (cfg *Config) validate() error {
 	}
 	if _, err := filelock.Parse(cfg.Storage.LockMethod); err != nil {
 		return fmt.Errorf("config: storage.storage_lock_method: %w", err)
+	}
+	if err := checkMailCrypt(cfg.Storage); err != nil {
+		return err
 	}
 	if p := cfg.Storage.MailCachePurgeDeletePercentage; p > 100 {
 		return fmt.Errorf("config: storage.mail_cache_purge_delete_percentage: %d is more than every message", p)
@@ -3350,14 +3505,11 @@ func BuildTLSConfig(ssl SSLConfig) (*tls.Config, error) {
 		}
 		certs = append(certs, alt)
 	}
-	tlsCfg := &tls.Config{
-		Certificates: certs,
-		MinVersion:   tls.VersionTLS12,
+	minVersion, err := ParseMinTLS(ssl.SSLMinProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("tls: %w", err)
 	}
-	if ssl.SSLMinProtocol == "TLS1.3" {
-		tlsCfg.MinVersion = tls.VersionTLS13
-	}
-	return tlsCfg, nil
+	return &tls.Config{Certificates: certs, MinVersion: minVersion}, nil
 }
 
 func expandEnv(cfg *Config) {
@@ -3989,7 +4141,7 @@ func (cfg *Config) SubmissionHostname() string {
 // rendered at. Raised in the same commit that starts reading a key the chart
 // did not render before, together with the entry in schemaAdditions below and
 // the bump in values.yaml.
-const minConfigSchema = 31
+const minConfigSchema = 34
 
 // schemaAdditions names what each schema version started rendering, so a
 // warning can say which settings are being defaulted rather than only that a
@@ -4039,6 +4191,9 @@ var schemaAdditions = map[int][]string{
 	30: {"services.imap_login.auth_allow_cleartext", "services.pop3_login.auth_allow_cleartext",
 		"services.managesieve_login.auth_allow_cleartext", "services.jmap_login.auth_allow_cleartext"},
 	31: {"sieve.sieve_submission_ssl_verify", "sieve.sieve_submission_ssl_ca"},
+	32: {"storage.mail_crypt", "storage.mail_temp_dir"},
+	33: {"sieve.sieve_send_rate_limit"},
+	34: {"sieve.sieve_redirect_duplicate_period"},
 }
 
 // warnConfigSchemaSkew says which settings this binary reads that the chart

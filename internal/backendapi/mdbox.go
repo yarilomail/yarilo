@@ -20,21 +20,31 @@ func (s *Server) registerMdboxRoutes() {
 type mdboxPurgeRequest struct {
 	User      string `json:"user"`
 	Namespace string `json:"namespace"`
+	// SkipOthers answers a store other than mdbox with skipped instead of the
+	// refusal: a purge over many users counts it apart from the failures.
+	SkipOthers bool `json:"skip_other_drivers"`
+	// SkipNoHome answers an account without a mail home with skipped (#2675).
+	SkipNoHome bool `json:"skip_no_home"`
 }
 
 type mdboxPurgeResponse struct {
-	FilesScanned    int   `json:"files_scanned"`
-	FilesRewritten  int   `json:"files_rewritten"`
-	FilesUnlinked   int   `json:"files_unlinked"`
-	RecordsKept     int   `json:"records_kept"`
-	RecordsExpunged int   `json:"records_expunged"`
-	BytesReclaimed  int64 `json:"bytes_reclaimed"`
+	// Skipped says why nothing ran, SkipReason the same as a code a caller
+	// counts by: no_home or not_mdbox.
+	Skipped         string `json:"skipped,omitempty"`
+	SkipReason      string `json:"skip_reason,omitempty"`
+	FilesScanned    int    `json:"files_scanned"`
+	FilesRewritten  int    `json:"files_rewritten"`
+	FilesUnlinked   int    `json:"files_unlinked"`
+	RecordsKept     int    `json:"records_kept"`
+	RecordsExpunged int    `json:"records_expunged"`
+	BytesReclaimed  int64  `json:"bytes_reclaimed"`
 }
 
 // handleMdboxPurge runs mdbox Purge(): compacts m.<N> files with
 // zero-ref records; the map rewrite is atomic so live map_uids
 // stay valid.
 func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
+	noWriteDeadline(w)
 	var req mdboxPurgeRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -52,15 +62,20 @@ func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if bundle == nil {
+		if req.SkipNoHome {
+			apiJSON(w, mdboxPurgeResponse{Skipped: errNoMailHome.Error(), SkipReason: "no_home"})
+			return
+		}
 		apiError(w, errNoMailHome.Error(), http.StatusNotFound)
 		return
 	}
 
-	type purger interface {
-		Purge() (mdboxdriver.PurgeStats, error)
-	}
 	p, ok := mailbox.Driver(bundle.box).(purger)
 	if !ok {
+		if req.SkipOthers {
+			apiJSON(w, mdboxPurgeResponse{Skipped: "not an mdbox store", SkipReason: "not_mdbox"})
+			return
+		}
 		apiError(w, "purge: storage driver does not implement mdbox purge (only mdbox does)", http.StatusBadRequest)
 		return
 	}
@@ -70,14 +85,28 @@ func (s *Server) handleMdboxPurge(w http.ResponseWriter, r *http.Request) {
 		apiError(w, "purge: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	apiJSON(w, mdboxPurgeResponse{
+	apiJSON(w, purgeResponse(stats))
+}
+
+// noWriteDeadline lifts the server's write timeout: a purge takes as long as
+// the store needs, and its answer must still reach the caller (#2672).
+func noWriteDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+}
+
+type purger interface {
+	Purge() (mdboxdriver.PurgeStats, error)
+}
+
+func purgeResponse(stats mdboxdriver.PurgeStats) mdboxPurgeResponse {
+	return mdboxPurgeResponse{
 		FilesScanned:    stats.FilesScanned,
 		FilesRewritten:  stats.FilesRewritten,
 		FilesUnlinked:   stats.FilesUnlinked,
 		RecordsKept:     stats.RecordsKept,
 		RecordsExpunged: stats.RecordsExpunged,
 		BytesReclaimed:  stats.BytesReclaimed,
-	})
+	}
 }
 
 type mdboxAltMoveRequest struct {
@@ -95,12 +124,15 @@ type mdboxAltMoveResponse struct {
 	FilesCreated  int   `json:"files_created"`
 	FilesUnlinked int   `json:"files_unlinked"`
 	BytesMoved    int64 `json:"bytes_moved"`
+	// Purge is the purge that follows the move, as the reference runs one.
+	Purge *mdboxPurgeResponse `json:"purge,omitempty"`
 }
 
 // handleMdboxAltMove moves messages between primary and alt storage
 // (Reverse=true for alt→primary), filtered by InternalDate < Before.
 // Mark + purge in one atomic call per file.
 func (s *Server) handleMdboxAltMove(w http.ResponseWriter, r *http.Request) {
+	noWriteDeadline(w)
 	var req mdboxAltMoveRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -161,13 +193,25 @@ func (s *Server) handleMdboxAltMove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	apiJSON(w, mdboxAltMoveResponse{
+	resp := mdboxAltMoveResponse{
 		Candidates:    stats.Candidates,
 		Moved:         stats.Moved,
 		FilesCreated:  stats.FilesCreated,
 		FilesUnlinked: stats.FilesUnlinked,
 		BytesMoved:    stats.BytesMoved,
-	})
+	}
+	// A move rewrites the records that stay with the dead ones among them; the
+	// purge after it gives that space back.
+	if p, ok := mailbox.Driver(bundle.box).(purger); ok {
+		ps, err := p.Purge()
+		if err != nil {
+			apiError(w, fmt.Sprintf("altmove: moved %d, then purge: %v", stats.Moved, err), http.StatusInternalServerError)
+			return
+		}
+		pr := purgeResponse(ps)
+		resp.Purge = &pr
+	}
+	apiJSON(w, resp)
 }
 
 // setAltTierAllFolders calls SetAltTier on every selectable folder

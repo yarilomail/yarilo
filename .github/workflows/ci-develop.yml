@@ -44,6 +44,9 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/yarilo
+  # The scanner of the build job, kept on the runner's disk (Install Trivy).
+  TRIVY_VERSION: "0.70.0"
+  TRIVY_SHA256: 8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9
   ## Until main exists, dev images are candidates for the first stable
   ## release. After it, the next release is main's version with the patch
   ## raised -- read from the branch rather than committed anywhere, because a
@@ -73,6 +76,9 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: [gate]
     runs-on: [self-hosted, linux]
+    ## Three bounded pushes of each of the two tags are an hour at worst;
+    ## the rest is the build and the scan. The default is six hours.
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -124,19 +130,93 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile
-          push: true
+          # Into the local daemon only: nothing is published before the scan.
+          push: false
+          load: true
           platforms: linux/amd64
+          # The stages that run apk upgrade are rebuilt every time; the Go
+          # builders keep this runner's layer cache.
+          no-cache-filters: runtime,fts-bench
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.version.outputs.dev_tag }}
           build-args: |
             BUILD_VERSION=${{ steps.version.outputs.dev_tag }}
             BUILD_CHART_VERSION=${{ steps.version.outputs.chart_version }}
+
+      ## The image about to be published, before any tag of it exists in a
+      ## registry: a finding stops the job with nothing pushed. The scheduled
+      ## Trivy run builds its own image and cannot see what a cached layer
+      ## left in this one.
+      ## On the runner's disk, outside the workspace: the binary is fetched once
+      ## per version and the DB is refreshed in place, nothing goes through the
+      ## Actions cache, whose upload over this runner's link took minutes.
+      - name: Install Trivy
+        id: trivy
+        run: |
+          base="$HOME/.cache/yarilo-ci/trivy"
+          bin="$base/v$TRIVY_VERSION"
+          if [ -x "$bin/trivy" ] && "$bin/trivy" --version | grep -qx "Version: $TRIVY_VERSION"; then
+            echo "Trivy $TRIVY_VERSION already in $bin"
+          else
+            tmp=$(mktemp -d)
+            curl -sSfL -o "$tmp/t.tgz" \
+              "https://github.com/aquasecurity/trivy/releases/download/v$TRIVY_VERSION/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+            echo "$TRIVY_SHA256  $tmp/t.tgz" | sha256sum -c -
+            tar -xzf "$tmp/t.tgz" -C "$tmp" trivy
+            mkdir -p "$bin" && mv "$tmp/trivy" "$bin/trivy.new" && mv "$bin/trivy.new" "$bin/trivy"
+            rm -rf "$tmp"
+            echo "Trivy $TRIVY_VERSION installed in $bin"
+          fi
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "cache-dir=$base/db" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy - the image to publish
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          skip-setup-trivy: true
+          cache: false
+          cache-dir: ${{ steps.trivy.outputs.cache-dir }}
+          image-ref: ${{ steps.build.outputs.imageid }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      ## The scanned image, tag by tag; each line names the digest the registry got.
+      - name: Push
+        env:
+          TAGS: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.version.outputs.dev_tag }}
+        run: |
+          # One push is bounded and repeated: a connection to the registry
+          # that stalls would otherwise hold the runner until the job limit.
+          # A repeat sends only the layers the registry does not have yet.
+          # The layer lines stay in the log, so a slow push names its layer.
+          push() {
+            for attempt in 1 2 3; do
+              started=$(date +%s)
+              if timeout 600 docker push "$1"; then
+                echo "pushed $1 in $(( $(date +%s) - started ))s, attempt $attempt"
+                return 0
+              fi
+              echo "::warning::push of $1 did not finish in $(( $(date +%s) - started ))s, attempt $attempt"
+            done
+            return 1
+          }
+          printf '%s\n' "$TAGS" | while read -r tag; do
+            [ -n "$tag" ] || continue
+            push "$tag"
+            echo "$tag $(docker inspect --format '{{join .RepoDigests " "}}' "$tag")"
+          done
 
   ## Exported to the docs repo's settings-export branch, which its PR check reads.
   settings:
@@ -207,8 +287,8 @@ jobs:
     permissions:
       packages: write
     steps:
-      ## Keeps the newest dev tags with their child manifests; releases and
-      ## latest are excluded from every rule.
+      ## Keeps the newest dev tags with their child manifests; releases,
+      ## latest and rebuilds (rebuild-tag.yml) are excluded from every rule.
       - name: Prune
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
@@ -216,5 +296,7 @@ jobs:
           use-regex: true
           delete-tags: '-dev\.'
           keep-n-tagged: ${{ env.KEEP_DEV_TAGS }}
-          exclude-tags: '^(latest|\d+\.\d+\.\d+)$'
+          ## One branch per tag form, no quantifier inside another: the action
+          ## refuses a nested one as ReDoS-prone (safe-regex2).
+          exclude-tags: '^(latest|\d+\.\d+\.\d+|\d+\.\d+\.\d+-rebuild|\d+\.\d+\.\d+-rebuild-[0-9a-f]{8})$'
           token: ${{ secrets.GITHUB_TOKEN }}

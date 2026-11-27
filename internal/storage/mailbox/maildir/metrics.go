@@ -9,7 +9,7 @@ import (
 // here, the journal in the index (#1840). Sites are named by role.
 var metricLockAcquired = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "maildir_lock_acquired_total",
-	Help: "Locks the maildir driver took on the uidlist, by the call that took it. A store, a rename and a read take none.",
+	Help: "Locks the maildir driver took on the uidlist, by the call that took it. A rename and a read take none; a store or a save takes one only to give a new keyword its letter.",
 }, []string{"site"})
 
 // Held, not waited for: the cost a site imposes on the folder is the time it
@@ -66,6 +66,7 @@ var metricRecordWithoutRow = promauto.NewCounter(prometheus.CounterOpts{
 
 const (
 	lockSiteSave           = "save"            // a delivery or APPEND
+	lockSiteAlignUIDSpace  = "align-uid-space" // an open taking rows the index lacks
 	lockSiteSweepTemps     = "sweep-temps"     // clearing what a save never published
 	lockSiteWriteFlags     = "write-flags"     // one message's flags reaching its name
 	lockSiteWriteFlagsBulk = "write-flags-all" // a whole STORE's worth at once
@@ -77,7 +78,17 @@ const (
 	lockSiteReconcileApply = "reconcile-apply" // the index write a reconcile decided on
 	lockSiteMigrateNames   = "migrate-names"   // the pass that puts records in the list
 	lockSiteRename         = "rename"          // a folder rename, both locks
+	lockSiteRemove         = "remove"          // an unlink outside an expunge's hold
+	lockSiteExpunge        = "expunge"         // an expunge's records and unlinks
+	lockSiteRewrite        = "rewrite"         // re-encryption replacing a body
 )
+
+// metricCryptLock counts the folder crypt lock's holds by mode, and how many
+// had to wait: sessions take it shared and should never wait for each other.
+var metricCryptLock = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_crypt_lock_total",
+	Help: "Holds of a folder's re-encryption lock by mode (shared by renames and unlinks, exclusive by a re-encryption's swap) and whether the take waited; waited=no-room is a rename or unlink that went unheld because the volume had no room to create the lock file.",
+}, []string{"mode", "waited"})
 
 // Where a listing's cost comes from: the uid list, read whole or by its tail,
 // and cur/, by whoever asked for it (#1875).
@@ -130,4 +141,16 @@ var (
 		Name: "maildir_uidlist_stamp_miss_total",
 		Help: "Folder opens where the uid list had moved on from the stamp, or there was none.",
 	})
+	metricListStampAligned = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "maildir_uidlist_stamp_aligned_total",
+		Help: "Saves whose UID space the index answered alone, the uid list matching the stamp it recorded.",
+	})
 )
+
+// metricExpungeRace counts listed files found with no record under a uid the
+// index gave up: "wait" leaves one for the next pass, "new-uid" gives it a new
+// one when it is still there (#2663).
+var metricExpungeRace = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "maildir_expunge_race_total",
+	Help: "Listed files a reconcile found with no record under a uid the index already gave up, by what it did: wait for the next pass, or give the file a new uid.",
+}, []string{"outcome"})

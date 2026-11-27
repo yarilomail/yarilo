@@ -141,7 +141,7 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	if u.b.locker != nil {
 		opts = append(opts, mdboxmap.WithLocker(u.b.locker), mdboxmap.WithOwner(u.owner))
 	}
-	m, err := mdboxmap.Open(ourStorage, u.username, opts...)
+	m, err := mdboxmap.Open(ourStorage, u.lockUser, opts...)
 	if err != nil {
 		return false, fmt.Errorf("fileindex/convert: open map: %w", err)
 	}
@@ -204,7 +204,7 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	if hdr.UIDValidity == 0 {
 		return false, fmt.Errorf("fileindex/convert: folder %q: their index carries no uid_validity", fs.folder)
 	}
-	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID()); err != nil {
+	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID(), false); err != nil {
 		return false, err
 	}
 	u.rememberIdentity(fs.folder, hdr.UIDValidity)
@@ -237,6 +237,16 @@ func (u *userIndex) convertForeignFolder(fs *folderState) (bool, error) {
 	if err := fsyncDir(fs.indexDir); err != nil {
 		return false, fmt.Errorf("fileindex/convert: folder %q: %w", fs.folder, err)
 	}
+	// A full-text hit resolves through the GUID store; appended here and not
+	// by AppendMessage, the adopted messages need their rows (#2589).
+	adopted := make([]mailbox.GUIDRecord, 0, len(metas))
+	for _, meta := range metas {
+		if meta.GUID != ([16]byte{}) {
+			adopted = append(adopted, mailbox.GUIDRecord{GUID: meta.GUID, FolderGUID: fs.hdr.MailboxGUID,
+				UID: meta.UID, InternalDate: meta.InternalDate.Unix()})
+		}
+	}
+	u.applyGUIDTracking(fs, guidBatch{add: adopted})
 	if err := dboxconv.RemoveForeignFolder(dir); err != nil {
 		return false, err
 	}
@@ -283,7 +293,7 @@ func (u *userIndex) carryForeignSubscriptions() error {
 	// The personal namespace's file: a foreign store has one subscription file
 	// and per-namespace siblings have no counterpart there.
 	store := subs.New(u.controlRoot, mailbox.NamespaceSubsFile("", u.separator, "personal"),
-		u.username, u.owner, u.b.locker)
+		u.username, u.owner, u.b.locker).SetLockName(u.lockUser)
 	for _, name := range names {
 		if err := store.Add(name); err != nil {
 			return fmt.Errorf("fileindex/convert: subscribe %q: %w", name, err)
@@ -374,7 +384,7 @@ func (u *userIndex) convertForeignSdboxFolder(fs *folderState, dir string) (bool
 	if hdr.UIDValidity == 0 {
 		return false, fmt.Errorf("fileindex/convert: folder %q: their index carries no uid_validity", fs.folder)
 	}
-	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID()); err != nil {
+	if err := fs.createFresh(hdr.UIDValidity, u.newFolderGUID(), false); err != nil {
 		return false, err
 	}
 	// Recorded before their index is unlinked below, or it exists nowhere and a
@@ -429,7 +439,7 @@ func (u *userIndex) AdoptForeignNames() error {
 	if u.b.locker == nil {
 		return run()
 	}
-	key := locks.IndexKey(u.username)
+	key := locks.IndexKey(u.lockUser)
 	if held, err := locks.Reentrant(u.b.locker, key, "index-adopt", false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
@@ -468,19 +478,21 @@ func (u *userIndex) freshUIDValidity(requested uint32) uint32 {
 // not get the same answer -- a folder the record knows keeps its identity, or
 // every client resynchronises (#1611). Recorded on the way out for the next
 // loss to read; an unwritable record is logged and not fatal.
-func (u *userIndex) identityFor(folder string, requested uint32) uint32 {
+// identityFor also says whether the record knew the folder: one it knew had an
+// index before.
+func (u *userIndex) identityFor(folder string, requested uint32) (uint32, bool) {
 	if u.folders != nil {
 		if v, ok, err := u.folders.UIDValidity(folder); err != nil {
 			slog.Warn("fileindex: folder identity record unreadable", "user", u.username, "folder", folder, "err", err)
 		} else if ok {
 			slog.Info("fileindex: folder index was missing; its identity came from the record",
 				"user", u.username, "folder", folder, "uidvalidity", v)
-			return v
+			return v, true
 		}
 	}
 	v := u.freshUIDValidity(requested)
 	u.rememberIdentity(folder, v)
-	return v
+	return v, false
 }
 
 // rememberIdentity stores what a folder was created with.

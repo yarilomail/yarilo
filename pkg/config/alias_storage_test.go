@@ -292,7 +292,7 @@ func TestListValuedAliasComparesAsAValue(t *testing.T) {
 // reach it. An override written the old way used to fill a field nobody
 // adopted, and the service lost its certificate: set, and doing nothing.
 func TestPerServiceSSLOverrideAcceptsBothSpellings(t *testing.T) {
-	const svc = "services:\n  imaps_login:\n    listen: \":993\"\n    ssl:\n"
+	const svc = "services:\n  imaps_login:\n    port: 993\n    ssl:\n"
 
 	cfg, err := loadYAML(t, svc+"      tls_cert: /svc.pem\n      tls_key: /svc.key\n")
 	if err != nil {

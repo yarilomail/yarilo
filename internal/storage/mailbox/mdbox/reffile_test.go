@@ -48,7 +48,8 @@ func TestAReferenceStorageFileIsRead(t *testing.T) {
 		{"third record, saved to another folder", 4690, 67, "archived", "Archive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body, guid, folder, _, err := readRecordBodyAndTrailer(f, tc.offset)
+			body, tr, err := readRecordBodyAndTrailer(f, tc.offset)
+			guid, folder := tr.guid, tr.origMailbox
 			if err != nil {
 				t.Fatalf("read: %v", err)
 			}

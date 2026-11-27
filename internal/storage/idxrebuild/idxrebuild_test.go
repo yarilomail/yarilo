@@ -128,7 +128,7 @@ func TestExpungeMissing(t *testing.T) {
 	}
 	publish(t, box, "INBOX", gone, 2)
 	guids := map[uint32][16]byte{1: keepGUID, 2: goneGUID}
-	for uid := range map[uint32]string{1: keep, 2: gone} {
+	for _, uid := range []uint32{1, 2} { // in uid order: a lower uid after a higher one is refused
 		if err := idx.AppendMessage(folder.ID, &mailbox.MessageMeta{
 			UID: uid, Size: 2, VSize: 2, GUID: guids[uid],
 		}); err != nil {

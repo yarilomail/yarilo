@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailindex"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
@@ -70,10 +69,10 @@ func decodeGUIDMapRec(b []byte) (guidMapRec, bool) {
 
 // guidStore is the open handle, one per user index.
 type guidStore struct {
-	mu      sync.Mutex
-	id      uint64
-	image   map[[16]byte][]mailbox.GUIDRecord
-	version guidImageVersion
+	mu sync.Mutex
+	id uint64
+	// lookup is the open lookup file (guidlookup.go).
+	lookup *lookupRef
 	// rebuilding: a rebuild of this process holds the store, and a writer here
 	// would pass that hold as its own; it fails and marks its folder instead.
 	rebuilding atomic.Bool
@@ -81,14 +80,6 @@ type guidStore struct {
 
 // errGUIDRebuilding is a store write refused while this process rebuilds it.
 var errGUIDRebuilding = errors.New("fileindex/guid: the store is being rebuilt")
-
-// guidImageVersion says which image a map was built from: the file's identity,
-// how far its uids have gone, and how many records it holds.
-type guidImageVersion struct {
-	indexID uint32
-	nextUID uint32
-	records int
-}
 
 // GUIDStorePath is where the store lives: the index root the folders use, so
 // INDEX= moves it with them.
@@ -180,18 +171,18 @@ func (u *userIndex) AppendGUIDRecord(r mailbox.GUIDRecord) error {
 		}
 		fs.file.Header.NextUID = uid + 1
 		m := &mailbox.MessageMeta{UID: uid}
-		if err := fs.appendLocked(m); err != nil {
-			return err
-		}
-		rec := fs.file.Records[len(fs.file.Records)-1]
-		if rec.Ext == nil {
-			rec.Ext = map[string][]byte{}
-		}
-		rec.Ext[extNameGUIDMap] = encodeGUIDMapRec(guidMapRec{
+		rec, err := fs.appendLockedWith(m, map[string][]byte{extNameGUIDMap: encodeGUIDMapRec(guidMapRec{
 			GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 			Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
-		})
-		return fs.flush()
+		})})
+		if err != nil {
+			return err
+		}
+		if err := fs.flushAppend(rec); err != nil {
+			return err
+		}
+		u.compactLogIfNeeded(fs)
+		return nil
 	})
 }
 
@@ -208,8 +199,12 @@ func (u *userIndex) GUIDRecords() ([]mailbox.GUIDRecord, error) {
 	var out []mailbox.GUIDRecord
 	err = u.withFolderROUnlocked(id, func(fs *folderState) error {
 		out = out[:0]
-		for i := range fs.file.Records {
-			r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+		if err := fs.loadRecords(); err != nil {
+			return err
+		}
+		for i := range fs.recordCount() {
+			v, _ := fs.recExt(i, extNameGUIDMap)
+			r, ok := decodeGUIDMapRec(v)
 			if !ok {
 				continue
 			}
@@ -295,7 +290,7 @@ func (fs *folderState) markGUIDMissedLocked() error {
 	if ext := findExt(fs.file.Extensions, extNameGUIDMissed); ext != nil && hdrStamp(ext.HdrData) != 0 {
 		return nil
 	}
-	return fs.setGUIDMissedLocked(uint64(time.Now().Unix()))
+	return fs.setGUIDMissedLocked(uint64(nowUnix()))
 }
 
 // setGUIDMissedLocked writes the folder's mark by a base rewrite: the mark is
@@ -392,13 +387,14 @@ func (u *userIndex) RebuildGUIDStore(folderIDs []uint64) (int, error) {
 	var copies []mailbox.GUIDRecord
 	for _, fid := range folderIDs {
 		err := u.withFolderSite(fid, lockSiteGUIDRebuild, func(fs *folderState) error {
-			for _, rec := range fs.file.Records {
-				g := decodeGUIDRec(rec.Ext[extNameGUID])
+			for seq := range fs.recordCount() {
+				gb, _ := fs.recExt(seq, extNameGUID)
+				g := decodeGUIDRec(gb)
 				if g == ([16]byte{}) {
 					continue // a record with no GUID names no id
 				}
-				r := mailbox.GUIDRecord{GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: rec.UID}
-				if data, ok := rec.Ext[extNameInternalDate]; ok {
+				r := mailbox.GUIDRecord{GUID: g, FolderGUID: fs.hdr.MailboxGUID, UID: fs.recUID(seq)}
+				if data, ok := fs.recExt(seq, extNameInternalDate); ok {
 					r.InternalDate = decodeIdateRec(data).Unix()
 				}
 				copies = append(copies, r)
@@ -482,78 +478,86 @@ func (u *userIndex) applyGUIDBatch(b guidBatch) error {
 		if u.guid.rebuilding.Load() {
 			return errGUIDRebuilding
 		}
+		// Removals search the store's records: those load its chunks. An add
+		// alone, what a delivery makes, reads none.
+		if len(b.gone) > 0 || b.goneFolder != nil {
+			if err := fs.loadWriterRecords(); err != nil {
+				return err
+			}
+		}
+		// Journalled like a folder's command: a base rewrite here cost every
+		// delivery the whole account's copies (#2617).
+		var logRecs [][]byte
 		if b.goneFolder != nil {
-			for i := len(fs.file.Records) - 1; i >= 0; i-- {
-				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+			for i := fs.recordCount() - 1; i >= 0; i-- {
+				data, _ := fs.recExt(i, extNameGUIDMap)
+				r, ok := decodeGUIDMapRec(data)
 				if !ok || r.FolderGUID != *b.goneFolder {
 					continue
 				}
-				if _, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0); eerr != nil {
+				recs, eerr := fs.expungeLocked(fs.recUID(i), 0)
+				if eerr != nil {
 					return eerr
 				}
+				logRecs = append(logRecs, recs...)
 			}
 		}
 		for _, c := range b.gone {
-			for i := range fs.file.Records {
-				r, ok := decodeGUIDMapRec(fs.file.Records[i].Ext[extNameGUIDMap])
+			for i := range fs.recordCount() {
+				data, _ := fs.recExt(i, extNameGUIDMap)
+				r, ok := decodeGUIDMapRec(data)
 				if !ok || r.FolderGUID != c.folderGUID || r.UID != c.uid {
 					continue
 				}
-				if _, eerr := fs.expungeLocked(fs.file.Records[i].UID, 0); eerr != nil {
+				recs, eerr := fs.expungeLocked(fs.recUID(i), 0)
+				if eerr != nil {
 					return eerr
 				}
+				logRecs = append(logRecs, recs...)
 				break
 			}
 		}
 		for _, r := range b.add {
-			if err := appendGUIDLocked(fs, r); err != nil {
+			rec, err := appendGUIDLocked(fs, r)
+			if err != nil {
 				return err
 			}
+			recs, err := fs.appendLogRecords(rec)
+			if err != nil {
+				return err
+			}
+			logRecs = append(logRecs, recs...)
 		}
-		return fs.flush()
+		if len(logRecs) == 0 {
+			return nil
+		}
+		// Folded by the thresholds a folder's journal is (#2617).
+		if err := fs.appendMutLog(logRecs...); err != nil {
+			return err
+		}
+		u.compactLogIfNeeded(fs)
+		return nil
 	})
 }
 
-func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) error {
+func appendGUIDLocked(fs *folderState, r mailbox.GUIDRecord) ([]byte, error) {
 	uid := fs.file.Header.NextUID
 	if uid == 0 {
 		uid = 1
 	}
 	fs.file.Header.NextUID = uid + 1
-	if err := fs.appendLocked(&mailbox.MessageMeta{UID: uid}); err != nil {
-		return err
-	}
-	rec := fs.file.Records[len(fs.file.Records)-1]
-	if rec.Ext == nil {
-		rec.Ext = map[string][]byte{}
-	}
-	rec.Ext[extNameGUIDMap] = encodeGUIDMapRec(guidMapRec{
+	return fs.appendLockedWith(&mailbox.MessageMeta{UID: uid}, map[string][]byte{extNameGUIDMap: encodeGUIDMapRec(guidMapRec{
 		GUID: r.GUID, FolderGUID: r.FolderGUID, UID: r.UID,
 		Flags: r.Flags, InternalDate: r.InternalDate, CID: r.CID,
-	})
-	return nil
+	})})
 }
 
-// GUIDCopies answers from the image the store last read: the map is built once
-// per version of the file, so a second lookup in a session costs no I/O.
+// GUIDCopies answers from the store's lookup and its journal: no record is
+// held in memory for it, and an append rebuilds nothing (INDEX-MEMORY.md §5a).
 func (u *userIndex) GUIDCopies(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
 	if len(guids) == 0 {
 		return nil, nil
 	}
-	byGUID, err := u.guidImage()
-	if err != nil || byGUID == nil {
-		return nil, err
-	}
-	var out []mailbox.GUIDRecord
-	for _, g := range guids {
-		out = append(out, byGUID[g]...)
-	}
-	return out, nil
-}
-
-// guidImage returns the lookup map for the store as it stands, rebuilding it
-// only when the file has moved on.
-func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 	// A lookup never creates the store: reading is not what brings a derived
 	// file into being, and an empty answer sends the caller to the walk.
 	if _, err := os.Stat(u.GUIDStorePath()); err != nil {
@@ -566,40 +570,45 @@ func (u *userIndex) guidImage() (map[[16]byte][]mailbox.GUIDRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	var version guidImageVersion
-	if err := u.withFolderROUnlocked(id, func(fs *folderState) error {
-		version = guidImageVersion{
-			indexID: fs.file.Header.IndexID,
-			nextUID: fs.file.Header.NextUID,
-			records: len(fs.file.Records),
+	for attempt := 0; ; attempt++ {
+		var out []mailbox.GUIDRecord
+		err := u.withFolderHeaderUnlocked(id, func(fs *folderState) error {
+			var ferr error
+			out, ferr = u.guidCopiesFrom(fs, guids)
+			return ferr
+		})
+		switch {
+		case err == nil:
+			return out, nil
+		case errors.Is(err, errGUIDNoChunks), errors.Is(err, errGUIDBaseMoved) && attempt >= baseReadAttempts:
+			return u.guidCopiesByScan(guids)
+		case errors.Is(err, errGUIDBaseMoved):
+			continue
+		case errors.Is(err, errGUIDLookupUnread) && attempt == 0:
+			u.dropGUIDLookup()
+			continue
+		default:
+			return nil, err
 		}
-		return nil
-	}); err != nil {
-		return nil, err
 	}
+}
 
-	u.guid.mu.Lock()
-	if u.guid.image != nil && u.guid.version == version {
-		m := u.guid.image
-		u.guid.mu.Unlock()
-		metricGUIDImageHit.Inc()
-		return m, nil
-	}
-	u.guid.mu.Unlock()
-
+// guidCopiesByScan reads every copy: a view without chunks, or a base that
+// kept moving under the lookup.
+func (u *userIndex) guidCopiesByScan(guids [][16]byte) ([]mailbox.GUIDRecord, error) {
 	recs, err := u.GUIDRecords()
 	if err != nil {
 		return nil, err
 	}
-	m := make(map[[16]byte][]mailbox.GUIDRecord, len(recs))
-	for _, r := range recs {
-		m[r.GUID] = append(m[r.GUID], r)
+	var out []mailbox.GUIDRecord
+	for _, g := range guids {
+		for _, r := range recs {
+			if r.GUID == g {
+				out = append(out, r)
+			}
+		}
 	}
-	u.guid.mu.Lock()
-	u.guid.image, u.guid.version = m, version
-	u.guid.mu.Unlock()
-	metricGUIDImageBuilt.Inc()
-	return m, nil
+	return out, nil
 }
 
 // replaceGUIDStore writes the store from scratch: the file is derived, so this
@@ -613,12 +622,17 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	// the guidmap extension refuses the next append, which loses the copy.
 	complete := make([]byte, guidCompleteHdrSize)
 	if whole {
-		binary.LittleEndian.PutUint64(complete, uint64(time.Now().Unix()))
+		binary.LittleEndian.PutUint64(complete, uint64(nowUnix()))
 	}
 	exts := append(defaultExtensions(1, [16]byte{}), mailindex.Extension{
 		Name: extNameGUIDMap, RecordSize: guidMapRecSize, RecordAlign: 8, ResetID: 1,
 	}, mailindex.Extension{
 		Name: extNameGUIDComplete, HdrSize: guidCompleteHdrSize, HdrData: complete, RecordAlign: 8, ResetID: 1,
+	}, mailindex.Extension{
+		// Written in uid order and saying so, as a flush does: a base without
+		// the mark is read whole to be ordered in memory (#2632).
+		Name: extNameLineage, HdrSize: lineageHdrSize, RecordAlign: lineageRecordAlign,
+		HdrData: encodeLineageHdr(lineageHdr{Lineage: legacyLogLineage + 1, Flags: lineageInUIDOrder}),
 	})
 	layout, err := mailindex.ComputeRecordLayout(exts)
 	if err != nil {
@@ -628,28 +642,31 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	if err != nil {
 		return fmt.Errorf("fileindex/guid-rebuild: extension headers: %w", err)
 	}
-	hdr := mailindex.NewHeader(uint32(time.Now().Unix()))
+	hdr := mailindex.NewHeader(uint32(nowUnix()))
 	hdr.UIDValidity = 1
 	hdr.RecordSize = layout.RecordSize
 	hdr.HeaderSize = uint32(mailindex.HeaderMinSize) + uint32(len(extBytes))
 	hdr.NextUID = uint32(len(copies)) + 1
 
-	records := make([]*mailindex.Record, 0, len(copies))
+	// The records as bytes of the layout, as a base goes to disk.
+	mapID, _ := layout.ExtID(extNameGUIDMap)
+	at := layout.Extensions[mapID].RecordOffset
+	size := int(layout.RecordSize)
+	raw := make([]byte, len(copies)*size)
 	for i, c := range copies {
-		records = append(records, &mailindex.Record{
-			UID: uint32(i + 1),
-			Ext: map[string][]byte{extNameGUIDMap: encodeGUIDMapRec(guidMapRec{
-				GUID: c.GUID, FolderGUID: c.FolderGUID, UID: c.UID,
-				Flags: c.Flags, InternalDate: c.InternalDate, CID: c.CID,
-			})},
-		})
+		rec := raw[i*size : (i+1)*size]
+		binary.LittleEndian.PutUint32(rec, uint32(i+1))
+		copy(rec[at:], encodeGUIDMapRec(guidMapRec{
+			GUID: c.GUID, FolderGUID: c.FolderGUID, UID: c.UID,
+			Flags: c.Flags, InternalDate: c.InternalDate, CID: c.CID,
+		}))
 	}
 
 	u.guid.mu.Lock()
 	defer u.guid.mu.Unlock()
 	if _, err := mailindex.Recreate(mailindex.RecreateInput{
 		Path: u.GUIDStorePath(), Header: hdr, Extensions: layout.Extensions,
-		Records: records,
+		RecordBytes: raw,
 	}); err != nil {
 		return fmt.Errorf("fileindex/guid-rebuild: write: %w", err)
 	}
@@ -662,9 +679,12 @@ func (u *userIndex) replaceGUIDStore(copies []mailbox.GUIDRecord, whole bool) er
 	// keeps them answers from a store nobody has any more (#1986).
 	id := u.guid.id
 	u.guid.id = 0
-	u.guid.image, u.guid.version = nil, guidImageVersion{}
+	u.guid.retireLookupLocked()
 	if id != 0 {
 		u.mu.Lock()
+		if fs := u.open[id]; fs != nil {
+			fs.unpinImage()
+		}
 		delete(u.open, id)
 		u.mu.Unlock()
 	}

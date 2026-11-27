@@ -23,21 +23,22 @@ func (u *userIndex) RepairRecordTails(folderID uint64, tails map[uint32]mailbox.
 			guidRecSize, 1, fs.file.Header.UIDValidity); err != nil {
 			return err
 		}
-		for _, rec := range fs.file.Records {
-			tail, ok := tails[rec.UID]
+		// A repair after damage rewrites the base, not the journal: the
+		// writer's own chunks are changed and the folder is folded.
+		for seq := range fs.recordCount() {
+			uid := fs.recUID(seq)
+			tail, ok := tails[uid]
 			if !ok {
 				continue
 			}
-			if rec.Ext == nil {
-				rec.Ext = map[string][]byte{}
-			}
-			was := decodeVsizeRec(rec.Ext[extNameVsize])
-			rec.Ext[extNameMdbox] = encodeMdboxRec(tail.MapUID, tail.SaveDate)
-			rec.Ext[extNameVsize] = encodeVsizeRec(tail.VSize)
-			rec.Ext[extNameGUID] = encodeGUIDRec(tail.GUID)
+			v, _ := fs.recExt(seq, extNameVsize)
+			was := decodeVsizeRec(v)
+			fs.recSetExt(seq, extNameMdbox, encodeMdboxRec(tail.MapUID, tail.SaveDate))
+			fs.recSetExt(seq, extNameVsize, encodeVsizeRec(tail.VSize))
+			fs.recSetExt(seq, extNameGUID, encodeGUIDRec(tail.GUID))
 			repaired++
 			slog.Info("fileindex: record tail rebuilt from the store",
-				"user", fs.user, "folder", fs.folder, "uid", rec.UID,
+				"user", fs.user, "folder", fs.folder, "uid", uid,
 				"map_uid", tail.MapUID, "size_was", was, "size_now", tail.VSize)
 		}
 		if repaired == 0 {

@@ -6,6 +6,10 @@
 #   KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/store-parallel.sh <label> <out-dir>
 #
 # Runs against whatever image is deployed, right after an ab-arm.sh arm.
+# YARILO_STORE_PROFILE="profile block" takes those pprof captures from every
+# backend pod while each type's run is under way, as store-<label>-<type> in
+# the file names; a block capture needs an arm deployed with the blockprofile
+# overlay. A capture asked for and not taken fails the run.
 
 set -euo pipefail
 
@@ -21,9 +25,15 @@ MSGS="${YARILO_STORE_MSGS:-100}"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../sandbox/creds.sh"
 PASS="${YARILO_STORE_PASS:-$(sandbox_password)}"
 IMAPTEST_IMAGE="${YARILO_IMAPTEST_IMAGE:-dovecot/imaptest:latest}"
+PROFILE="${YARILO_STORE_PROFILE:-}"
+# Inside the run: it starts PROFILE_AFTER seconds in and lasts PROFILE_SECS,
+# so neither the prepare nor the ramp-down is in the sample.
+PROFILE_AFTER=10
+PROFILE_SECS=$(( SECS > 30 ? SECS - 20 : SECS / 2 ))
 
 kube() { kubectl --kubeconfig="$KCFG" -n "$NS" --request-timeout=60s "$@"; }
 mkdir -p "$OUT"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pprof.sh"
 
 # An account the arm fills but its imaptest runs never log in as.
 account() {
@@ -84,14 +94,32 @@ backend_metrics() {
   local pod
   for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
     kube exec "$pod" -c yarilo-imap -- sh -c 'wget -qO- http://127.0.0.1:8080/metrics' 2>/dev/null |
-      grep -E '^(imap_command_seconds_bucket\{command="Store"|yarilo_locks_acquire_wait_seconds_bucket\{resource="mbox")' || true
+      grep -E '^(imap_command_seconds_bucket\{command="Store"|yarilo_locks_acquire_wait_seconds_bucket\{resource="mbox"|process_cpu_seconds_total )' |
+      sed "s/^process_cpu_seconds_total /process_cpu_seconds_total{pod=\"$pod\"} /" || true
   done
+}
+
+# store_cpu prints the imap process's CPU seconds across the run, per pod and
+# in all, from the same two pages: a throughput gap reads apart from a cost
+# gap only beside what the pod spent.
+store_cpu() {
+  awk '
+    $1 !~ /^process_cpu_seconds_total/ { next }
+    FILENAME == ARGV[1] { was[$1] = $2; next }
+    {
+      d = $2 - was[$1]; total += d
+      pod = $1; sub(/.*pod="/, "", pod); sub(/".*/, "", pod)
+      printf "%s=%.2fs ", pod, d
+    }
+    END { printf "imap_cpu=%.2fs\n", total }
+  ' "$1" "$2"
 }
 
 # quantiles prints, per series, the count and the bucket bounds p50 and p99
 # fall under, from the delta between two pages.
 quantiles() {
   awk '
+    $1 !~ /_bucket\{/ { next }
     FILENAME == ARGV[1] { start[$1] += $2; next }
     {
       s = $1; le = $1
@@ -130,8 +158,16 @@ for t in $TYPES; do
   prepare "$user" "$t"
   backend_metrics > "$OUT/store-$LABEL-$t-before.txt"
   manifest "$user" > "$OUT/store-$LABEL-$t.yaml"
+  captures=()
+  for kind in $PROFILE; do
+    ( sleep "$PROFILE_AFTER"; retry_capture "$kind" "store-$LABEL-$t" "$PROFILE_SECS" ) &
+    captures+=($!)
+  done
   KUBECONFIG="$KCFG" YARILO_NS="$NS" bash "$REPO/hack/stand/run-job.sh" store-parallel \
     "$OUT/store-$LABEL-$t.yaml" "$OUT/store-$LABEL-$t-job.log" $(( SECS + 300 ))
+  for pid in ${captures[@]+"${captures[@]}"}; do
+    wait "$pid" || { echo "store-parallel: a $PROFILE capture of $t was not taken" >&2; exit 1; }
+  done
   for box in pusha pushb; do
     kube logs job/store-parallel -c "$box" > "$OUT/store-$LABEL-$t-$box.log" 2>&1
   done
@@ -143,4 +179,5 @@ for t in $TYPES; do
   fi
   echo "store_parallel type=$t user=$user stores=$(( a + b )) per_sec=$(( (a + b) / SECS )) pusha=$a pushb=$b"
   quantiles "$OUT/store-$LABEL-$t-before.txt" "$OUT/store-$LABEL-$t-after.txt" | sed "s/^/store_latency type=$t /"
+  store_cpu "$OUT/store-$LABEL-$t-before.txt" "$OUT/store-$LABEL-$t-after.txt" | sed "s/^/store_cpu type=$t /"
 done

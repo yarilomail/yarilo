@@ -31,6 +31,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.pop3Login.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-pop3-login"
             - name: LOG_LEVEL
@@ -82,7 +83,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.externalTLSVolume" .Values.components.pop3Login.tls.secretName | nindent 8 }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.pop3Login.internalTLS "role" "pop3-login") | nindent 8 }}
         {{- with .Values.extraVolumes }}

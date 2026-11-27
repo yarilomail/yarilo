@@ -19,13 +19,11 @@ func writtenIndex(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for uid := uint32(1); uid <= 2; uid++ {
-		f.Records = append(f.Records, &Record{UID: uid, Ext: map[string][]byte{"modseq": make([]byte, 8)}})
-	}
+	setTestRecs(f, []testRec{{UID: 1}, {UID: 2}})
 	f.Header.MessagesCount = 2
 	f.Header.NextUID = 3
 	path := filepath.Join(t.TempDir(), "yarilo.index")
-	if _, err := Recreate(RecreateInput{Path: path, Header: f.Header, Extensions: f.Extensions, Records: f.Records}); err != nil {
+	if _, err := Recreate(RecreateInput{Path: path, Header: f.Header, Extensions: f.Extensions, RecordBytes: f.Records.Bytes()}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -62,7 +60,7 @@ func TestADamagedBaseIsRefused(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f, err := Read(bytes.NewReader(c.damage(writtenIndex(t))))
 			if err == nil {
-				t.Fatalf("read %d records from a damaged base", len(f.Records))
+				t.Fatalf("read %d records from a damaged base", f.Records.Len())
 			}
 			if c.want != nil && !errors.Is(err, c.want) {
 				t.Errorf("err %v, want %v", err, c.want)
@@ -89,9 +87,9 @@ func TestRecreateRefusesABaseItCouldNotRead(t *testing.T) {
 		"header size off the extensions": func() RecreateInput {
 			h := good.Header
 			h.HeaderSize += 8
-			return RecreateInput{Path: path, Header: h, Extensions: good.Extensions, Records: good.Records}
+			return RecreateInput{Path: path, Header: h, Extensions: good.Extensions, RecordBytes: good.Records.Bytes()}
 		}(),
-		"alignment no layout allows": {Path: path, Header: good.Header, Records: good.Records,
+		"alignment no layout allows": {Path: path, Header: good.Header, RecordBytes: good.Records.Bytes(),
 			Extensions: []Extension{{Name: "odd", RecordSize: 3, RecordAlign: 3}}},
 	} {
 		if _, err := Recreate(in); err == nil {

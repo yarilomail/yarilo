@@ -106,6 +106,9 @@ var _ mailbox.EnvelopeCache = (*Handle)(nil)
 type Options struct {
 	Locker locks.Locker
 	User   string
+	// LockUser keys the cache's lock when it is not User: a shared store's
+	// name, the same for every user who opens it (#2598).
+	LockUser string
 	// SessionID names the session in the lock owner. Required: a cache write
 	// holds the mailbox key, and an anonymous holder is unattributable (#1670).
 	SessionID string
@@ -130,6 +133,10 @@ type Options struct {
 
 // openExclusive retries a shared open that reached a step which writes. Once:
 // the second pass is not shared, so it cannot come back here.
+// afterGenerationBump is a test seam: an open stopped between taking a new
+// generation and dropping the invalid file. Nil everywhere else.
+var afterGenerationBump func() error
+
 func openExclusive(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 	opts.Shared = false
 	return Open(idx, folderID, opts)
@@ -177,7 +184,11 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 	fc.unlock = append(fc.unlock, mailindex.LockCachePath(path, opts.Shared))
 	if lkr := opts.Locker; lkr != nil && opts.User != "" && opts.Folder != "" {
 		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "msgcache"), 35*time.Second)
-		key := locks.MailboxKey(opts.User, opts.Folder)
+		lockUser := opts.User
+		if opts.LockUser != "" {
+			lockUser = opts.LockUser
+		}
+		key := locks.MailboxKey(lockUser, opts.Folder)
 		owner := locks.Owner(opts.User, opts.lockID())
 		var lk locks.Lock
 		var lerr error
@@ -214,14 +225,20 @@ func Open(idx mailbox.UserIndex, folderID uint64, opts Options) *Handle {
 			// would leave the index's stamps pointing into a fresh file,
 			// where the first append to reach one of those offsets answers
 			// its FETCH with another message's record. Enter a new
-			// generation, which kills every stamp in one index write.
-			_ = os.Remove(path)
+			// generation, which kills every stamp in one index write, and
+			// only then drop the file: stopped between the two, a missing
+			// file must not be recreated under the generation the stamps
+			// still name (#2634).
 			newSeq, berr := ic.BumpCacheGeneration(folderID)
+			if berr == nil && afterGenerationBump != nil {
+				berr = afterGenerationBump()
+			}
 			if berr != nil {
 				slog.Debug("msgcache: cache generation bump failed; serving uncached", "trace_id", opts.TraceID, "err", berr)
 				fc.release()
 				return nil
 			}
+			_ = os.Remove(path)
 			resetID = newSeq
 		}
 		cf, cerr := mailindex.CreateCache(path, indexID, resetID)
@@ -293,7 +310,7 @@ func (fc *Handle) flush() {
 	// The session travels: this window is the exclusive one every shared FETCH
 	// now pays, and held_by must name who holds it (#1670).
 	second := Open(r.idx, r.fid, Options{
-		Locker: r.opts.Locker, User: r.opts.User, Folder: r.opts.Folder,
+		Locker: r.opts.Locker, User: r.opts.User, LockUser: r.opts.LockUser, Folder: r.opts.Folder,
 		TraceID: r.opts.TraceID, SessionID: r.opts.SessionID,
 	})
 	if second == nil {

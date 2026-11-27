@@ -4,7 +4,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -57,7 +56,7 @@ var consoleRole = map[string]mtls.Role{
 
 func renderDocs(t *testing.T, args ...string) []k8sDoc {
 	t.Helper()
-	out, err := exec.CommandContext(t.Context(), "helm", append([]string{"template", "yarilo", "../../helm"}, args...)...).Output()
+	out, err := helmOutput(t, append([]string{"template", "yarilo", "../../helm"}, args...)...)
 	if err != nil {
 		t.Fatalf("helm template %v: %v", args, err)
 	}
@@ -95,6 +94,7 @@ func pemCert(t *testing.T, b64 string) *x509.Certificate {
 // Each internal certificate carries its container's own role, chains to its CA and
 // has the pinned name; admin is backend-api only (#2132). Shape, not key stability.
 func TestEveryContainerPresentsItsOwnRole(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -194,8 +194,9 @@ func TestEveryContainerPresentsItsOwnRole(t *testing.T) {
 // Internal TLS is one switch: a per-component flag fails the render and names
 // the key that replaced it, rather than half-enabling TLS (#2138).
 func TestAComponentTLSFlagIsRefused(t *testing.T) {
+	t.Parallel()
 	for _, flag := range []string{"components.auth.internalTLS.enabled=true", "components.backend.internalTLS.enabled=false"} {
-		out, err := exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "--set", flag).CombinedOutput()
+		out, err := helmCombined(t, "template", "yarilo", "../../helm", "--set", flag)
 		if err == nil {
 			t.Errorf("--set %s rendered", flag)
 			continue

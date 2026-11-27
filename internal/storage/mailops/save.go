@@ -108,19 +108,33 @@ func (o *Ops) Save(box mailbox.Box, folder string, f *mailbox.Folder, req SaveRe
 		Flags: req.Flags, Keywords: req.Keywords, Size: uint32(req.Size), VSize: vsize,
 		InternalDate: received, GUID: guid,
 	}
-	if err := box.RecordSaved(f, folder, name, m); err != nil {
+	var named string
+	if rn, ok := box.(savedNamer); ok {
+		named, err = rn.RecordSavedNamed(f, folder, name, m)
+	} else {
+		err = box.RecordSaved(f, folder, name, m)
+	}
+	if err != nil {
 		_ = box.Discard(folder, name, m)
 		return Saved{Folder: f}, fmt.Errorf("mailops/save record: %w", err)
 	}
-	// The driver settles the name inside the record cycle; ask it.
-	if named, nerr := box.MessagePath(folder, m); nerr == nil {
+	if named != "" {
+		name = named
+	} else if named, nerr := box.MessagePath(folder, m); nerr == nil {
+		// A driver that named nothing in the cycle answers for the name.
 		name = named
 	}
 	slog.Debug(o.cfg.Protocol+": save timing", "folder", folder, "uid", m.UID, "size", req.Size,
 		"save_ms", tIndex.Sub(tSave).Milliseconds(), "index_ms", time.Since(tIndex).Milliseconds())
-	o.Committed(f, locks.EventDelivered, m.UID, UsageDelta(m), m.GUID)
+	o.CommittedIn(box, f, locks.EventDelivered, m.UID, UsageDelta(m), m.GUID)
 	o.recordThread(m.GUID, head.buf)
 	return Saved{Meta: m, Folder: f, Filename: name}, nil
+}
+
+// savedNamer records a saved body and answers with the name the record cycle
+// gave its file, so a delivery does not ask the driver to find it (#2639).
+type savedNamer interface {
+	RecordSavedNamed(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) (string, error)
 }
 
 type countingReader struct {

@@ -42,7 +42,9 @@ package threads
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -50,6 +52,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yarilomail/yarilo/v2/internal/sortedfile"
 )
 
 // FileName is the sidecar's name in the user's control directory.
@@ -61,6 +65,8 @@ const (
 	recSubject = "S"
 	recGUID    = "G"
 	recAlias   = "A"
+	// recNext names a full conversation's continuation: N<TAB>full<TAB>next.
+	recNext = "N"
 	// recGen heads a compacted file: C<TAB><generation><TAB><unix-seconds>.
 	//
 	// Compaction rewrites the log, so a position in the old file means nothing
@@ -103,7 +109,16 @@ type State struct {
 	byMessage  map[string]string
 	bySubject  map[string]string
 	byGUID     map[string]string
-	aliasOf    map[string]string
+	// pair is the base under these maps, which then hold the log alone: a
+	// miss is asked of the base by key (THREADS-STORE.md, #2641). Nil for a
+	// whole-log fold.
+	pair *Store
+	// size is each live thread's member count, moved by G records and
+	// aliases: the limit a placement keeps (threading_max_thread).
+	size    map[string]int
+	aliasOf map[string]string
+	// next maps a full conversation to the one that continues it.
+	next map[string]string
 }
 
 // Empty is the state of an account whose sidecar does not exist yet -- which
@@ -115,12 +130,46 @@ func Empty() *State {
 		byMessage: map[string]string{},
 		bySubject: map[string]string{},
 		byGUID:    map[string]string{},
+		size:      map[string]int{},
 		aliasOf:   map[string]string{},
+		next:      map[string]string{},
 	}
 }
 
-// Load folds the log at path. A missing file is not an error: see Empty.
+// Load folds the account whole: the base, when there is one, and the log
+// over it. For the readers that still want every map (JMAP, the cache, the
+// rebuild); a delivery searches the pair instead (store.go).
 func Load(path string) (*State, error) {
+	if _, err := os.Stat(path + BaseSuffix); err != nil {
+		return loadLog(path)
+	}
+	// A base moved under the fold (ESTALE, a short read on NFS) is the pair
+	// opened again, as a lookup does (THREADS-STORE.md §6).
+	for attempt := 1; ; attempt++ {
+		st, err := loadPair(path)
+		if !errors.Is(err, sortedfile.ErrMoved) || attempt >= pairAttempts {
+			return st, err
+		}
+	}
+}
+
+func loadPair(path string) (*State, error) {
+	store, err := OpenStore(path)
+	if err != nil {
+		return nil, err
+	}
+	// The log's maps, with the base under them for what they miss: the
+	// readers ask by key, and nothing of the account is folded.
+	st := store.tail
+	st.pair = store
+	st.records = store.baseRecords() + store.tailRecords
+	st.generation = store.base.Generation
+	return st, nil
+}
+
+// loadLog folds the log at path, the account's whole history when no base
+// sits under it. A missing file is not an error: see Empty.
+func loadLog(path string) (*State, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -138,22 +187,7 @@ func Load(path string) (*State, error) {
 		if len(fields) != 3 {
 			continue // truncated tail or a record shape we do not know
 		}
-		key, val := fields[1], fields[2]
-		switch fields[0] {
-		case recMessage:
-			st.byMessage[key] = val
-		case recSubject:
-			st.bySubject[key] = val
-		case recGUID:
-			st.byGUID[key] = val
-		case recAlias:
-			st.aliasOf[key] = val
-		case recGen:
-			if g, perr := strconv.ParseUint(key, 10, 64); perr == nil {
-				st.generation = g
-			}
-		}
-		st.records++
+		st.apply(fields[0], fields[1], fields[2])
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("threads: read %s: %w", path, err)
@@ -183,9 +217,49 @@ func (s *State) ThreadOfMessage(messageID string) (string, bool) {
 	defer s.mu.RUnlock()
 	id, ok := s.byMessage[messageID]
 	if !ok {
-		return "", false
+		return s.fromBase(secMessage, messageID)
 	}
 	return s.resolve(id), true
+}
+
+// fromBase asks the base under a pair's state: a read that fails is a miss,
+// and the cache, keyed by the log's stat, folds the pair again once a merge
+// has moved it.
+func (s *State) fromBase(sec uint32, key string) (string, bool) {
+	if s.pair == nil || s.pair.base == nil {
+		return "", false
+	}
+	v, ok, err := s.pair.base.Get(sec, []byte(key))
+	if err != nil {
+		slog.Debug("threads: base unreadable, answered as unknown", "path", s.pair.path, "err", err)
+		return "", false
+	}
+	if !ok {
+		return "", false
+	}
+	return s.resolve(string(v)), true
+}
+
+// ThreadSize is how many messages the conversation holds.
+func (s *State) ThreadSize(threadID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.pair != nil {
+		n, _ := s.pair.ThreadSize(threadID)
+		return n
+	}
+	return s.size[s.resolve(threadID)]
+}
+
+// Continuation is the conversation that continues a full one, or "".
+func (s *State) Continuation(threadID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if id, ok := s.next[s.resolve(threadID)]; ok {
+		return s.resolve(id)
+	}
+	id, _ := s.fromBase(secNext, s.resolve(threadID))
+	return id
 }
 
 // ThreadOfSubject implements threading.Known.
@@ -194,7 +268,7 @@ func (s *State) ThreadOfSubject(key string) (string, bool) {
 	defer s.mu.RUnlock()
 	id, ok := s.bySubject[key]
 	if !ok {
-		return "", false
+		return s.fromBase(secSubject, key)
 	}
 	return s.resolve(id), true
 }
@@ -209,7 +283,7 @@ func (s *State) ThreadOfGUID(guid string) (string, bool) {
 func (s *State) threadOfGUID(guid string) (string, bool) {
 	id, ok := s.byGUID[guid]
 	if !ok {
-		return "", false
+		return s.fromBase(secGUID, guid)
 	}
 	return s.resolve(id), true
 }
@@ -223,6 +297,14 @@ func (s *State) GUIDsOfThread(threadID string) []string {
 }
 
 func (s *State) guidsOfThread(threadID string) []string {
+	if s.pair != nil {
+		out, err := s.pair.Members(threadID)
+		if err != nil {
+			slog.Debug("threads: base unreadable, members answered from the log", "path", s.pair.path, "err", err)
+		}
+		sort.Strings(out)
+		return out
+	}
 	want := s.resolve(threadID)
 	var out []string
 	for guid, id := range s.byGUID {
@@ -246,6 +328,13 @@ func (s *State) threads() []string {
 	for _, id := range s.byGUID {
 		seen[s.resolve(id)] = true
 	}
+	if s.pair != nil {
+		_ = s.pair.baseThreads(func(id string) {
+			if _, gone := s.aliasOf[id]; !gone {
+				seen[id] = true
+			}
+		})
+	}
 	out := make([]string, 0, len(seen))
 	for id := range seen {
 		out = append(out, id)
@@ -262,6 +351,8 @@ type Placement struct {
 	ThreadID   string
 	// MergedFrom are threads this message folded into ThreadID.
 	MergedFrom []string
+	// ContinuesFrom is the full conversation ThreadID, new, continues.
+	ContinuesFrom string
 }
 
 // Append writes a placement to the log and applies it to s.
@@ -306,6 +397,9 @@ func Append(path string, s *State, p Placement) error {
 	if p.SubjectKey != "" {
 		writeRec(&b, recSubject, p.SubjectKey, p.ThreadID)
 	}
+	if p.ContinuesFrom != "" {
+		writeRec(&b, recNext, p.ContinuesFrom, p.ThreadID)
+	}
 	writeRec(&b, recGUID, p.GUID, p.ThreadID)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -326,39 +420,35 @@ func Append(path string, s *State, p Placement) error {
 	// Apply after the write succeeded, so an in-memory state never claims a
 	// placement the file does not carry -- and all at once, so a reader sees
 	// the placement with its alias or neither.
+	s.applyPlacement(p)
+	return nil
+}
+
+// applyPlacement takes a placement the file already carries into the maps.
+func (s *State) applyPlacement(p Placement) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.records += recordsIn(p)
-	s.byGUID[p.GUID] = p.ThreadID
+	// In the order Append writes them, so the counts move as a fold of the
+	// file moves them.
+	for _, old := range p.MergedFrom {
+		s.applyLocked(recAlias, old, p.ThreadID)
+	}
 	if p.MessageID != "" {
-		s.byMessage[p.MessageID] = p.ThreadID
+		s.applyLocked(recMessage, p.MessageID, p.ThreadID)
 	}
 	if p.SubjectKey != "" {
-		s.bySubject[p.SubjectKey] = p.ThreadID
+		s.applyLocked(recSubject, p.SubjectKey, p.ThreadID)
 	}
-	for _, old := range p.MergedFrom {
-		s.aliasOf[old] = p.ThreadID
+	if p.ContinuesFrom != "" {
+		s.applyLocked(recNext, p.ContinuesFrom, p.ThreadID)
 	}
-	return nil
+	s.applyLocked(recGUID, p.GUID, p.ThreadID)
 }
 
 // writeRec appends one record. Values are flattened rather than escaped: a
 // TAB inside a Message-ID or a subject key would shift the fields, and this
 // file is read by position. Message-IDs do not legally contain one, and a
 // subject key that does is a malformed header, not a record shape.
-// recordsIn counts the records one placement writes, so the in-memory state
-// stays at the same position as the file it just extended.
-func recordsIn(p Placement) int {
-	n := 1 // the G record
-	if p.MessageID != "" {
-		n++
-	}
-	if p.SubjectKey != "" {
-		n++
-	}
-	return n + len(p.MergedFrom)
-}
-
 func writeRec(b *strings.Builder, typ, key, val string) {
 	b.WriteString(typ)
 	b.WriteByte('\t')
@@ -394,6 +484,9 @@ func Compact(path string, s *State) error {
 	}
 	for key, id := range s.bySubject {
 		recs = append(recs, record(recSubject, key, s.resolve(id)))
+	}
+	for full, id := range s.next {
+		recs = append(recs, record(recNext, s.resolve(full), s.resolve(id)))
 	}
 	// Sorted, so two processes compacting the same state produce byte-identical
 	// files -- the same rule the subscriptions file follows.
@@ -432,6 +525,11 @@ func Compact(path string, s *State) error {
 		os.Remove(tmp) //nolint:errcheck
 		return fmt.Errorf("threads: rename %s: %w", tmp, err)
 	}
+	// The log now holds the whole history: a base under it would pair with a
+	// log that continues none of it.
+	if err := os.Remove(path + BaseSuffix); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("threads: drop the base under %s: %w", path, err)
+	}
 	// The file now carries resolved values, so the live state must too --
 	// BOTH halves. Dropping the aliases while leaving the maps pointing at
 	// swallowed threads is worse than doing nothing: the next delivery
@@ -448,6 +546,11 @@ func Compact(path string, s *State) error {
 	for k, id := range s.bySubject {
 		s.bySubject[k] = s.resolve(id)
 	}
+	next := make(map[string]string, len(s.next))
+	for full, id := range s.next {
+		next[s.resolve(full)] = s.resolve(id)
+	}
+	s.next = next
 	for old := range s.aliasOf {
 		delete(s.aliasOf, old)
 	}
@@ -536,6 +639,14 @@ func (s *State) Head() int {
 // streams: a client asking "what changed since a moment ago" reads the tail,
 // not the account.
 func ChangesSince(path string, since int) (Changes, error) {
+	if _, err := os.Stat(path + BaseSuffix); err == nil {
+		return changesSincePair(path, since)
+	}
+	return changesSinceLog(path, since)
+}
+
+// changesSinceLog is ChangesSince over a log that is the whole history.
+func changesSinceLog(path string, since int) (Changes, error) {
 	ch := Changes{Head: since}
 	f, err := os.Open(path)
 	if err != nil {

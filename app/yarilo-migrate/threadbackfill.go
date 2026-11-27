@@ -14,6 +14,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
+	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
@@ -34,6 +35,8 @@ type threadOpts struct {
 	MailTmpl   string
 	DryRun     bool
 	Force      bool
+	// maxThread is threading_max_thread: a rebuild places as delivery does.
+	maxThread int
 }
 
 type threadStats struct {
@@ -58,6 +61,10 @@ func runThreadBackfillInto(o threadOpts, st *threadStats) error {
 	cfg, err := guidConfig(o.ConfigPath)
 	if err != nil {
 		return err
+	}
+	o.maxThread = cfg.Threading.ThreadingMaxThread
+	if o.ConfigPath == "" {
+		o.maxThread = config.Defaults().Threading.ThreadingMaxThread // as a delivery without a file places
 	}
 	locker, err := guidLocker(cfg)
 	if err != nil {
@@ -195,7 +202,7 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 		// Already built. Rebuilding is a whole-file replacement, so it is
 		// asked for rather than assumed: a rerun over a live deployment adds
 		// what the sidecar lacks and leaves the rest as the deliveries made it.
-		added, err := supplementSidecar(userBox, idx, names, path, user, o.DryRun, st)
+		added, err := supplementSidecar(userBox, idx, names, path, user, o.DryRun, o.maxThread, st)
 		if err != nil {
 			return err
 		}
@@ -208,7 +215,7 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 	}
 
 	before := st.Messages
-	state, err := buildSidecar(userBox, idx, names, path, user, st)
+	state, err := buildSidecar(userBox, idx, names, path, user, o.maxThread, st)
 	if err != nil {
 		return err
 	}
@@ -230,6 +237,10 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 	if err := os.Rename(path+".rebuild", path); err != nil {
 		return fmt.Errorf("install %s: %w", path, err)
 	}
+	// The old base belongs to the replaced log: left in place it breaks the pair.
+	if err := os.Remove(path + threads.BaseSuffix); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove the old base of %s: %w", path, err)
+	}
 	slog.Info("thread backfill: built", "user", user, "folders", len(names),
 		"messages", messages, "threads", len(state.Threads()), "path", path)
 	return nil
@@ -244,7 +255,7 @@ func threadUserLocked(boxBE mailbox.MailboxBackend, byDriver func(string) mailbo
 // mailbox in whatever order the filesystem offered would produce different
 // thread ids from the same history -- and every client's cached conversation
 // would be wrong after a rerun.
-func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string, path, user string, st *threadStats) (*threads.State, error) {
+func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string, path, user string, maxThread int, st *threadStats) (*threads.State, error) {
 	mbox := mailboxbase.Open(box, idx)
 	ordered := append([]string(nil), names...)
 	sort.Strings(ordered)
@@ -280,7 +291,7 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 				continue
 			}
 			st.Messages++
-			p := threads.PlacementFor(state, mailbox.FormatObjectID(m.GUID), head)
+			p := threads.PlacementFor(state, mailbox.FormatObjectID(m.GUID), head, maxThread)
 			// Written even on a dry run, and deliberately: Append is what
 			// applies a placement to the state, so skipping it leaves every
 			// later message seeing "nothing to join" and the run reporting
@@ -299,7 +310,7 @@ func buildSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string
 // supplementSidecar adds to an existing sidecar the messages it has no record
 // of, a save's timed-out lock among them (#2420), in the rebuild's order. A
 // dry run counts them and writes nothing.
-func supplementSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string, path, user string, dryRun bool, st *threadStats) (int, error) {
+func supplementSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []string, path, user string, dryRun bool, maxThread int, st *threadStats) (int, error) {
 	state, err := threads.Load(path)
 	if err != nil {
 		return 0, err
@@ -338,7 +349,7 @@ func supplementSidecar(box mailbox.UserMailbox, idx mailbox.UserIndex, names []s
 			if dryRun {
 				continue
 			}
-			if aerr := threads.Append(path, state, threads.PlacementFor(state, guid, head)); aerr != nil {
+			if aerr := threads.Append(path, state, threads.PlacementFor(state, guid, head, maxThread)); aerr != nil {
 				return added, fmt.Errorf("append %s: %w", name, aerr)
 			}
 		}

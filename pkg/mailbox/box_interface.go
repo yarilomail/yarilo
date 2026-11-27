@@ -23,8 +23,11 @@ type Box interface {
 	Readable(m *MessageMeta) bool
 	// MessagePath is the file a record names.
 	MessagePath(folder string, m *MessageMeta) (string, error)
-	// OpenMessage opens the body a record names.
+	// OpenMessage opens the body a record names. A body gone with its record
+	// (expunged after the caller read the record) is ErrExpunged.
 	OpenMessage(folder string, m *MessageMeta) (io.ReadCloser, error)
+	// RawMessage is the body as stored, under the same rule.
+	RawMessage(folder string, m *MessageMeta) (RawBody, error)
 	// RFC822Size is the size a client is told.
 	RFC822Size(folder string, m *MessageMeta) uint32
 	// MessageSize is both numbers a record reports.
@@ -92,7 +95,7 @@ type Box interface {
 	// Begin opens one command's changes to a folder.
 	Begin(folderID uint64) (BoxTx, error)
 	// Vanished are the uids expunged past sinceModSeq, for QRESYNC.
-	Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error)
+	Vanished(folderID uint64, sinceModSeq uint64) (uids []uint32, reaches bool, err error)
 	// VanishedGUIDs are the messages expunged past sinceModSeq, by identity;
 	// complete is false when some cannot be named.
 	VanishedGUIDs(folderID uint64, sinceModSeq uint64) (copies []ExpungedCopy, complete bool, err error)
@@ -147,4 +150,12 @@ func Counting(b Box) Box {
 		return c.CountingBox()
 	}
 	return b
+}
+
+// RangeReader is a body reader that also reads at any offset of the
+// plaintext, so a partial fetch need not read the message from its start.
+// An encrypted body answers it chunk by chunk.
+type RangeReader interface {
+	io.ReaderAt
+	Size() int64
 }

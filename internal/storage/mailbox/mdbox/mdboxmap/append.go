@@ -71,7 +71,10 @@ func (m *Map) appendRecordsLocked(layouts []RecordLayout) ([]uint32, error) {
 	added := make([]MapEntry, 0, len(layouts))
 	for i, l := range layouts {
 		e := MapEntry{UID: m.nextMapUID, FileID: l.FileID, Offset: l.Offset, Size: l.Size, RefCount: 1, GUID: l.GUID}
-		m.st.insert(e)
+		if err := m.st.put(e); err != nil {
+			m.invalidateLocked()
+			return nil, err
+		}
 		added = append(added, e)
 		m.nextMapUID++
 		if l.FileID > m.highestFileID {
@@ -90,7 +93,7 @@ func (m *Map) ImportOnce(fn func() ([]RecordLayout, error)) (int, error) {
 		if err := m.reloadLocked(); err != nil {
 			return err
 		}
-		if m.st.count() > 0 {
+		if m.st.count > 0 {
 			return nil
 		}
 		layouts, err := fn()
@@ -103,7 +106,10 @@ func (m *Map) ImportOnce(fn func() ([]RecordLayout, error)) (int, error) {
 		added := make([]MapEntry, 0, len(layouts))
 		for _, l := range layouts {
 			e := MapEntry{UID: m.nextMapUID, FileID: l.FileID, Offset: l.Offset, Size: l.Size, RefCount: 1, GUID: l.GUID}
-			m.st.insert(e)
+			if err := m.st.put(e); err != nil {
+				m.invalidateLocked()
+				return err
+			}
 			added = append(added, e)
 			m.nextMapUID++
 			if l.FileID > m.highestFileID {
@@ -187,7 +193,9 @@ func (p *Placement) RecordFileCreated(fileID uint32, ts int64) error {
 }
 
 // RecordsInFile is RecordsInFile under this hold.
-func (p *Placement) RecordsInFile(fileID uint32) []MapEntry { return p.m.recordsInFileLocked(fileID) }
+func (p *Placement) RecordsInFile(fileID uint32) ([]MapEntry, error) {
+	return p.m.recordsInFileLocked(fileID)
+}
 
 // AppendMove is AppendMove under this hold, refused once the lease is lost.
 func (p *Placement) AppendMove(moved []MovedRecord, expunged []uint32) error {
@@ -294,7 +302,10 @@ func (b *AppendBatch) Finish() ([]uint32, error) {
 				maxFileID = fileID
 			}
 			e := MapEntry{UID: b.m.nextMapUID, FileID: fileID, Offset: p.offset, Size: p.size, RefCount: 1, GUID: p.guid}
-			b.m.st.insert(e)
+			if err := b.m.st.put(e); err != nil {
+				b.m.invalidateLocked()
+				return err
+			}
 			added = append(added, e)
 			b.m.nextMapUID++
 			mapUIDs[i] = e.UID

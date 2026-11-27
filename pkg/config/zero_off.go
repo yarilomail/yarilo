@@ -25,6 +25,7 @@ func offKeys(cfg *Config) []intKey {
 		{"storage.mail_cache_purge_delete_percentage", &cfg.Storage.MailCachePurgeDeletePercentage},
 		{"storage.mail_cache_purge_continued_percentage", &cfg.Storage.MailCachePurgeContinuedPercentage},
 		{"storage.mail_index_log_rotate_min_age", &cfg.Storage.MailIndexLogRotateMinAge},
+		{"storage.mail_index_log2_max_age", &cfg.Storage.MailIndexLog2MaxAge},
 		{"storage.max_concurrent_writes", &cfg.Storage.MaxConcurrentWrites},
 		{"auth_service.auth_startup_wait", &cfg.AuthService.StartupWaitSeconds},
 		{"locks_client.locks_client_startup_wait", &cfg.LocksClient.StartupWaitSeconds},
@@ -76,6 +77,8 @@ func offKeys(cfg *Config) []intKey {
 		{"protocol.managesieve.max_invalid_commands", &cfg.Protocol.ManageSieve.MaxInvalidCommands},
 		{"sieve.sieve_max_script_size", &cfg.Sieve.MaxScriptSize},
 		{"sieve.sieve_max_redirects", &cfg.Sieve.MaxRedirects},
+		{"sieve.sieve_send_rate_limit", &cfg.Sieve.SendRateLimit},
+		{"sieve.sieve_redirect_duplicate_period", &cfg.Sieve.RedirectDuplicatePeriod},
 		{"sieve.sieve_max_num_scripts", &cfg.Sieve.MaxScripts},
 		{"sieve.sieve_max_storage", &cfg.Sieve.MaxStorage},
 		{"sieve.sieve_max_actions", &cfg.Sieve.MaxActions},
@@ -108,6 +111,7 @@ func requiredKeys(cfg *Config) []intKey {
 	d := &cfg.DirectorService
 	return []intKey{
 		{"general.haproxy.timeout", &cfg.General.HAProxy.Timeout},
+		{"threading.threading_max_thread", &cfg.Threading.ThreadingMaxThread},
 		{"general.startup_dial_retries", &cfg.General.StartupDialRetries},
 		{"sasl_login.haproxy_timeout", &cfg.SASLLogin.HAProxyTimeout},
 		{"managesieve_login_service.haproxy_timeout", &cfg.ManageSieveLoginService.HAProxyTimeout},
@@ -183,6 +187,9 @@ func checkNumbers(cfg *Config) error {
 		if v <= 0 {
 			return fmt.Errorf("config: %s: %g; it must be positive (leave it out for the default)", path, v)
 		}
+	}
+	if n := cfg.Threading.ThreadingMaxThread; n > MaxThreadMembers {
+		return fmt.Errorf("config: threading.threading_max_thread: %d is more than one stored conversation holds (%d)", n, MaxThreadMembers)
 	}
 	if w := cfg.Telemetry.LivenessWatchdog; w.TimeoutSeconds >= w.IntervalSeconds {
 		return fmt.Errorf("config: telemetry.liveness_watchdog: timeout %d must stay below interval %d", w.TimeoutSeconds, w.IntervalSeconds)

@@ -3,6 +3,7 @@ package imap
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -179,7 +180,11 @@ func (s *session) scanForOrdering(kind imapserver.NumKind, criteria *imaplib.Sea
 			metricUnreadable.WithLabelValues(command, reason).Add(float64(n))
 		}
 		example := append(append([]uint32(nil), unreadable...), detached...)[0]
-		slog.Warn("imap: could not read some messages; the answer is wrong about them",
+		level := unreadableLevelOf(byReason)
+		if len(detached) > 0 {
+			level = slog.LevelWarn
+		}
+		slog.Log(context.Background(), level, "imap: could not read some messages; the answer is wrong about them",
 			"command", command,
 			"user", s.userInfo.Username,
 			"folder", s.folder.Name,

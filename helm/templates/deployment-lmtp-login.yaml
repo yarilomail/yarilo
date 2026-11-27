@@ -31,6 +31,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.lmtpLogin.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-lmtp-login"
             - name: LOG_LEVEL
@@ -76,7 +77,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.lmtpLogin.internalTLS "role" "lmtp-login") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

@@ -160,6 +160,7 @@ func (s *Server) openSpecialUseStoreReq(w http.ResponseWriter, r *http.Request, 
 		uc.lockOwner(),
 		s.opts.Locker,
 		s.opts.SpecialUseDefaults)
+	store.SetLockName(bundle.info.LockName)
 	// One owner of NFC for all three special-use handlers, resolved here so
 	// none of them addresses a decomposed spelling of a folder (#1113).
 	req.Folder = mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)

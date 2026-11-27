@@ -37,6 +37,7 @@ import (
 	"time"
 
 	ftsquery "github.com/yarilomail/yarilo/v2/internal/fts/query"
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/pkg/authclient"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/dict"
@@ -48,8 +49,9 @@ import (
 // Server is the backend-API HTTP server. Construct with New, then call
 // Serve (mTLS-terminated TLS listener) or ListenAndServe (plain).
 type Server struct {
-	opts Options
-	mux  *http.ServeMux
+	opts  Options
+	mux   *http.ServeMux
+	crypt cryptJobs
 }
 
 // Options configures Server.
@@ -123,6 +125,10 @@ type Options struct {
 	FTSClient ftsproto.Client
 	// FTSChain expands a lookup's text the way IMAP SEARCH does; nil refuses it.
 	FTSChain ftsquery.Expander
+
+	// Crypt is the storage's encryption layer, the one the stores are built
+	// with; the crypt endpoints classify and report keys through it.
+	Crypt *mailcrypt.Layer
 }
 
 // mailboxForDriver returns the MailboxBackend for driver, using opts.Mailbox
@@ -179,6 +185,7 @@ func New(opts Options) *Server {
 	s.registerWhoRoutes()
 	s.registerSessionRoutes()
 	s.registerFTSRoutes()
+	s.registerCryptRoutes()
 	return s
 }
 

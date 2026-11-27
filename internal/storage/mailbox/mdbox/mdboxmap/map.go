@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -213,6 +214,7 @@ func Open(dir, username string, opts ...Option) (*Map, error) {
 func (m *Map) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.st.base.release()
 	m.st = store{}
 	m.loaded = false
 	return nil
@@ -271,28 +273,44 @@ func (m *Map) loadOrInit() error {
 	return nil
 }
 
-// readBaseLocked reads the whole fixed-width base into memory. The records need
-// no parsing: the byte area is the lookup structure.
+// readBaseLocked opens the base and reads its header; the records stay in the
+// file and are read by position when asked for.
 func (m *Map) readBaseLocked() error {
-	data, err := os.ReadFile(m.path)
+	f, err := os.Open(m.path)
 	if err != nil {
 		return fmt.Errorf("mdboxmap/load: read: %w", err)
 	}
-	h, err := decodeBaseHeader(data)
+	st, err := f.Stat()
 	if err != nil {
+		f.Close() //nolint:errcheck
+		return fmt.Errorf("mdboxmap/load: stat: %w", err)
+	}
+	b := &baseRecords{r: f, f: f, off: baseHeaderLen}
+	b.refs.Store(1)
+	buf := make([]byte, baseHeaderLen)
+	if n, rerr := f.ReadAt(buf, 0); n < len(buf) {
+		b.release()
+		if rerr == nil || errors.Is(rerr, io.EOF) {
+			return errUnknownBaseVersion{}
+		}
+		return fmt.Errorf("mdboxmap/load: read: %w", rerr)
+	}
+	h, err := decodeBaseHeader(buf)
+	if err != nil {
+		b.release()
 		return err
 	}
-	want := baseHeaderLen + int(h.RecordCount)*baseRecordLen
-	if len(data) < want {
-		return fmt.Errorf("mdboxmap/load: base holds %d bytes, header claims %d records", len(data), h.RecordCount)
+	if want := int64(baseHeaderLen) + int64(h.RecordCount)*baseRecordLen; st.Size() < want {
+		b.release()
+		return fmt.Errorf("mdboxmap/load: base holds %d bytes, header claims %d records", st.Size(), h.RecordCount)
 	}
-	m.st.recs = data[baseHeaderLen:want]
+	b.n, b.next, b.digest, b.checked = int(h.RecordCount), h.NextMapUID, h.RecordsDigest, true
+	m.st.base.release()
+	m.st = store{base: b, count: b.n}
 	m.loaded = true
 	m.onDisk = FormatV2
 	m.applyHeaderLocked(h)
-	if st, serr := os.Stat(m.path); serr == nil {
-		m.baseInfo = st
-	}
+	m.baseInfo = st
 	return nil
 }
 
@@ -311,11 +329,11 @@ func (m *Map) applyHeaderLocked(h baseHeader) {
 	m.foldedOffset = int64(h.FoldedOffset)
 }
 
-func (m *Map) headerLocked() baseHeader {
+func (m *Map) headerLocked(count int, digest uint64) baseHeader {
 	return baseHeader{
 		Version:       baseVersion2,
 		RecordSize:    baseRecordLen,
-		RecordCount:   uint32(m.st.count()),
+		RecordCount:   uint32(count),
 		NextMapUID:    m.nextMapUID,
 		HighestFileID: m.highestFileID,
 		RebuildCount:  m.rebuildCount,
@@ -324,7 +342,7 @@ func (m *Map) headerLocked() baseHeader {
 		FoldedOffset:  uint64(m.foldedOffset),
 		FoldedLineage: m.foldedLineage,
 		Lineage:       m.lineage,
-		RecordsDigest: digestRecords(m.st.recs),
+		RecordsDigest: digest,
 		IndexID:       m.indexID,
 	}
 }
@@ -333,6 +351,7 @@ func (m *Map) headerLocked() baseHeader {
 // fallback after a corrupt file is moved aside by the admin rebuild flow.
 func (m *Map) createFresh() error {
 	m.indexID = uint32(time.Now().Unix())
+	m.st.base.release()
 	m.st = store{}
 	m.loaded = true
 	m.nextMapUID = 1
@@ -346,28 +365,70 @@ func (m *Map) createFresh() error {
 // baseTmpSeq gives concurrent base writers unique tmp names.
 var baseTmpSeq atomic.Uint64
 
-// writeBaseLocked rewrites the whole base atomically (.tmp + rename), so a
-// reader either sees the previous file or the new one, never a half-written mix.
-func (m *Map) writeBaseLocked() error {
+// writeBaseLocked rewrites the base from the records as this handle sees them,
+// streamed through keep (nil keeps all), and takes the new file as its base.
+func (m *Map) writeBaseLocked(keep func(*MapEntry) bool) error {
 	if m.format == FormatV1 {
-		return m.writeBaseV1Locked()
+		return m.writeBaseV1Locked(keep)
 	}
-	// One name per writer. A shared "<path>.tmp" makes two writers race for the
-	// same file: the winner's rename consumes it and the loser's rename fails
-	// with ENOENT on a write that had nothing wrong with it (#1575).
+	// One name per writer: a shared tmp lets two writers race for it (#1575).
 	tmp := fmt.Sprintf("%s.tmp.%d.%d", m.path, os.Getpid(), baseTmpSeq.Add(1))
-	buf := make([]byte, 0, baseHeaderLen+len(m.st.recs))
-	buf = append(buf, encodeBaseHeader(m.headerLocked())...)
-	buf = append(buf, m.st.recs...)
-	if err := os.WriteFile(tmp, buf, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
 		return fmt.Errorf("mdboxmap/write: tmp: %w", err)
 	}
+	fail := func(err error) error {
+		f.Close()      //nolint:errcheck
+		os.Remove(tmp) //nolint:errcheck
+		return fmt.Errorf("mdboxmap/write: %w", err)
+	}
+	sn := m.st.snapshot()
+	defer sn.release()
+	if _, err := f.Write(make([]byte, baseHeaderLen)); err != nil {
+		return fail(err)
+	}
+	n, sum, err := writeRecords(f, sn, keep)
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := f.WriteAt(encodeBaseHeader(m.headerLocked(n, sum)), 0); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	noteSync("file")
+	if err := f.Close(); err != nil {
+		os.Remove(tmp) //nolint:errcheck
+		return fmt.Errorf("mdboxmap/write: %w", err)
+	}
 	if err := os.Rename(tmp, m.path); err != nil {
-		_ = os.Remove(tmp)
+		os.Remove(tmp) //nolint:errcheck
 		return fmt.Errorf("mdboxmap/write: rename: %w", err)
 	}
-	m.onDisk = FormatV2
-	return nil
+	if err := syncDir(filepath.Dir(m.path)); err != nil {
+		return fmt.Errorf("mdboxmap/write: sync dir: %w", err)
+	}
+	return m.readBaseLocked()
+}
+
+// syncSeam is a test seam seeing each sync a base write makes. Nil elsewhere.
+var syncSeam func(what string)
+
+func noteSync(what string) {
+	if syncSeam != nil {
+		syncSeam(what)
+	}
+}
+
+func syncDir(dir string) error {
+	defer noteSync("dir")
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close() //nolint:errcheck
+	return d.Sync()
 }
 
 // applyLogTailLocked brings the handle to the end of the log belonging to the
@@ -397,46 +458,6 @@ func (m *Map) sameBaseLocked(st os.FileInfo) bool {
 	return os.SameFile(m.baseInfo, st) &&
 		st.Size() == m.baseInfo.Size() &&
 		st.ModTime().Equal(m.baseInfo.ModTime())
-}
-
-// peekHeaderLocked reads the 80-byte header without the record area. Deciding
-// whether a rewritten base needs reading at all costs one short positional read.
-func (m *Map) peekHeaderLocked() (baseHeader, error) {
-	f, err := os.Open(m.path)
-	if err != nil {
-		return baseHeader{}, fmt.Errorf("mdboxmap/peek: open: %w", err)
-	}
-	defer f.Close()
-	buf := make([]byte, baseHeaderLen)
-	if _, err := f.ReadAt(buf, 0); err != nil {
-		return baseHeader{}, fmt.Errorf("mdboxmap/peek: read: %w", err)
-	}
-	return decodeBaseHeader(buf)
-}
-
-// adoptFoldLocked takes a rewritten base without reading it, only when it is this
-// handle's state folded flat: same log, no further, records hashing to memory.
-// The digest is what keeps that honest without a list of the paths that rewrite.
-func (m *Map) adoptFoldLocked(h baseHeader, baseInfo os.FileInfo) bool {
-	if h.FoldedLineage != m.logLineage || m.logSize < int64(h.FoldedOffset) {
-		return false
-	}
-	if h.RecordsDigest != digestRecords(m.st.recs) {
-		return false
-	}
-	m.applyHeaderLocked(h)
-	m.logLineage = h.Lineage
-	m.logSize = 0
-	m.baseInfo = baseInfo
-	return true
-}
-
-// findExtLocked resolves a map_uid to its index in the record area.
-func (m *Map) findLocked(uid uint32) (int, bool) {
-	if !m.loaded {
-		return 0, false
-	}
-	return m.st.find(uid)
 }
 
 // withMapLock runs fn under the per-process Mutex and the cross-process map X
@@ -511,7 +532,7 @@ func (m *Map) withMapLockRenewing(fn func(context.Context) error) error {
 	noteSpan(spanWaitStart)
 	start := time.Now()
 	err := locks.WithLockWaiting(locks.WithSite(context.Background(), "mdbox-map"), m.locker, key, m.owner,
-		mapLockTTL, mapLockRenew, 35*time.Second, func(ctx context.Context) error {
+		mapLockTTL, mapLockRenew, MapLockWait, func(ctx context.Context) error {
 			metricMapLockAcquire.Observe(time.Since(start).Seconds())
 			noteSpan(spanWaitEnd)
 			return heldSpan(func() error { return fn(ctx) })
@@ -558,7 +579,10 @@ func SetTestLogRemoval(fn func(string) error) func() {
 
 // flushLocked rewrites the base and drops the log; caller MUST hold m.mu. Base
 // first, carrying the offset it folded, or a crash between them doubles deltas.
-func (m *Map) flushLocked() (err error) {
+func (m *Map) flushLocked() error { return m.foldLocked(nil) }
+
+// foldLocked is flushLocked with every record passed through keep on the way.
+func (m *Map) foldLocked(keep func(*MapEntry) bool) (err error) {
 	start := time.Now()
 	defer func() {
 		metricMapFlush.Inc()
@@ -575,7 +599,7 @@ func (m *Map) flushLocked() (err error) {
 	}
 	m.foldedLineage, m.foldedOffset = seq, size
 	m.lineage++
-	if err := m.writeBaseLocked(); err != nil {
+	if err := m.writeBaseLocked(keep); err != nil {
 		return err
 	}
 	if err := removeLog(m.logPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -682,6 +706,9 @@ func (m *Map) BumpRebuildCount() error {
 	})
 }
 
+// reloadStatSeam is a test seam run after a reload's checks. Nil elsewhere.
+var reloadStatSeam func()
+
 // reloadLocked refreshes incrementally: the base only when changed, else the log
 // tail. Caller holds m.mu; readers need no cross-process lock, a torn tail stops.
 func (m *Map) reloadLocked() error {
@@ -694,13 +721,18 @@ func (m *Map) reloadLocked() error {
 
 	statStart := time.Now()
 	baseStat, baseErr := os.Stat(m.path)
-	var logSize int64
-	if st, _ := os.Stat(m.logPath()); st != nil {
-		logSize = st.Size()
+	// The log by its lineage, which every fold renews: a size, or a file's
+	// identity the filesystem reuses, cannot tell a new log from the old (#2660).
+	logSeq, logSize, lerr := m.logIdentityLocked()
+	if lerr != nil {
+		return fmt.Errorf("mdboxmap/reload: %w", lerr)
 	}
 	m.observePart("stat", time.Since(statStart))
+	if reloadStatSeam != nil {
+		reloadStatSeam()
+	}
 
-	sameBase := m.loaded && m.sameBaseLocked(baseStat)
+	sameBase := m.loaded && m.sameBaseLocked(baseStat) && (logSeq == 0 || logSeq == m.logLineage)
 	// A log shrinks only by being folded, so it signals change without a clock --
 	// a rewrite inside one timestamp tick leaves the mtime where it was.
 	logShrank := logSize < m.logSize
@@ -711,30 +743,25 @@ func (m *Map) reloadLocked() error {
 		return nil
 	}
 
-	// The base file moved. Either it was rewritten by someone, or this is the
-	// first load; the 80-byte header says which, and whether the records it now
-	// holds are the ones already in memory.
+	// The base moved: its header alone says what to replay on top, so taking a
+	// rewrite costs the same whoever wrote it.
 	if !m.loaded || !sameBase || logShrank {
 		if baseErr != nil {
 			return fmt.Errorf("mdboxmap/reload: %w", baseErr)
 		}
-		if m.loaded && m.onDisk == FormatV2 && m.format == FormatV2 {
-			h, herr := m.peekHeaderLocked()
-			if herr != nil {
-				return fmt.Errorf("mdboxmap/reload: %w", herr)
-			}
-			if m.adoptFoldLocked(h, baseStat) {
-				metricMapReload.WithLabelValues("fold").Inc()
-				// The writer that folded may already have appended to the log of
-				// the lineage it started; leaving here carries that tail into
-				// the next check, which is what purge runs before unlinking.
-				return m.applyLogTailLocked()
-			}
+		prevLog, prevSize, wasLoaded := m.logLineage, m.logSize, m.loaded
+		err := m.readBaseLocked()
+		if isForeignBase(err) {
+			err = m.readBaseV1Locked()
 		}
-		metricMapReload.WithLabelValues("reopen").Inc()
-		if err := m.readBaseLocked(); err != nil {
+		if err != nil {
 			return fmt.Errorf("mdboxmap/reload: %w", err)
 		}
+		kind := "reopen"
+		if wasLoaded && m.onDisk == FormatV2 && m.foldedLineage == prevLog && prevSize >= m.foldedOffset {
+			kind = "fold"
+		}
+		metricMapReload.WithLabelValues(kind).Inc()
 		return m.applyLogTailLocked()
 	}
 
@@ -742,6 +769,11 @@ func (m *Map) reloadLocked() error {
 	if logSize > m.logSize {
 		metricMapReload.WithLabelValues("replay").Inc()
 		applied, err := m.replayLogLocked(m.logSize)
+		if errors.Is(err, errLogMoved) {
+			// A fold between the check and the open: taken as one is.
+			m.invalidateLocked()
+			return m.reloadLocked()
+		}
 		if err != nil && !errors.Is(err, errLogIndexMismatch) {
 			return err
 		}
@@ -782,7 +814,7 @@ func (m *Map) MessageCount() int {
 	if !m.loaded {
 		return 0
 	}
-	return m.st.count()
+	return m.st.count
 }
 
 // looksForeignMapBase separates a legacy-named file of ours from theirs, which
@@ -812,3 +844,6 @@ func looksForeignMapBase(path string) (bool, error) {
 	}
 	return true, nil
 }
+
+// MapLockWait bounds the wait for the map's lock. Test seam.
+var MapLockWait = 35 * time.Second

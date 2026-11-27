@@ -3,6 +3,7 @@ package jmap
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 
@@ -237,6 +238,10 @@ func (s *Server) threadChanges(_ context.Context, h *userHandle, accountID strin
 	}
 	path := threads.PathFor(h.info)
 	ch, cerr := threads.ChangesSince(path, since)
+	if errors.Is(cerr, threads.ErrBeforeBase) {
+		// The position names records a merge folded into the base.
+		return nil, cannotCalculate("the threading history was merged past that state")
+	}
 	if cerr != nil {
 		return nil, storeFailure("Thread/changes", accountID, cerr)
 	}

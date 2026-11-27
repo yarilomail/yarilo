@@ -33,6 +33,9 @@ var throughAnOperatorBlock = []string{
 // deployed value. Some are aliases kept for configs written by hand.
 var defaultOnly = []string{
 	"active_attribute", "active_value", "auth_disabled", "disable_plaintext_auth", "home_dir",
+	// yarilo-master runs on single-host installs only (#2715).
+	"master", "master_auth_user", "master_components", "master_delivery_user", "master_env_dir", "master_environment", "master_libexec_dir",
+	"master_log_path", "master_log_user", "master_login_user", "master_run_dir", "master_stop_timeout", "master_syslog_facility", "master_telemetry_port", "master_user",
 	"http_timeout_ms", "lmtp_backend_port", "max_attempts", "oauth2_mode", "prefer_introspection",
 	"socket", "ssl_server_alt_cert_file", "ssl_server_alt_key_file",
 	"tls_alt_cert", "tls_alt_key", "tls_cert", "tls_key", "tls_min_version", "token_expire_grace_seconds",

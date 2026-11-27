@@ -27,6 +27,10 @@ func MdboxMapKey(user string) string { return "mdboxmap:" + user }
 // Acquire after IndexKey, before DeliverKey.
 func MailboxKey(user, folder string) string { return "mbox:" + user + ":" + folder }
 
+// CryptJobKey is held for the length of one user's crypt status or
+// re-encryption job, so two cannot run for the same user.
+func CryptJobKey(user string) string { return "crypt:" + user }
+
 // FTSKey returns the lock key serialising full-text index writes for one
 // mailbox. It is deliberately NOT MailboxKey: the mail index and the full-text
 // index are different resources with different writers. The FTS index has a
@@ -63,6 +67,10 @@ func SieveScriptsKey(user string) string { return "sieve:" + user }
 // would let two deliveries into different folders assign two thread ids to one
 // conversation.
 func ThreadsKey(user string) string { return "threads:" + user }
+
+// ThreadsMergeKey returns the lock key for merging a user's thread log into
+// its base: one merge at a time, without the ThreadsKey a delivery waits on.
+func ThreadsMergeKey(user string) string { return "threads-merge:" + user }
 
 // SubscriptionsKey returns the lock key for a user's mailbox-subscription
 // file (LIST-EXTENDED §SELECT SUBSCRIBED / RETURN SUBSCRIBED). Independent

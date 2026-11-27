@@ -90,7 +90,7 @@ func TestAppendRecordToFileHeaderOnce(t *testing.T) {
 	}
 	offsets := make([]uint32, 3)
 	for i := range offsets {
-		off, err := appendRecordToFile(dst, []byte("body\r\n"), randomGUID(), "INBOX", time.Time{})
+		off, err := appendRecordToFile(dst, []byte("body\r\n"), parsedTrailer{guid: randomGUID(), origMailbox: "INBOX"})
 		if err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}

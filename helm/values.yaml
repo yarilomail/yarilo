@@ -12,7 +12,22 @@ hostname: ""
 ## the binary compares it against what it needs and says which settings it will
 ## be defaulting silently. The chart version cannot do this job: it does not
 ## move on develop (#1528).
-config_schema_version: 31
+config_schema_version: 34
+
+## Size limit of the /tmp emptyDir in every pod; empty: none. Past it kubelet
+## evicts the pod. storage.mail_temp_dir lives there, with its
+## reference_cache_size (256M), which must stay below it; the rest of /tmp
+## peaked at 6 MB in a backend pod under load, so 320Mi leaves a margin.
+tmpSizeLimit: "320Mi"
+
+## Mail encryption keys (storage.mail_crypt): an existing Secret, mounted
+## read-only at /etc/yarilo/mail-crypt in every container that opens mail.
+## Keys "public" (age recipients) and "private" (age identities, one per line
+## while rotating); reference-format PEM keys under any other name, listed in
+## storage.mail_crypt.reference_keys. Empty mounts nothing. Create it with ESO
+## from Vault, as the other keys.
+mailCrypt:
+  secretName: ""
 
 image:
   ## Docker Hub keeps every release tag; GHCR is the pruned CI working set, and
@@ -212,13 +227,30 @@ storage:
   mail_cache_purge_continued_percentage: 200
   ## A cache file smaller than this is never purged on its own; "0" purges any size.
   mail_cache_purge_min_size: "32k"
+  ## What folder index images no session uses may hold together, kept 10 s for
+  ## the next open of the folder; over it the oldest goes at once. "0" frees each
+  ## on its last close.
+  mail_index_idle_cache_size: "64M"
   ## What reaches the disk before a delivery is answered: never, optimized
   ## (the body) or always (plus index, list and directory). See the docs.
   mail_fsync: optimized
+  ## Encryption of message bodies at rest. write: off stores bodies as given,
+  ## age encrypts new ones to public_key. Reading needs private_keys (age
+  ## identities, one per line during a rotation) and, for a store taken from
+  ## another server's disk, reference_keys (PEM). See the docs.
+  mail_crypt:
+    write: "off"
+    public_key: /etc/yarilo/mail-crypt/public
+    private_keys: /etc/yarilo/mail-crypt/private
+    reference_keys: []
+    ## Decrypted reference-format bodies kept in mail_temp_dir, summed per
+    ## process; past it a body is read as a stream. "0" keeps none.
+    reference_cache_size: "256M"
+  ## Plaintext a process must spill; never on the mail volume.
+  mail_temp_dir: /tmp/yarilo-mail
   mail_driver: maildir
   maildir_root: /var/mail/vhosts
   mail_home: "%d/%u"
-  index: fileindex
   ## On-disk format of the per-user mdbox map index. v2 is fixed-width and
   ## sorted by map_uid, so an open parses nothing; v1 is the older format, kept
   ## because it is what an older image can still read. Changing this converts
@@ -246,6 +278,9 @@ storage:
   ##                                         #          Raise it for a very large mailbox with sparse delivery,
   ##                                         #          where folds are the rarer cost.
   mail_index_log_rotate_max_size: "1M"   # 1 MiB  - fold above this whatever the age (human-readable; quote it)
+  mail_sync_walk_memory: "64M"   # memory the folder walks of one process hold together; "0" unbounded (quote it)
+  mail_index_log2_max_age: 172800        # 2 days - a fold keeps the folded log as .log.2 this long, so JMAP
+  ##                                         #          and QRESYNC clients stay incremental across one fold; 0 keeps none.
   max_concurrent_writes: 0           # 0 = unlimited; tune to storage type: ~32 HDD, ~256 SSD
   ## mailbox_list_utf8: true            # true = UTF-8 on disk (default); false = modified-UTF-7 for legacy migrations
   ##                                    # UPGRADE NOTE: before 2.3.55 this key was documented but never rendered,
@@ -385,6 +420,14 @@ components:
       ## message; bounded by idleness so an account nobody delivers to gives
       ## its memory back. 0 never caches, which pays the fold on every delivery.
       cache_idle: 300
+      ## The thread log's size past which it is merged into its sorted base, off
+      ## the account's lock: a delivery reads the log whole and a few pages of the
+      ## base. "0" never merges, and every delivery reads a log that only grows.
+      tail_size: "128k"
+      ## How many messages a conversation holds; the next one that would join a
+      ## full conversation starts a new one. At most 2047, what one stored member
+      ## list holds.
+      max_thread: 1000
 
     ## coLocated: true renders the merged StatefulSet and suppresses the legacy
     ## per-protocol backend Deployments. This is the model behind a director.
@@ -2401,6 +2444,18 @@ sieve:
   sieve_default_name: "yarilo"
   sieve_max_script_size: 65536
   sieve_max_redirects: 32
+  ## sieve_send_rate_limit caps the mail one mailbox's Sieve sends in a clock
+  ## hour: every recipient of redirect, vacation, notify and report counts. Over it a
+  ## redirect is not sent and the message stays in INBOX; vacation and notify
+  ## are not sent. Up to twice the limit can pass across the turn of an hour.
+  ## sieve_max_redirects counts within one message, this key within an hour.
+  ## Counted where the duplicate test keeps its state (sieve_duplicate_driver
+  ## file or redis). 0 = off.
+  sieve_send_rate_limit: 0
+  ## sieve_redirect_duplicate_period: seconds a redirect is remembered, so the
+  ## same message to the same address is not forwarded twice within it (the
+  ## message stays in INBOX instead). 0 = not remembered. Default: 12 hours.
+  sieve_redirect_duplicate_period: 43200
   ## sieve_max_num_scripts caps the scripts one user may store; replacing a
   ## stored script adds none. ManageSieve refuses past it. 0 = unlimited.
   sieve_max_num_scripts: 0

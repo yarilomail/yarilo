@@ -38,29 +38,36 @@ var logLayout = sync.OnceValues(func() (mailindex.RecordLayout, error) {
 	return mailindex.ComputeRecordLayout(defaultExtensions(0))
 })
 
-func entryToLogRecord(e MapEntry) *mailindex.Record {
-	return &mailindex.Record{
-		UID: e.UID,
-		Ext: map[string][]byte{
-			extMap:  encodeMapExt(e.FileID, e.Offset, e.Size),
-			extRef:  encodeRefExt(e.RefCount),
-			extGUID: encodeGUIDExt(e.GUID),
-		},
+// encodeEntry is e as a mailindex record of layout, for the log and a v1 base.
+func encodeEntry(layout mailindex.RecordLayout, e MapEntry) ([]byte, error) {
+	rec := layout.NewRecord(e.UID, 0)
+	for _, x := range []struct {
+		name string
+		data []byte
+	}{
+		{extMap, encodeMapExt(e.FileID, e.Offset, e.Size)},
+		{extRef, encodeRefExt(e.RefCount)},
+		{extGUID, encodeGUIDExt(e.GUID)},
+	} {
+		if err := layout.SetExt(rec, x.name, x.data); err != nil {
+			return nil, err
+		}
 	}
+	return rec, nil
 }
 
-func logRecordToEntry(rec mailindex.Record) (MapEntry, error) {
-	fileID, offset, size, err := decodeMapExt(rec.Ext[extMap])
+func decodeEntry(layout mailindex.RecordLayout, rec []byte) (MapEntry, error) {
+	fileID, offset, size, err := decodeMapExt(layout.ExtOf(rec, extMap))
 	if err != nil {
 		return MapEntry{}, fmt.Errorf("decode map ext: %w", err)
 	}
 	return MapEntry{
-		UID:      rec.UID,
+		UID:      mailindex.RecordUID(rec),
 		FileID:   fileID,
 		Offset:   offset,
 		Size:     size,
-		RefCount: decodeRefExt(rec.Ext[extRef]),
-		GUID:     decodeGUIDExt(rec.Ext[extGUID]),
+		RefCount: decodeRefExt(layout.ExtOf(rec, extRef)),
+		GUID:     decodeGUIDExt(layout.ExtOf(rec, extGUID)),
 	}, nil
 }
 
@@ -124,9 +131,11 @@ func (m *Map) appendLogLocked(entries []MapEntry) error {
 	if err != nil {
 		return fmt.Errorf("mdboxmap/log: layout: %w", err)
 	}
-	recs := make([]*mailindex.Record, len(entries))
+	recs := make([][]byte, len(entries))
 	for i, e := range entries {
-		recs[i] = entryToLogRecord(e)
+		if recs[i], err = encodeEntry(layout, e); err != nil {
+			return fmt.Errorf("mdboxmap/log: encode: %w", err)
+		}
 	}
 	payload, err := mailindex.EncodeTxAppendPayload(layout, recs)
 	if err != nil {
@@ -240,47 +249,58 @@ func encMapLogRec(txType mailindex.TxType, payload []byte) ([]byte, error) {
 }
 
 // replayFromPersistedLocked replays what the base lacks, by lineage: its own log
-// whole, the folded one past its offset, anything else not at all.
+// whole, the folded one past its offset, anything else not at all. The lineage
+// is read through the descriptor the replay reads: a fold between two opens
+// pairs one file's offset with another's records (#2660).
 func (m *Map) replayFromPersistedLocked() (int64, error) {
-	seq, _, err := m.logIdentityLocked()
-	if err != nil {
-		return 0, err
-	}
-	if seq == 0 {
-		return 0, nil
-	}
-	if m.onDisk == FormatV1 {
-		// No lineage to compare against: v1 replays whole and lives with what
-		// that costs (see formatv1.go).
-		m.logLineage = seq
-		return m.replayLogLocked(mailindex.LogHeaderSize)
-	}
-	var from int64
-	switch seq {
-	case m.lineage:
-		from = mailindex.LogHeaderSize
-	case m.foldedLineage:
-		from = m.foldedOffset
-		if from < mailindex.LogHeaderSize {
-			from = mailindex.LogHeaderSize
+	start := time.Now()
+	defer func() { m.observePart("replay", time.Since(start)) }()
+	return m.replayLogFromLocked(0, func(lh mailindex.LogHeader) (int64, error) {
+		if m.onDisk == FormatV1 {
+			// No lineage to compare against: v1 replays whole (see formatv1.go).
+			m.logLineage = lh.FileSeq
+			return mailindex.LogHeaderSize, nil
 		}
-	default:
-		return 0, errLogIndexMismatch
-	}
-	m.logLineage = seq
-	return m.replayLogLocked(from)
+		var from int64
+		switch lh.FileSeq {
+		case m.lineage:
+			from = mailindex.LogHeaderSize
+		case m.foldedLineage:
+			from = max(m.foldedOffset, mailindex.LogHeaderSize)
+		default:
+			return 0, errLogIndexMismatch
+		}
+		m.logLineage = lh.FileSeq
+		return from, nil
+	})
 }
 
-// replayLogLocked folds transactions from fromOffset into the record area and
-// returns the new applied offset. A torn tail stops replay cleanly without
-// consuming the partial record. Caller holds m.mu.
+// errLogMoved is a log of another lineage than the one the offset counts in.
+var errLogMoved = errors.New("mdboxmap: log replaced")
+
+// replayLogLocked replays the log this handle applied, past fromOffset; a log of
+// another lineage at the path is errLogMoved.
 func (m *Map) replayLogLocked(fromOffset int64) (off int64, err error) {
 	start := time.Now()
 	defer func() { m.observePart("replay", time.Since(start)) }()
-	return m.replayLogInnerLocked(fromOffset)
+	return m.replayLogFromLocked(fromOffset, func(lh mailindex.LogHeader) (int64, error) {
+		if lh.FileSeq != m.logLineage {
+			return 0, errLogMoved
+		}
+		return fromOffset, nil
+	})
 }
 
+// replayLogInnerLocked replays the log on disk from fromOffset, whatever file it is.
 func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
+	return m.replayLogFromLocked(fromOffset, nil)
+}
+
+// replayLogFromLocked folds transactions into the record area from the offset
+// choose picks for the log it opened (fromOffset when nil), and returns the new
+// applied offset. A torn tail stops replay cleanly without consuming the
+// partial record. Caller holds m.mu.
+func (m *Map) replayLogFromLocked(fromOffset int64, choose func(mailindex.LogHeader) (int64, error)) (int64, error) {
 	f, err := os.Open(m.logPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return fromOffset, nil
@@ -296,6 +316,11 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 	}
 	if lh.IndexID != m.indexID {
 		return fromOffset, errLogIndexMismatch
+	}
+	if choose != nil {
+		if fromOffset, err = choose(lh); err != nil {
+			return 0, err
+		}
 	}
 	pos := int64(mailindex.LogHeaderSize)
 	if fromOffset > pos {
@@ -334,25 +359,30 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 		}
 		pos += int64(8 + payloadLen)
 		if txHdr.Type.Kind() == mailindex.TxTypeExtAtomicInc {
-			m.applyRefcountDeltasLocked(payload)
+			if err := m.applyRefcountDeltasLocked(payload); err != nil {
+				return fromOffset, err
+			}
 			continue
 		}
 		if txHdr.Type.Kind() != mailindex.TxTypeAppend {
 			continue
 		}
 		for i := 0; i+stride <= len(payload); i += stride {
-			rec, rderr := mailindex.DecodeRecord(payload[i:i+stride], layout)
-			if rderr != nil {
-				break
+			rec := payload[i : i+stride]
+			_, dup, gerr := m.st.get(mailindex.RecordUID(rec))
+			if gerr != nil {
+				return fromOffset, fmt.Errorf("mdboxmap/log: %w", gerr)
 			}
-			if _, dup := m.st.find(rec.UID); dup {
+			if dup {
 				continue
 			}
-			e, cerr := logRecordToEntry(rec)
+			e, cerr := decodeEntry(layout, rec)
 			if cerr != nil {
 				break
 			}
-			m.st.insert(e)
+			if err := m.st.put(e); err != nil {
+				return fromOffset, fmt.Errorf("mdboxmap/log: %w", err)
+			}
 			if e.UID >= m.nextMapUID {
 				m.nextMapUID = e.UID + 1
 			}
@@ -366,16 +396,21 @@ func (m *Map) replayLogInnerLocked(fromOffset int64) (int64, error) {
 
 // applyRefcountDeltasLocked folds one increment payload in. An unknown uid is
 // skipped, safe only while a record is durable before any delta against it.
-func (m *Map) applyRefcountDeltasLocked(payload []byte) {
+func (m *Map) applyRefcountDeltasLocked(payload []byte) error {
 	for _, d := range mailindex.DecodeTxExtAtomicIncPayload(payload) {
-		i, ok := m.st.find(d.UID)
+		e, ok, err := m.st.get(d.UID)
+		if err != nil {
+			return fmt.Errorf("mdboxmap/log: %w", err)
+		}
 		if !ok {
 			continue
 		}
-		e := m.st.at(i)
 		e.RefCount = clampRef(int32(e.RefCount) + d.Diff)
-		m.st.setAt(i, e)
+		if err := m.st.put(e); err != nil {
+			return fmt.Errorf("mdboxmap/log: %w", err)
+		}
 	}
+	return nil
 }
 
 // clampRef keeps a refcount inside the 16 bits a record carries. The floor is

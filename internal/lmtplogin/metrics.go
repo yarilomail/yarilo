@@ -30,3 +30,32 @@ var rcptPhaseSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 func observeRcptPhase(phase string, start time.Time) {
 	rcptPhaseSeconds.WithLabelValues(phase).Observe(time.Since(start).Seconds())
 }
+
+// Phase labels for backendPhaseSeconds: the leg to the backend that runs on
+// DATA, one connection per recipient of each message (docs-internal#318).
+const (
+	backendPhaseDial  = "dial"  // TCP and, with internal TLS, the whole handshake
+	backendPhaseSetup = "setup" // preamble, LHLO, MAIL and RCPT, to the accepted RCPT
+	backendPhaseData  = "data"  // DATA to the backend's reply for the recipient
+)
+
+var backendPhaseSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: "yarilo",
+	Subsystem: "lmtp_login",
+	Name:      "backend_phase_seconds",
+	Help:      "Latency of one phase of the delivery to the backend on DATA (dial, setup, data), one connection per recipient.",
+	Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 20), // 0.1ms … ~52s
+}, []string{"phase"})
+
+// backendTLSHandshakes tells a full handshake from a resumed one: without it
+// the dial phase cannot say whether each message pays the full price.
+var backendTLSHandshakes = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "yarilo",
+	Subsystem: "lmtp_login",
+	Name:      "backend_tls_handshakes_total",
+	Help:      "TLS handshakes with the backend, by whether the session was resumed.",
+}, []string{"resumed"})
+
+func observeBackendPhase(phase string, start time.Time) {
+	backendPhaseSeconds.WithLabelValues(phase).Observe(time.Since(start).Seconds())
+}

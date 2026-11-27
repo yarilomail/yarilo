@@ -50,6 +50,10 @@ var (
 		Name: "fileindex_reload_total",
 		Help: "Folder freshness checks by outcome: adopt means a rewritten base was proven to hold what memory already held and its records were not read.",
 	}, []string{"result"}) // adopt
+	metricStalePair = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "fileindex_stale_pair_total",
+		Help: "Reads that found a base its open log does not pair with, or a base replaced while its log was opened, by path and outcome: retried means both were read again, failed means the retries ran out (a view then reads under the lock; an open and a reload return an error).",
+	}, []string{"path", "result"}) // reload | view | open × retried | failed
 	metricLineageStamped = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fileindex_lineage_stamped_total",
 		Help: "Folder indexes given a lineage on first open because they were written before the extension. Expected to rise once per folder after an upgrade and stay flat afterwards; two pods racing the same first open can each stamp it, so a folder may count twice.",
@@ -175,11 +179,15 @@ var (
 	})
 	metricGUIDImageBuilt = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fileindex_guid_image_built_total",
-		Help: "Times the GUID lookup map was built from the store.",
+		Help: "Times the GUID lookup file was built from the store's base.",
+	})
+	metricGUIDLookupMerged = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "fileindex_guid_lookup_merged_total",
+		Help: "Times a fold of the GUID store merged its lookup forward instead of leaving it to be built.",
 	})
 	metricGUIDImageHit = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "fileindex_guid_image_hit_total",
-		Help: "Lookups answered from the GUID map already built for this version of the store.",
+		Help: "Lookups answered from the GUID lookup file already open for this base of the store.",
 	})
 )
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbase"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
+	"github.com/yarilomail/yarilo/v2/internal/storage/nsopen"
 	"github.com/yarilomail/yarilo/v2/internal/userstate/subs"
 	"github.com/yarilomail/yarilo/v2/pkg/config"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
@@ -34,7 +35,11 @@ func (s *session) boxAuto(personal *mailbox.UserInfo, i int, nsUI *mailbox.UserI
 		Mailboxes: ns.AutoMailboxes(),
 		Limit:     s.opts.QuotaPolicy.MailboxCount,
 		Created: func(rel string) {
-			mailops.New(s.mailopsConfig(), nil, personal).EmitList(locks.EventMailboxCreate, ns.Prefix+rel)
+			name := personal.Username
+			if mailbox.IsSharedStoreName(nsUI.LockUser()) {
+				name = nsUI.LockUser()
+			}
+			mailops.New(s.mailopsConfig(), nil, personal).EmitListTo(name, locks.EventMailboxCreate, ns.Prefix+rel)
 		},
 		Subscribe: func(rel string) error {
 			owner := locks.Owner(personal.Username, s.stampLockID(personal).LockID())
@@ -67,12 +72,9 @@ func (s *session) subscriberFor(personal *mailbox.UserInfo, folder string) func(
 	if ns == nil {
 		return s.personalAuto(personal).Subscribe
 	}
-	loc, ok, err := mailbox.ParseLocation(ns.Location, nil)
+	nsd := deliveryNamespace(ns)
+	ui, ok, err := nsopen.Fixed(nsd, personal, personal, nsopen.Kind(nsd))
 	if err != nil || !ok {
-		return nil
-	}
-	ui, err := mailbox.NamespaceUserInfo(personal, loc, ns.Separator)
-	if err != nil {
 		return nil
 	}
 	return s.boxAuto(personal, s.namespaceIndex(ns), ui).Subscribe

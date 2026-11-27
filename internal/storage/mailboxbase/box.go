@@ -1,9 +1,11 @@
 package mailboxbase
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"time"
 
@@ -109,10 +111,98 @@ func (b *Box) MessagePath(folder string, m *mailbox.MessageMeta) (string, error)
 	return MessagePath(b.store, folder, m)
 }
 
-// OpenMessage opens the body a record names.
+// OpenMessage opens the body a record names. A body the store no longer has,
+// for a record the index no longer has either, is an expunge (ErrExpunged).
 func (b *Box) OpenMessage(folder string, m *mailbox.MessageMeta) (io.ReadCloser, error) {
-	return OpenMessage(b.store, folder, m)
+	rc, err := OpenMessage(b.store, folder, m)
+	if err != nil {
+		return nil, b.expungedMeanwhile(folder, m, err)
+	}
+	return rc, nil
 }
+
+// RawMessage is OpenMessage without decryption and CRLF: the bytes as stored,
+// for re-encryption, under the same rule for a vanished body.
+func (b *Box) RawMessage(folder string, m *mailbox.MessageMeta) (mailbox.RawBody, error) {
+	rr, ok := mailbox.Driver(b.store).(mailbox.RawReader)
+	if !ok {
+		return nil, fmt.Errorf("mailbox: %T reads no raw records", mailbox.Driver(b.store))
+	}
+	raw, err := rr.RawRecord(folder, m)
+	if err != nil {
+		return nil, b.expungedMeanwhile(folder, m, err)
+	}
+	return raw, nil
+}
+
+// expungedMeanwhile decides a read that found no body. The store and the index
+// meet here, so this is where it is decided, once for every reader: the index
+// is asked for the record by its uid and GUID (a uid alone is reused). A
+// record it no longer has was expunged after the caller read it: ErrExpunged,
+// with nothing in the chain that marks the folder corrupt. A record still
+// there keeps the store's error. A store says "no body" as a missing file, or
+// as corruption (maildir: a uid in no list entry; sdbox: a vanished u.<uid>);
+// any other error is returned as it is, without asking.
+//
+// A store that removes the body before the record (maildir, #2667) does both
+// under its folder hold, so a read between the two finds no file and the
+// record still there. That record is asked about once more under the hold,
+// after the expunge in progress has finished, as the reference syncs the
+// folder under its list lock before it decides. A reader never holds the
+// folder when it reads a body (ExpungeMarked and ExpungeMoved read names, not
+// bodies), so the hold does not wait on itself.
+func (b *Box) expungedMeanwhile(folder string, m *mailbox.MessageMeta, err error) error {
+	if errors.Is(err, mailbox.ErrExpunged) ||
+		!(errors.Is(err, fs.ErrNotExist) || errors.Is(err, mailbox.ErrCorruptStorage)) {
+		return err
+	}
+	gone, ok := b.recordGone(folder, m)
+	if ok && !gone {
+		if bf, isBF := mailbox.Driver(b.store).(mailbox.BodyFirstExpunger); isBF && bf.ExpungesBodyFirst() {
+			if testBeforeHeldRecheck != nil {
+				testBeforeHeldRecheck()
+			}
+			_ = b.HoldFolder(folder, "read-recheck", func() error {
+				gone, ok = b.recordGone(folder, m)
+				return nil
+			})
+		}
+	}
+	if !ok || !gone {
+		return err
+	}
+	return fmt.Errorf("mailbox: %q uid %d: %w (the store said: %v)", folder, m.UID, mailbox.ErrExpunged, err)
+}
+
+// recordGone asks the index whether the record m was is gone; ok is false when
+// the index could not answer, which is never taken for an expunge.
+func (b *Box) recordGone(folder string, m *mailbox.MessageMeta) (gone, ok bool) {
+	if testBeforeExpungeCheck != nil {
+		testBeforeExpungeCheck()
+	}
+	f, ferr := b.index.OpenFolder(folder, 0)
+	if ferr != nil {
+		return false, false
+	}
+	recs, gerr := b.index.GetMessages(f.ID, mailbox.SeqSet{{From: m.UID, To: m.UID}})
+	if gerr != nil {
+		return false, false
+	}
+	for _, r := range recs {
+		if r.UID == m.UID && (m.GUID == [16]byte{} || r.GUID == m.GUID) {
+			return false, true
+		}
+	}
+	return true, true
+}
+
+// testBeforeExpungeCheck runs before each index ask about a vanished body.
+// Test seam: it counts the asks.
+var testBeforeExpungeCheck func()
+
+// testBeforeHeldRecheck runs before the hold is taken for the second ask.
+// Test seam: a reader signals it is about to wait on an expunge in progress.
+var testBeforeHeldRecheck func()
 
 // RFC822Size is the size a client is told: the record's own, or the driver's
 // answer from storage when it has none (#1726).
@@ -172,6 +262,11 @@ var errNoRestore = errors.New("mailbox: the driver cannot put a moved body back"
 // fileinto, a copy - settling its name before its record (#1745).
 func (b *Box) RecordSaved(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) error {
 	return RecordSaved(b.index, b.store, f.ID, folder, saved, m)
+}
+
+// RecordSavedNamed is RecordSaved with the name the record cycle settled.
+func (b *Box) RecordSavedNamed(f *mailbox.Folder, folder, saved string, m *mailbox.MessageMeta) (string, error) {
+	return RecordSavedNamed(b.index, b.store, f.ID, folder, saved, m)
 }
 
 // NameSaved settles the name of a body saved under a uid the caller already
@@ -278,11 +373,6 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 
 	// Every name is read before any record goes: a driver named by uid reads
 	// it out of the record this command is about to remove (#1712).
-	type doomed struct {
-		msg  *mailbox.MessageMeta
-		name string
-		err  error
-	}
 	list := make([]doomed, 0, len(msgs))
 	for _, m := range msgs {
 		name, nameErr := MessagePath(b.store, folder, m)
@@ -290,6 +380,10 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 			name = ""
 		}
 		list = append(list, doomed{msg: m, name: name, err: nameErr})
+	}
+
+	if bf, ok := mailbox.Driver(b.store).(mailbox.BodyFirstExpunger); ok && bf.ExpungesBodyFirst() {
+		return b.expungeBodyFirst(f, folder, list, refs)
 	}
 
 	tx, terr := b.index.Begin(f.ID)
@@ -320,7 +414,7 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 	for _, d := range list {
 		switch refs.fate(d.name) {
 		case bodyNameless:
-			slog.Warn("mailbox/expunge: the record named no file; its body, if any, stays",
+			slog.Log(context.Background(), namelessLevel(d.err), "mailbox/expunge: the record named no file; its body, if any, stays",
 				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "err", d.err)
 		case bodyShared:
 			slog.Warn("mailbox/expunge: the body stays, another record still names it",
@@ -334,6 +428,74 @@ func (b *Box) expungeEach(f *mailbox.Folder, folder string, msgs []*mailbox.Mess
 			"folder", folder, "count", len(free), "err", err)
 	}
 	return removed, failed
+}
+
+type doomed struct {
+	msg  *mailbox.MessageMeta
+	name string
+	err  error
+}
+
+// expungeBodyFirst removes the bodies, then the records of those that went: a
+// stop between leaves a record with no file, which the next reconcile drops,
+// never a file whose uid is gone (#2663). A body that stays keeps its record.
+func (b *Box) expungeBodyFirst(f *mailbox.Folder, folder string, list []doomed, refs bodyRefs) (removed []*mailbox.MessageMeta, failed int) {
+	pre, stamped := dirTimes(b.store, folder)
+	going := make([]doomed, 0, len(list))
+	for _, d := range list {
+		switch refs.fate(d.name) {
+		case bodyNameless:
+			slog.Log(context.Background(), namelessLevel(d.err), "mailbox/expunge: the record named no file; its body, if any, stays",
+				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "err", d.err)
+		case bodyShared:
+			slog.Warn("mailbox/expunge: the body stays, another record still names it",
+				"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "file", d.name)
+		case bodyFree:
+			if err := b.RemoveHeld(folder, d.name); err != nil {
+				slog.Error("mailbox/expunge: the body could not be removed, so its record stays",
+					"user", b.store.Username(), "folder", folder, "uid", d.msg.UID, "file", d.name, "err", err)
+				failed++
+				continue
+			}
+		}
+		going = append(going, d)
+	}
+	if testAfterBodyRemoved != nil {
+		testAfterBodyRemoved()
+	}
+	if len(going) == 0 {
+		return nil, failed
+	}
+	tx, terr := b.index.Begin(f.ID)
+	if terr != nil {
+		slog.Error("mailbox/expunge: the bodies went but the records could not be opened; the next reconcile drops them",
+			"user", b.store.Username(), "folder", folder, "err", terr)
+		return nil, failed + len(going)
+	}
+	defer tx.Rollback()
+	for _, d := range going {
+		tx.Expunge(d.msg.UID)
+	}
+	carryInTx(b.store, folder, tx, pre, stamped)
+	if _, cerr := tx.Commit(); cerr != nil {
+		slog.Error("mailbox/expunge: the bodies went but the records stayed; the next reconcile drops them",
+			"user", b.store.Username(), "folder", folder, "err", cerr)
+		return nil, failed + len(going)
+	}
+	for _, d := range going {
+		removed = append(removed, d.msg)
+	}
+	return removed, failed
+}
+
+// testAfterBodyRemoved runs between the bodies and the records of a body-first
+// expunge. Test seam: the crash window that order is chosen for.
+var testAfterBodyRemoved func()
+
+// SetTestAfterBodyRemoved arms that seam and returns a function disarming it.
+func SetTestAfterBodyRemoved(fn func()) func() {
+	testAfterBodyRemoved = fn
+	return func() { testAfterBodyRemoved = nil }
 }
 
 // testAfterRecordExpunged runs between the record and the body. Test seam: the
@@ -387,4 +549,15 @@ func (b *Box) RemoveHeld(folder, name string) error {
 		return r.RemoveHeld(folder, name)
 	}
 	return b.store.Remove(folder, name)
+}
+
+// namelessLevel is the level of a record expunged with no file: a file another
+// session already removed is not an error, as the reference's maildir expunge
+// takes ENOENT for done and drops the record silently. Any other lookup error
+// stays WARN.
+func namelessLevel(err error) slog.Level {
+	if errors.Is(err, fs.ErrNotExist) {
+		return slog.LevelDebug
+	}
+	return slog.LevelWarn
 }

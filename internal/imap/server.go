@@ -711,10 +711,16 @@ func renamedCount(writes []mailbox.FlagWrite, results []mailbox.FlagWriteResult)
 // emitMailboxChangeSized is emitMailboxChange for a caller that knows how large
 // the message was, so the usage moves by it instead of a recount (#1548).
 func (s *session) emitMailboxChangeSized(f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32, guid [16]byte) {
+	s.emitMailboxChangeIn(s.folderMailbox(), f, eventType, uid, vsize, guid)
+}
+
+// emitMailboxChangeIn is the same for a folder of box, which need not be the
+// selected one's: box's store names the event (#2600).
+func (s *session) emitMailboxChangeIn(box mailbox.Box, f *mailbox.Folder, eventType locks.EventType, uid, vsize uint32, guid [16]byte) {
 	if s.ops == nil {
 		return
 	}
-	s.ops.Committed(f, eventType, uid, vsize, guid)
+	s.ops.CommittedIn(box, f, eventType, uid, vsize, guid)
 }
 
 // emitMailboxList publishes a change to the folder list; it can run before
@@ -1217,26 +1223,15 @@ func (s *session) Select(name string, opts *imaplib.SelectOptions) (*imaplib.Sel
 		ReadOnly:       readOnly,
 	}
 	// QRESYNC SELECT (RFC 7162 §3.2): on matching UIDVALIDITY, reply with
-	// VANISHED (EARLIER) listing UIDs expunged since the client's modseq.
-	// KnownUIDs narrows the response; empty means "tell me everything".
+	// VANISHED (EARLIER) for the uids expunged since the client's modseq, within
+	// its known uids; from the folder when the history no longer reaches it.
 	if opts != nil && opts.QResync != nil && opts.QResync.UIDValidity == f.UIDValidity {
-		vanishedUIDs, vErr := h.mailbox().Vanished(f.ID, opts.QResync.ModSeq)
-		if vErr == nil && len(vanishedUIDs) > 0 {
-			var vset imaplib.UIDSet
-			if len(opts.QResync.KnownUIDs) == 0 {
-				for _, uid := range vanishedUIDs {
-					vset.AddNum(imaplib.UID(uid))
-				}
-			} else {
-				for _, uid := range vanishedUIDs {
-					if opts.QResync.KnownUIDs.Contains(imaplib.UID(uid)) {
-						vset.AddNum(imaplib.UID(uid))
-					}
-				}
-			}
-			if len(vset) > 0 {
-				data.Vanished = vset
-			}
+		vset, vErr := vanishedSince(h.mailbox(), f.ID, opts.QResync.ModSeq, opts.QResync.KnownUIDs, f.NextUID, msgs)
+		if vErr != nil {
+			return nil, vErr
+		}
+		if len(vset) > 0 {
+			data.Vanished = vset
 		}
 	}
 	return data, nil
@@ -2133,33 +2128,24 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 	if refreshed != nil {
 		f = refreshed
 	}
-	msgs, err := readMessages(h.mailbox(), f.ID)
-	if err != nil {
-		return nil, fmt.Errorf("imap: status getmsgs %s: %w", rel, err)
-	}
-	var (
-		unseen    uint32
-		deleted   uint32
-		totalSize int64
-	)
-	for _, m := range msgs {
-		if !hasFlag(m.Flags, `\Seen`) {
-			unseen++
-		}
-		if hasFlag(m.Flags, `\Deleted`) {
-			deleted++
-		}
-	}
-	// From the records MESSAGES answers from, with the store asked for what a
-	// record does not carry: the reference fills those too (#1726, #1959).
+	// The counts from the folder's header, as the reference answers them: a
+	// read of every record per STATUS was a third of the memory behind the
+	// imap OOM (#2661). SIZE alone needs the records, and the store for what
+	// a record does not carry, as the reference fills it too (#1726, #1959).
+	unseen, deleted := f.Unseen, f.Deleted
+	var totalSize int64
 	if opts.Size {
+		msgs, err := readMessages(h.mailbox(), f.ID)
+		if err != nil {
+			return nil, fmt.Errorf("imap: status getmsgs %s: %w", rel, err)
+		}
 		for _, m := range msgs {
 			totalSize += int64(h.mailbox().RFC822Size(rel, m))
 		}
 	}
 	d := &imaplib.StatusData{Mailbox: name}
 	if opts.NumMessages {
-		n := uint32(len(msgs))
+		n := f.Messages
 		d.NumMessages = &n
 	}
 	if opts.UIDNext {
@@ -2181,7 +2167,7 @@ func (s *session) Status(name string, opts *imaplib.StatusOptions) (*imaplib.Sta
 		d.HighestModSeq = f.HighestModSeq
 	}
 	if opts.NumRecent {
-		n := recentInFolder(f, msgs)
+		n := f.Recent
 		d.NumRecent = &n
 	}
 	if opts.MailboxID {
@@ -2927,7 +2913,7 @@ func (s *session) Search(kind imapserver.NumKind, criteria *imaplib.SearchCriter
 		for reason, n := range byReason {
 			metricUnreadable.WithLabelValues("search", reason).Add(float64(n))
 		}
-		slog.Warn("imap: search could not read some messages; the result is incomplete",
+		slog.Log(context.Background(), unreadableLevelOf(byReason), "imap: search could not read some messages; the result is incomplete",
 			"user", s.userInfo.Username,
 			"folder", s.folder.Name,
 			"unreadable", len(unreadable),
@@ -3106,12 +3092,17 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 	// VANISHED on a sequence-number FETCH is invalid; the patched lib
 	// rejects that at parse time so we do not need to re-check here.
 	if opts.Vanished && opts.ChangedSince > 0 {
-		vanishedUIDs, vErr := s.folderMailbox().Vanished(s.folder.ID, opts.ChangedSince)
-		if vErr == nil && len(vanishedUIDs) > 0 {
-			var vset imaplib.UIDSet
-			for _, uid := range vanishedUIDs {
-				vset.AddNum(imaplib.UID(uid))
-			}
+		// Only the uids the command named, as §3.2.6 asks; from the folder when
+		// the history no longer reaches the modseq.
+		within, _ := numSet.(imaplib.UIDSet)
+		if len(within) == 0 {
+			within = imaplib.UIDSet{{Start: 1, Stop: 0}}
+		}
+		vset, vErr := vanishedSince(s.folderMailbox(), s.folder.ID, opts.ChangedSince, within, s.folder.NextUID, backendMsgs)
+		if vErr != nil {
+			return vErr
+		}
+		if len(vset) > 0 {
 			if writeErr := w.WriteVanished(vset); writeErr != nil {
 				return writeErr
 			}
@@ -3250,6 +3241,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			continue
 		}
 		mw := w.CreateMessage(seqNum)
+		msgBody := &fetchBody{s: s, m: m}
 		// What this response could not produce, gathered per message rather
 		// than per attribute: one message the server answered short is one
 		// event, whether it lost the envelope, the structure, or the body.
@@ -3342,7 +3334,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			// the client as the message wrote them (#1714).
 			if text, ok := envCache.EnvelopeText(m); ok {
 				mw.WriteEnvelopeRaw(text)
-			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
+			} else if rc, ferr := msgBody.open(); ferr == nil {
 				rd := &missReader{r: rc}
 				hdr, _ := textproto.ReadHeader(bufio.NewReader(rd))
 				rc.Close()
@@ -3364,7 +3356,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		} else if opts.BodyStructure != nil {
 			if bs := envCache.BodyStructure(m); bs != nil {
 				mw.WriteBodyStructure(bs)
-			} else if rc, ferr := s.fetchSelected(m); ferr == nil {
+			} else if rc, ferr := msgBody.open(); ferr == nil {
 				rd := &missReader{r: rc}
 				bs := imaptext.Canonical(imapserver.ExtractBodyStructure(rd))
 				rerr := rd.missedWhole(m)
@@ -3392,7 +3384,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				}
 				break
 			}
-			rc, ferr := s.fetchSelected(m)
+			rc, ferr := msgBody.open()
 			if ferr != nil {
 				if slog.Default().Enabled(context.Background(), slog.LevelDebug) &&
 					section.Specifier == imaplib.PartSpecifierNone && len(section.Part) == 0 {
@@ -3406,7 +3398,14 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 				mark("body["+string(section.Specifier)+"]", ferr)
 				break
 			}
-			extracted := imapserver.ExtractBodySection(rc, section)
+			var extracted []byte
+			if rr, ok := rc.(mailbox.RangeReader); ok && wholeMessageRange(section) {
+				extracted = readRange(rr, section.Partial)
+			} else if wholeMessageRange(section) {
+				extracted = readStreamRange(rc, section.Partial)
+			} else {
+				extracted = imapserver.ExtractBodySection(rc, section)
+			}
 			rc.Close()
 			if extracted == nil {
 				// The section could not be produced: since #1377 the library
@@ -3448,7 +3447,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			if !s.readableSelected(m) {
 				break
 			}
-			rc, ferr := s.fetchSelected(m)
+			rc, ferr := msgBody.open()
 			if ferr != nil {
 				mark("binary[]", ferr)
 				break
@@ -3471,7 +3470,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 			if !s.readableSelected(m) {
 				break
 			}
-			rc, ferr := s.fetchSelected(m)
+			rc, ferr := msgBody.open()
 			if ferr != nil {
 				break
 			}
@@ -3486,11 +3485,14 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imaplib.NumSet, opts *
 		}
 		if len(unreadable) > 0 {
 			metricUnreadable.WithLabelValues("fetch", reason).Inc()
-			slog.Warn("imap: fetch answered without attributes it could not read",
+			// A message expunged under the read is not an error, as the
+			// reference's FETCH has it: counted, and a Debug line.
+			slog.Log(context.Background(), unreadableLevel(reason), "imap: fetch answered without attributes it could not read",
 				"user", s.userInfo.Username, "folder", s.folder.Name,
 				"uid", m.UID, "reason", reason,
 				"missing", strings.Join(unreadable, ","), "err", reasonErr)
 		}
+		msgBody.close()
 		mw.Close() //nolint:errcheck
 	}
 	if len(seenWrites) > 0 {
@@ -3619,7 +3621,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imaplib.NumSet, storeF
 	if virtualSel && len(batchUpdates) > 0 {
 		// The copy is the message: it takes the change, and the virtual record
 		// then takes the set the copy ended with, moving its own modseq.
-		onCopies, copies, cerr := s.storeOnCopies(msgByUID, batchUpdates)
+		onCopies, copies, cerr := s.storeOnCopies(msgByUID, batchUpdates, storeFlagRights(storeFlags.Flags))
 		if cerr != nil {
 			return dependencyError(cerr)
 		}

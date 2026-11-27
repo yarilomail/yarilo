@@ -378,6 +378,19 @@ func TestTheListIsSyncedBeforeItIsRenamed(t *testing.T) {
 	defer maildir.SetTestWriteSeams(nil, nil)
 
 	saveAndAssign(t, box, "INBOX", "From: a@b\r\n\r\nx\r\n", 7)
+	gone := saveAndAssign(t, box, "INBOX", "From: a@b\r\n\r\ny\r\n", 8)
+	// A save appends its row; a message gone is what writes the list again.
+	if err := box.Remove("INBOX", gone); err != nil {
+		t.Fatal(err)
+	}
+	idx := indexfile.New().OpenUser(info)
+	defer idx.Close() //nolint:errcheck
+	f, err := idx.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order = nil
+	reconcile(t, box, idx, f)
 	if len(order) < 2 || order[len(order)-2] != "sync" || order[len(order)-1] != "rename" {
 		t.Fatalf("the write went %v, want the sync before the rename", order)
 	}
@@ -399,4 +412,40 @@ func saveAndAssign(t *testing.T, box mailbox.UserMailbox, folder, body string, u
 		t.Fatalf("assign uid %d: %v", uid, err)
 	}
 	return named
+}
+
+// A save's row is appended, not the list written again, and it reaches the
+// disk before the save returns: a lost row hands its file a second uid (#2640).
+func TestAnAppendedRowIsSyncedBeforeTheSaveReturns(t *testing.T) {
+	home := t.TempDir()
+	info := &mailbox.UserInfo{Username: "u1@example.com", Home: home, Driver: "maildir"}
+	box := maildir.New().OpenUser(info)
+	defer box.Close() //nolint:errcheck
+	if err := box.Create("INBOX"); err != nil {
+		t.Fatal(err)
+	}
+	saveAndAssign(t, box, "INBOX", "From: a@b\r\n\r\nx\r\n", 7)
+
+	var order []string
+	maildir.SetTestWriteSeams(
+		func(f *os.File) error { order = append(order, "sync "+filepath.Base(f.Name())); return f.Sync() },
+		func(string) { order = append(order, "rename") })
+	defer maildir.SetTestWriteSeams(nil, nil)
+
+	saveAndAssign(t, box, "INBOX", "From: a@b\r\n\r\ny\r\n", 8)
+	if len(order) == 0 || order[len(order)-1] != "sync "+maildir.UIDListFileName {
+		t.Fatalf("the save went %v, want the list synced last", order)
+	}
+	for _, step := range order {
+		if step == "rename" {
+			t.Fatalf("the save went %v: the list was written again for one row", order)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(home, "Maildir", maildir.UIDListFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "\n8 :") {
+		t.Errorf("the list holds no row for uid 8: %q", raw)
+	}
 }

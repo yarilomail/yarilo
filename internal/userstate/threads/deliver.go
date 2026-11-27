@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/mail"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -18,13 +19,80 @@ import (
 // two thread ids.
 type Recorder struct {
 	cache *Cache
+	// tailSize is the log size past which the pair is merged (§4); 0 never.
+	tailSize int64
+	// maxThread is how many messages a conversation holds.
+	maxThread int
 }
 
-func NewRecorder(cache *Cache) *Recorder {
+// DefaultTailSize is threading.threading_tail_size unset.
+const DefaultTailSize = 128 << 10
+
+// RecorderOption configures a Recorder.
+type RecorderOption func(*Recorder)
+
+// WithTailSize sets the log size past which the store is merged; 0 never.
+func WithTailSize(n int64) RecorderOption { return func(r *Recorder) { r.tailSize = n } }
+
+// WithMaxThread sets how many messages a conversation holds.
+func WithMaxThread(n int) RecorderOption { return func(r *Recorder) { r.maxThread = n } }
+
+func NewRecorder(cache *Cache, opts ...RecorderOption) *Recorder {
 	if cache == nil {
 		cache = NewCache(DefaultIdle)
 	}
-	return &Recorder{cache: cache}
+	r := &Recorder{cache: cache, tailSize: DefaultTailSize, maxThread: DefaultMaxThread}
+	for _, o := range append(append([]RecorderOption(nil), cache.limits...), opts...) {
+		o(r)
+	}
+	return r
+}
+
+// MergeDue says the log at path has passed the tail size: the caller merges
+// it, outside the account's lock (THREADS-STORE.md §4).
+func (r *Recorder) MergeDue(path string) bool {
+	if r.tailSize <= 0 {
+		return false
+	}
+	st, err := os.Stat(path)
+	return err == nil && st.Size() >= r.tailSize
+}
+
+// storeKnown is the pair as threading.Known asks: the first error a lookup
+// met is kept for the caller, and answers "unknown" meanwhile.
+type storeKnown struct {
+	s   *Store
+	err error
+}
+
+func (k *storeKnown) answer(id string, ok bool, err error) (string, bool) {
+	if err != nil && k.err == nil {
+		k.err = err
+	}
+	return id, ok && err == nil
+}
+
+func (k *storeKnown) ThreadOfMessage(id string) (string, bool) {
+	return k.answer(k.s.ThreadOfMessage(id))
+}
+func (k *storeKnown) ThreadOfSubject(key string) (string, bool) {
+	return k.answer(k.s.ThreadOfSubject(key))
+}
+
+func (k *storeKnown) Continuation(id string) string {
+	next, err := k.s.Continuation(id)
+	if err != nil && k.err == nil {
+		k.err = err
+	}
+	return next
+}
+
+func (k *storeKnown) ThreadSize(id string) int {
+	n, err := k.s.ThreadSize(id)
+	if err != nil && k.err == nil {
+		k.err = err
+	}
+	return n
 }
 
 // Record threads one delivered message and returns the thread it belongs to.
@@ -49,19 +117,29 @@ func (r *Recorder) RecordNew(user, path, guid string, raw []byte) (string, bool,
 	if guid == "" {
 		return "", false, fmt.Errorf("threads: delivery has no guid")
 	}
-	state, err := r.cache.Get(user, path)
+	// The pair, searched by key: a delivery reads the log's tail and a few
+	// pages of the base, not the account (THREADS-STORE.md, #2641).
+	store, err := OpenStore(path)
 	if err != nil {
 		return "", false, err
 	}
+	defer store.Close() //nolint:errcheck
 	// A copy keeps its GUID, and with it the conversation already recorded.
-	if id, ok := state.ThreadOfGUID(guid); ok {
+	if id, ok, gerr := store.ThreadOfGUID(guid); gerr != nil {
+		return "", false, gerr
+	} else if ok {
 		return id, false, nil
 	}
-	p := PlacementFor(state, guid, raw)
-	if err := Append(path, state, p); err != nil {
+	known := &storeKnown{s: store}
+	p := PlacementFor(known, guid, raw, r.maxThread)
+	if known.err != nil {
+		return "", false, known.err
+	}
+	before, _ := os.Stat(path)
+	if err := Append(path, store.tail, p); err != nil {
 		return "", false, err
 	}
-	r.cache.Note(user, path)
+	r.cache.Applied(user, path, before, p)
 	return p.ThreadID, true, nil
 }
 
@@ -72,7 +150,19 @@ func (r *Recorder) RecordNew(user, path, guid string, raw []byte) (string, bool,
 // the point: the rebuild must arrive at the SAME thread ids as the deliveries
 // it replays, or it is not a rebuild but a second opinion. Two implementations
 // that agree today would drift the first time either is touched.
-func PlacementFor(state *State, guid string, raw []byte) Placement {
+// Lookups is what a placement asks of an account's conversations.
+type Lookups interface {
+	threading.Known
+	// ThreadSize is how many messages the conversation holds.
+	ThreadSize(threadID string) int
+	// Continuation is the conversation that continues a full one, or "".
+	Continuation(threadID string) string
+}
+
+// DefaultMaxThread is threading.threading_max_thread unset.
+const DefaultMaxThread = 1000
+
+func PlacementFor(state Lookups, guid string, raw []byte, maxThread int) Placement {
 	msg := parseHeaders(raw)
 	msg.MessageID = firstOf(msg.MessageID)
 
@@ -83,20 +173,52 @@ func PlacementFor(state *State, guid string, raw []byte) Placement {
 		Subject:    msg.Subject,
 	}, state)
 
-	threadID := placed.ThreadID
+	threadID, merged, from := placed.ThreadID, placed.MergedFrom, ""
+	// A conversation holds at most maxThread messages, as the reference's
+	// conversations do: a full one names its continuation, which a reply
+	// follows until one has room; two that together would pass the limit stay
+	// apart. Here, not in delivery, so the rebuild places as delivery does.
+	if threadID != "" && maxThread > 0 {
+		size := state.ThreadSize(threadID)
+		if size >= maxThread {
+			merged = nil
+			// Bounded: a chain corrupted into a cycle must not hang a delivery.
+			for hops := 0; size >= maxThread && hops < maxChain; hops++ {
+				next := state.Continuation(threadID)
+				if next == "" {
+					break
+				}
+				threadID, size = next, state.ThreadSize(next)
+			}
+			if size >= maxThread {
+				threadID, from = "", threadID
+			}
+		} else if len(merged) > 0 {
+			for _, m := range merged {
+				size += state.ThreadSize(m)
+			}
+			if size+1 > maxThread {
+				merged = nil
+			}
+		}
+	}
 	if threadID == "" {
 		// Nothing to join: the conversation is named after this message. See
 		// Record for why it is the guid and not something random.
 		threadID = guid
 	}
 	return Placement{
-		GUID:       guid,
-		MessageID:  msg.MessageID,
-		SubjectKey: placed.SubjectKey,
-		ThreadID:   threadID,
-		MergedFrom: placed.MergedFrom,
+		GUID:          guid,
+		MessageID:     msg.MessageID,
+		SubjectKey:    placed.SubjectKey,
+		ThreadID:      threadID,
+		MergedFrom:    merged,
+		ContinuesFrom: from,
 	}
 }
+
+// maxChain caps the continuations one placement follows.
+const maxChain = 1 << 16
 
 type headers struct {
 	MessageID  string

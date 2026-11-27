@@ -2,6 +2,7 @@ package file
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
@@ -42,6 +43,13 @@ type indexTx struct {
 	done     bool
 	// expect is the modseq each read record had; its ops apply only on that.
 	expect map[uint32]uint64
+	// carry moves the maildir stamp's directory times in the same hold.
+	carry *[2]mailbox.DirTimes
+}
+
+// CarryDirTimes carries the stamp in this commit: see userIndex.CarryDirTimes.
+func (t *indexTx) CarryDirTimes(pre, post mailbox.DirTimes) {
+	t.carry = &[2]mailbox.DirTimes{pre, post}
 }
 
 func (t *indexTx) Expunge(uid uint32) {
@@ -80,7 +88,7 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 		return out, fmt.Errorf("fileindex/tx: already finished")
 	}
 	t.done = true
-	if len(t.ops) == 0 {
+	if len(t.ops) == 0 && t.carry == nil {
 		return out, nil
 	}
 	var gone uint32
@@ -88,18 +96,23 @@ func (t *indexTx) Commit() (mailbox.TxResult, error) {
 		// The ops apply to fs.file before the log takes them, so the pre-image
 		// is what a refused write is put back to (#1831).
 		undo := fs.snapshotForTx(t.ops)
+		defer undo.settle()
 		fs.cacheGone = 0
 		out.Skipped = t.dropUnmet(fs)
-		if len(t.ops) == 0 {
-			return nil
-		}
-		err := t.applyAll(fs, &out)
-		if err != nil {
-			fs.restore(undo)
-			out = mailbox.TxResult{}
-			return err
+		if len(t.ops) > 0 {
+			if err := t.applyAll(fs, &out); err != nil {
+				fs.restore(undo)
+				out = mailbox.TxResult{}
+				return err
+			}
 		}
 		gone = fs.cacheGone
+		if t.carry != nil {
+			// The ops are journalled already; a stamp left stale costs a walk.
+			if cerr := fs.carryDirTimesLocked(t.carry[0], t.carry[1]); cerr != nil {
+				slog.Warn("fileindex: the maildir stamp was not carried", "folder", fs.folder, "err", cerr)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -116,9 +129,10 @@ func (t *indexTx) dropUnmet(fs *folderState) []uint32 {
 		return nil
 	}
 	now := make(map[uint32]uint64, len(t.expect))
-	for _, rec := range fs.file.Records {
-		if _, ok := t.expect[rec.UID]; ok {
-			now[rec.UID] = decodeModseqRec(rec.Ext[extNameModSeq])
+	for uid := range t.expect {
+		if seq, ok := fs.recSeqOfUID(uid); ok {
+			data, _ := fs.recExt(seq, extNameModSeq)
+			now[uid] = decodeModseqRec(data)
 		}
 	}
 	var skipped []uint32
@@ -232,13 +246,19 @@ func (t *indexTx) applyLocked(fs *folderState, op *txOp, modseq uint64) ([][]byt
 			next = 1
 		}
 		if op.meta.UID == 0 {
+			if next > mailbox.MaxUID {
+				return nil, fmt.Errorf("fileindex/tx: next uid %d: %w", next, mailbox.ErrUIDSpaceFull)
+			}
 			fs.file.Header.NextUID = next + 1
 			op.meta.UID = next
-		}
-		if err := fs.appendLocked(op.meta); err != nil {
+		} else if err := t.idx.claimIssued(fs, t.folderID, op.meta.UID); err != nil {
 			return nil, err
 		}
-		return fs.appendLogRecords(fs.file.Records[len(fs.file.Records)-1])
+		rec, err := fs.appendLockedWith(op.meta, nil)
+		if err != nil {
+			return nil, err
+		}
+		return fs.appendLogRecords(rec)
 	case opMarkDirty:
 		return fs.markDirtyLocked(op.uid, op.dirty)
 	}

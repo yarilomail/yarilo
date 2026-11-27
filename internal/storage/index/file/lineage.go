@@ -2,6 +2,7 @@ package file
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"os"
 
@@ -15,8 +16,14 @@ import (
 const extNameLineage = "lineage"
 
 const (
-	lineageHdrSize    = 24
+	lineageHdrSize    = 28
 	lineageHdrMinSize = 16
+	// lineageOrderedSize is the size up to the digest: a base written before
+	// the flags word ends there.
+	lineageOrderedSize = 24
+	// lineageInUIDOrder marks a base whose records lie in uid order: only such
+	// a base is searched by its chunks (#2632).
+	lineageInUIDOrder = 1
 	lineageUnknown    = 0 // no extension, or a base written before it existed
 	// legacyLogLineage is the FileSeq every pre-extension log carries; minted
 	// lineages start above it (§7), so a base can never mistake one for its own.
@@ -31,6 +38,7 @@ type lineageHdr struct {
 	// RecordsDigest lets a reader prove, not assume, that a rewritten base holds
 	// what it already has -- same reasoning as the mdbox map (#1228).
 	RecordsDigest uint64
+	Flags         uint32
 }
 
 func encodeLineageHdr(h lineageHdr) []byte {
@@ -39,6 +47,7 @@ func encodeLineageHdr(h lineageHdr) []byte {
 	binary.LittleEndian.PutUint32(b[4:8], h.FoldedLineage)
 	binary.LittleEndian.PutUint64(b[8:16], h.FoldedOffset)
 	binary.LittleEndian.PutUint64(b[16:24], h.RecordsDigest)
+	binary.LittleEndian.PutUint32(b[24:28], h.Flags)
 	return b
 }
 
@@ -54,8 +63,11 @@ func decodeLineageHdr(b []byte) lineageHdr {
 	if len(b) >= lineageHdrMinSize {
 		h.FoldedOffset = binary.LittleEndian.Uint64(b[8:16])
 	}
-	if len(b) >= lineageHdrSize {
+	if len(b) >= lineageOrderedSize {
 		h.RecordsDigest = binary.LittleEndian.Uint64(b[16:24])
+	}
+	if len(b) >= lineageHdrSize {
+		h.Flags = binary.LittleEndian.Uint32(b[24:28])
 	}
 	return h
 }
@@ -107,10 +119,34 @@ func replayStart(h lineageHdr, logLineage uint32) (offset int64, paired bool) {
 	}
 }
 
+// staleWith says the log cannot be this base's own nor the one it folded, while
+// both name a lineage: they were read at two different moments, and the log
+// replayed whole would put its old counters on a newer base. A base without a
+// lineage, a log without a header, and a pre-extension log under a base that
+// folded one without a lineage (a first fold after an upgrade stopped before
+// the rename) replay the log whole, as they always did. A log of another
+// mailbox (another IndexID) is no pair at all: its reader resets it.
+func staleWith(h lineageHdr, indexID uint32, lg *logReader) bool {
+	l := lg.lineage()
+	if h.Lineage == lineageUnknown || l == lineageUnknown || lg.hdr.IndexID != indexID {
+		return false
+	}
+	if l == legacyLogLineage && h.FoldedLineage == lineageUnknown {
+		return false
+	}
+	_, paired := replayStart(h, l)
+	return !paired
+}
+
+// errStalePair says a base and its log were read at different moments; the
+// reader reads both again.
+var errStalePair = errors.New("fileindex: the base and the log were read at different moments")
+
 // digestRecords hashes what a reader would serve, in file order, with FNV-1a --
 // a change detector for our own file, not a defence against a forged one. Runs
-// over records already in memory, so the proof costs no I/O beyond the header.
-func digestRecords(f *mailindex.File) uint64 {
+// over the chunks already in memory, so the proof costs
+// no I/O beyond the header.
+func (fs *folderState) digestRecords() uint64 {
 	const (
 		offset64 = 14695981039346656037
 		prime64  = 1099511628211
@@ -124,18 +160,18 @@ func digestRecords(f *mailindex.File) uint64 {
 	}
 	var scratch [8]byte
 	var zero [1]byte
-	for _, rec := range f.Records {
-		binary.LittleEndian.PutUint32(scratch[0:4], rec.UID)
-		binary.LittleEndian.PutUint32(scratch[4:8], uint32(rec.Flags))
+	for i := range fs.recordCount() {
+		binary.LittleEndian.PutUint32(scratch[0:4], fs.recUID(i))
+		binary.LittleEndian.PutUint32(scratch[4:8], uint32(fs.recFlags(i)))
 		write(scratch[:])
 		// Hashed as on disk: an unset extension is its width in zeros, and one
 		// holding no record bytes is not part of a record at all.
-		for _, ext := range f.Extensions {
+		for _, ext := range fs.file.Extensions {
 			if ext.RecordSize == 0 {
 				continue
 			}
 			write([]byte(ext.Name))
-			b := rec.Ext[ext.Name]
+			b, _ := fs.recExt(i, ext.Name)
 			if len(b) > int(ext.RecordSize) {
 				b = b[:ext.RecordSize]
 			}

@@ -398,6 +398,10 @@ Args: dict "root" $ "itls" <internalTLS config>.
   mountPath: {{ $root.Values.storage.maildir_root | default "/var/mail/vhosts" }}
 {{- end }}
 {{- include "yarilo.internalTLSMount" (dict "root" $root "itls" .itls "role" .role "vol" (printf "internal-tls-%s" .role)) }}
+{{- /* submission relays and opens no mailbox: no keys. */}}
+{{- if ne .role "submission" }}
+{{- include "yarilo.mailCryptMount" $root }}
+{{- end }}
 {{- include "yarilo.sieveGlobalMount" (dict "root" $root "role" .role) }}
 {{- include "yarilo.imapsieveMount" (dict "root" $root "role" .role) }}
 {{- /* extraVolumes are rendered on the StatefulSet, so the matching mounts
@@ -827,3 +831,47 @@ container that runs it: yarilo-lmtp and yarilo-imap.
       key: password
 {{- end }}
 {{- end }}
+
+{{/* The /tmp emptyDir of every pod; tmpSizeLimit bounds it (unset: none). */}}
+{{- define "yarilo.tmpEmptyDir" -}}
+{{- if .Values.tmpSizeLimit -}}
+{sizeLimit: {{ .Values.tmpSizeLimit | quote }}}
+{{- else -}}
+{}
+{{- end -}}
+{{- end -}}
+
+{{/* The mail encryption keys (storage.mail_crypt), in the containers that open mail. */}}
+{{- define "yarilo.mailCryptMount" -}}
+{{- if .Values.mailCrypt.secretName }}
+- name: mail-crypt
+  mountPath: /etc/yarilo/mail-crypt
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "yarilo.mailCryptVolume" -}}
+{{- if .Values.mailCrypt.secretName }}
+- name: mail-crypt
+  secret:
+    secretName: {{ .Values.mailCrypt.secretName }}
+    defaultMode: 0400
+{{- end }}
+{{- end -}}
+
+{{/*
+yarilo.goMemLimitEnv sets GOMEMLIMIT to 90 % of the container's memory limit,
+so the runtime collects before the kernel kills (#2661). Takes the resources.
+*/}}
+{{- define "yarilo.goMemLimitEnv" -}}
+{{- $mem := "" -}}
+{{- with .limits }}{{ $mem = toString (.memory | default "") }}{{ end -}}
+{{- if $mem -}}
+{{- $n := regexFind "^[0-9]+" $mem -}}
+{{- $unit := trimPrefix $n $mem -}}
+{{- $mul := dict "" 1 "Ki" 1024 "Mi" 1048576 "Gi" 1073741824 "K" 1000 "M" 1000000 "G" 1000000000 -}}
+{{- if not (hasKey $mul $unit) }}{{ fail (printf "goMemLimitEnv: memory limit %q has a unit this chart does not read" $mem) }}{{ end -}}
+- name: GOMEMLIMIT
+  value: {{ mul (div (mul (int64 $n) (get $mul $unit)) 10) 9 | quote }}
+{{- end -}}
+{{- end -}}

@@ -1,0 +1,11 @@
+## The MAILCRYPT window's B arms: the same keys, writing age. The two files differ in
+## write alone, so A reads what B wrote and only the write mode is compared.
+## The Secret is made for the window by hack/stand/mailcrypt-keys.sh and
+## deleted after it.
+mailCrypt:
+  secretName: yarilo-mail-crypt-window
+storage:
+  mail_crypt:
+    write: age
+    reference_keys:
+      - /etc/yarilo/mail-crypt/reference.pem

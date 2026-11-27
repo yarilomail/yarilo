@@ -81,7 +81,7 @@ func TestTheArmDeploysTheChartItNames(t *testing.T) {
 		`CHART="${YARILO_ARM_CHART:-$REPO}"`,
 		`git -C "$CHART" status --porcelain`,
 		`echo "-- chart: $(git -C "$CHART" describe`,
-		`upgrade yarilo "$CHART/helm"`,
+		`stand_deploy "$OUT/deploy-$ARM" "$TAG" "$CHART/helm"`,
 		`-f "$CHART/helm_values/values-sandbox.yaml"`,
 		`OVERLAY="$CHART/helm_values/`,
 	} {
@@ -124,6 +124,8 @@ func TestEveryCollectedCounterHasAReader(t *testing.T) {
 		"maildir_partial_pass_empty_total",
 		"quota_folders_opened_total",
 		"maildir_lock_hold_seconds",
+		"imap_thread_record_seconds",
+		"yarilo_threads_save_not_recorded_total",
 	} {
 		if strings.Count(src, metric) < 2 {
 			t.Errorf("%s is collected but never summed into a line an operator reads", metric)
@@ -176,6 +178,8 @@ func TestEveryOverlayCarriesOnlyItsOwnKeys(t *testing.T) {
 		{name: "blockprofile", allow: `^telemetry(\.pprof)?$`},
 		{name: "fsync-never", allow: `^storage(\.mail_fsync)?$`},
 		{name: "notls", allow: `^internalTLS(\.enabled)?$`},
+		{name: "locks-cpu", allow: `^components(\.locks)?$`},
+		{name: "lmtp-nocpu", allow: `^components(\.lmtp)?$`},
 		// The OAuth2 matrix overlays: every login would reach the IdP, so never an arm (#2231).
 		{name: "oauth2-local", allow: `^components(\.auth)?$`, notAnArm: true},
 		{name: "oauth2-introspection", allow: `^components(\.auth)?$`, notAnArm: true},
@@ -307,7 +311,14 @@ func TestNoHelperIsDefinedInsideABranch(t *testing.T) {
 // cannot be profiled still stops the arm.
 func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 	src := armSource(t)
-	if !strings.Contains(src, "retry_capture") {
+	if !strings.Contains(src, `/pprof.sh"`) {
+		t.Fatal("ab-arm.sh does not source pprof.sh, where the capture lives")
+	}
+	lib, err := os.ReadFile("pprof.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lib), "retry_capture() {") {
 		t.Fatal("no retry around the capture; one flaky forward ends an arm")
 	}
 	for _, kind := range []string{"block_profile", "cpu_profile"} {
@@ -317,7 +328,7 @@ func TestAFlakyForwardIsRetriedOnce(t *testing.T) {
 	}
 	// The retry must tell the two causes apart, or a pod with no pprof at all
 	// is tried twice and still fails the arm twice as slowly.
-	if !strings.Contains(src, `[ "$rc" = 2 ] || return "$rc"`) {
+	if !strings.Contains(string(lib), `[ "$rc" = 2 ] || return "$rc"`) {
 		t.Error("the retry does not distinguish a forward that never came up from a capture that failed")
 	}
 }
@@ -556,5 +567,513 @@ func TestSRSDomainIsTheSignDomain(t *testing.T) {
 		if got := strings.TrimSpace(string(out)); got != tc.want {
 			t.Errorf("srs_judge %q %q = %q, want %q", tc.srs, tc.sign, got, tc.want)
 		}
+	}
+}
+
+// The MAILCRYPT window compares write modes alone: the A and B overlays may
+// differ in storage.mail_crypt.write and nothing else, or B would measure
+// another change too. Both must be overlays ab-arm.sh accepts.
+func TestMailCryptOverlaysDifferInWriteAlone(t *testing.T) {
+	lines := func(name string) []string {
+		b, err := os.ReadFile(filepath.Join("..", "..", "helm_values", "values-sandbox-"+name+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, l := range strings.Split(string(b), "\n") {
+			if s := strings.TrimSpace(l); s != "" && !strings.HasPrefix(s, "#") {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	a, b := lines("mailcrypt-keys"), lines("mailcrypt-write")
+	if len(a) != len(b) {
+		t.Fatalf("the overlays have %d and %d lines", len(a), len(b))
+	}
+	diff := 0
+	for i := range a {
+		if a[i] != b[i] {
+			diff++
+			if strings.TrimSpace(a[i]) != `write: "off"` || strings.TrimSpace(b[i]) != "write: age" {
+				t.Errorf("line %d: %q against %q; only write may differ", i+1, a[i], b[i])
+			}
+		}
+	}
+	if diff != 1 {
+		t.Errorf("%d lines differ, want the write line alone", diff)
+	}
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^\s*mailcrypt-keys\|mailcrypt-write\)`).Match(arm) {
+		t.Error("ab-arm.sh does not name the mailcrypt overlays")
+	}
+}
+
+// The window's disk growth is B's message bytes against A's, per type, after
+// the same fill: every arm must write them, quoted so the pod's shell does not
+// expand the patterns against the domain's own directory.
+func TestEveryArmWritesItsMessageBytes(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	if !strings.Contains(s, `"disk: arm=$ARM type=$t message_bytes=`) {
+		t.Error("ab-arm.sh writes no per-type message bytes after the fill")
+	}
+	for _, p := range []string{`'*/Maildir/cur/*'`, `'*/Maildir/new/*'`, `'*/dbox-Mails/u.*'`, `'*/storage/m.*'`} {
+		if !strings.Contains(s, p) {
+			t.Errorf("pattern %s is not quoted for the pod's shell", p)
+		}
+	}
+}
+
+// The merge watcher's clock: busybox awk's %d is 32-bit and printed
+// -2147483648 for an uptime in milliseconds, which timed no merge (d2621h).
+func TestTheMergeWatchersClockDoesNotOverflow(t *testing.T) {
+	raw, err := os.ReadFile("thread-merge-watch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var now string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "now()") {
+			now = line
+		}
+	}
+	if now == "" {
+		t.Fatal("no now() in the watcher")
+	}
+	up := filepath.Join(t.TempDir(), "uptime")
+	if err := os.WriteFile(up, []byte("7901857.25 1234.50\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), "sh", "-c", "UPTIME="+up+"\n"+now+"\nnow").CombinedOutput()
+	if err != nil {
+		t.Fatalf("now: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "790185725" {
+		t.Errorf("now() = %q, want 790185725 hundredths", got)
+	}
+}
+
+// The summary of a run reads the merge time and the trigger off the files the
+// run leaves, and a run with every delivery 250 exits 0: grep -c counting none
+// exits 1, which failed a summary after d2621d.
+func TestTheMergeSummaryReadsARun(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"run.log": "2026-11-20T20:10:53Z u60@x merge-2 yarilo-backend-0: trigger_seen_cs=790190444 base_seen_cs=790190498 base_mtime=x base_size=6360058 log_after=215\n",
+		"phases.txt": "== u60@x merge-2\n" +
+			"phase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=70 rcpt=250 data=250 log_before=130900 log_after=131000\n" +
+			"phase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=72 rcpt=250 data=250 log_before=131000 log_after=131199\n",
+		"fill.txt": "phase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=60 rcpt=250 data=250\n",
+		"mem.txt":  "u60@x yarilo-backend-0 peak=1 anon=2 file=3\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := exec.CommandContext(t.Context(), "bash", "thread-merge-summary.sh", dir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("summary exited %v\n%s", err, out)
+	}
+	for _, want := range []string{"u60@x merge-2 yarilo-backend-0 merge 0.54 s", "u60@x merge-2 trigger data_ms=72", "deliveries not 250: 0"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("the summary lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// A run with a delivery not answered 250 exits non-zero, as the README says.
+func TestTheMergeSummaryFailsARunWithAFailedDelivery(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"run.log":    "",
+		"phases.txt": "== u60@x merge-1\nphase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=70 rcpt=250 data=451 log_before=1 log_after=2\n",
+		"fill.txt":   "phase: user=u60@x n=1 noop_ms=1 rcpt_ms=2 data_ms=60 rcpt=250 data=250\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := exec.CommandContext(t.Context(), "bash", "thread-merge-summary.sh", dir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("a run with a 451 exited 0:\n%s", out)
+	}
+	if !strings.Contains(string(out), "deliveries not 250: 1") {
+		t.Errorf("the summary does not count it:\n%s", out)
+	}
+}
+
+// A preparation that did not take fails the aged row with its reason: the
+// reason holds colons, so the type is read after the last one, never the first.
+func TestAFailedAgedPreparationFailsTheRow(t *testing.T) {
+	fn := regexp.MustCompile(`(?ms)^aged_target\(\) \{.*?^\}`).FindString(acceptSource(t))
+	if fn == "" {
+		t.Fatal("accept.sh lost aged_target")
+	}
+	for _, tc := range []struct{ spec, want string }{
+		{"prep: the fill of u98@d00002.test did not take (/w/acc/fill-aged.txt):maildir", "maildir fail the fill of u98@d00002.test did not take (/w/acc/fill-aged.txt)"},
+		{"prep: u149@d00003.test has 3 files older than a day, want 20 or more:sdbox", "sdbox fail u149@d00003.test has 3 files older than a day, want 20 or more"},
+		{":sdbox", "sdbox fail "},
+		{"u98@d00002.test 30:maildir", "maildir user u98@d00002.test"},
+	} {
+		out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\naged_target \"$1\"", "-", tc.spec).CombinedOutput()
+		if err != nil {
+			t.Fatalf("aged_target: %v\n%s", err, out)
+		}
+		if got := strings.TrimRight(string(out), "\n"); got != tc.want {
+			t.Errorf("aged_target %q = %q, want %q", tc.spec, got, tc.want)
+		}
+	}
+}
+
+// Every arm keeps the index of every account, base and both journals, before
+// the next arm empties the accounts; a header correction names only the
+// folder, so a few chosen ones would miss it. No bodies are taken.
+func TestEveryArmKeepsTheIndexOfEveryAccount(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	i := strings.Index(s, `step "index"`)
+	if i < 0 {
+		t.Fatal("ab-arm.sh keeps no index")
+	}
+	if j := strings.Index(s, `message_inventory > "$OUT/messages-last-arm.txt"`); j < i {
+		t.Error("the index is kept after the arm's end, or not at all")
+	}
+	block := s[i:]
+	block = block[:strings.Index(block, "\n\n")]
+	if !strings.Contains(block, "first_pod backend") || strings.Contains(block, "| head") {
+		t.Error("the index step does not take its pod through first_pod (#1875)")
+	}
+	for _, name := range []string{"-name yarilo.index ", "-name yarilo.index.log ", "-name yarilo.index.log.2 ", "find /var/mail/vhosts ", `"$OUT/index-$ARM.tgz"`} {
+		if !strings.Contains(block, name) {
+			t.Errorf("the index step does not name %q", name)
+		}
+	}
+	for _, body := range []string{"Maildir/cur", "dbox-Mails", "storage/m."} {
+		if strings.Contains(block, body) {
+			t.Errorf("the index step takes bodies: %s", body)
+		}
+	}
+}
+
+// The index step on live backends: a tar that fails, or an archive with
+// nothing in it, is said in the arm's output, and the arm goes on under
+// set -euo pipefail to its summary.
+func TestAFailedIndexStepDoesNotStopTheArm(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	block := s[strings.Index(s, `step "index"`):]
+	block = block[:strings.Index(block, "\nfi\n")+4]
+	for _, tc := range []struct {
+		name, kube, want string
+	}{
+		{"tar fails", `kube() { echo "tar: vanished" >&2; return 1; }`, "FAILED rc=1, 0 files"},
+		{"empty archive", `kube() { tar czf - -T /dev/null; }`, "FAILED rc=0, 0 files"},
+		{"one file", `kube() { tar czf - -C "$OUT" -T <(echo f); }`, "-- index of every account: 1 files"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := t.TempDir()
+			if err := os.WriteFile(filepath.Join(out, "f"), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			script := "set -euo pipefail\nOUT=" + out + "\nARM=B\nstep() { :; }\nfirst_pod() { echo p; }\n" +
+				tc.kube + "\n" + block + "\necho arm-went-on\n"
+			got, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
+			if err != nil {
+				t.Fatalf("the step stopped the arm: %v\n%s", err, got)
+			}
+			if !strings.Contains(string(got), tc.want) || !strings.Contains(string(got), "arm-went-on") {
+				t.Errorf("want %q and the arm going on, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
+// Every arm reads the index's counters from every service's telemetry port,
+// not only imap's: the header corrections came from fts.
+func TestEveryArmReadsTheIndexCountersOfEveryService(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	i := strings.Index(s, `step "index-counters"`)
+	if i < 0 {
+		t.Fatal("ab-arm.sh reads no index counters")
+	}
+	if j := strings.Index(s, `message_inventory > "$OUT/messages-last-arm.txt"`); j < i {
+		t.Error("the counters are read after the arm's end")
+	}
+	block := s[i:]
+	block = block[:strings.Index(block, "\n\n")]
+	for _, want := range []string{"containerPort", "808[0-9]", "fileindex_(stale_pair|header_corrected)_total", "stale_pair_failed=", "|| true"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the counters step does not carry %q", want)
+		}
+	}
+}
+
+// The counters step on two pods and two ports, one of which does not answer:
+// the summary counts what was asked and what answered and marks the line, and
+// a clean read prints both equal with no mark.
+func TestTheIndexCountersSayWhatWasRead(t *testing.T) {
+	arm, err := os.ReadFile("ab-arm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(arm)
+	block := s[strings.Index(s, `step "index-counters"`):]
+	block = block[:strings.Index(block, "\n\n# What the next arm")]
+	page := `fileindex_header_corrected_total{field=\"seen\"} 2
+fileindex_stale_pair_total{path=\"open\",result=\"retried\"} 4
+fileindex_stale_pair_total{path=\"reload\",result=\"failed\"} 0
+other_total 9`
+	for _, tc := range []struct {
+		name, down, want string
+	}{
+		{"every port answered", "none", "-- index counters: ports=4 answered=4 header_corrected=8 stale_pair_retried=16 stale_pair_failed=0"},
+		{"a port did not answer", "8085", "-- index counters: INCOMPLETE ports=4 answered=2 header_corrected=4 stale_pair_retried=8 stale_pair_failed=0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := t.TempDir()
+			kube := `kube() {
+  case "$1 $2" in
+    "get pods") printf 'pod/p0\npod/p1\n' ;;
+    "get pod") echo "10143 8080 9106 8085 8086x" ;;
+    exec*) case "$*" in *":` + tc.down + `/"*) return 1 ;; esac; printf '%s\n' "` + page + `" ;;
+  esac
+}`
+			script := "set -euo pipefail\nOUT=" + out + "\nARM=B\nstep() { :; }\n" + kube + "\n" + block + "\necho arm-went-on\n"
+			got, err := exec.CommandContext(t.Context(), "bash", "-c", script).CombinedOutput()
+			if err != nil {
+				t.Fatalf("the step stopped the arm: %v\n%s", err, got)
+			}
+			if !strings.Contains(string(got), tc.want) || !strings.Contains(string(got), "arm-went-on") {
+				t.Errorf("want %q and the arm going on, got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
+// store-parallel takes the captures it is asked for inside each type's run,
+// from the same helper as the arm, and fails when one is not taken.
+func TestStoreParallelProfilesInsideTheRun(t *testing.T) {
+	src, err := os.ReadFile("store-parallel.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	if !strings.Contains(s, `/pprof.sh"`) {
+		t.Fatal("store-parallel.sh does not source pprof.sh")
+	}
+	start := strings.Index(s, `for kind in $PROFILE; do`)
+	run := strings.Index(s, `hack/stand/run-job.sh" store-parallel`)
+	wait := strings.Index(s, `wait "$pid" || {`)
+	if start < 0 || run < 0 || wait < 0 || start >= run || run >= wait {
+		t.Fatal("the captures do not start before the run and get waited for after it")
+	}
+	if !strings.Contains(s, `retry_capture "$kind" "store-$LABEL-$t" "$PROFILE_SECS"`) {
+		t.Error("the capture does not go through retry_capture with the type in its label")
+	}
+	if !strings.Contains(s, "exit 1; }") {
+		t.Error("a capture not taken does not fail the run")
+	}
+}
+
+// Two kinds captured at once take ports of their own: on shared ports the
+// second rode the first's forward and lost it when the first closed it.
+func TestTwoCaptureKindsTakeTheirOwnPorts(t *testing.T) {
+	lib, err := os.ReadFile("pprof.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(lib)
+	body := src[strings.Index(src, "pprof_capture() {"):]
+	if strings.Contains(body, "18080") {
+		t.Error("pprof_capture still names a port of its own instead of its kind's")
+	}
+	fn := src[strings.Index(src, "pprof_port() {"):]
+	fn = fn[:strings.Index(fn, "\n}\n")+3]
+	ports := map[string]string{}
+	for _, kind := range []string{"profile", "block"} {
+		out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\npprof_port "+kind).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ports[kind] = strings.TrimSpace(string(out))
+	}
+	p, b := ports["profile"], ports["block"]
+	pi, _ := strconv.Atoi(p)
+	bi, _ := strconv.Atoi(b)
+	// Each kind forwards one port a pod: a hundred apart leaves room for every
+	// backend pod the stand runs.
+	if pi == 0 || bi == 0 || pi == bi || (bi-pi < 100 && pi-bi < 100) {
+		t.Errorf("profile on %s and block on %s overlap", p, b)
+	}
+}
+
+// store-parallel says what the imap process spent across the run, from the
+// same two pages as the latencies, per pod and in all.
+func TestStoreParallelPrintsThePodsCPU(t *testing.T) {
+	src, err := os.ReadFile("store-parallel.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	i := strings.Index(s, "store_cpu() {")
+	if i < 0 {
+		t.Fatal("no store_cpu")
+	}
+	fn := s[i:]
+	fn = fn[:strings.Index(fn, "\n}\n")+3]
+	if !strings.Contains(s, "process_cpu_seconds_total )") {
+		t.Error("the backend page does not keep the process CPU")
+	}
+	dir := t.TempDir()
+	before := filepath.Join(dir, "b")
+	after := filepath.Join(dir, "a")
+	if err := os.WriteFile(before, []byte("process_cpu_seconds_total{pod=\"p0\"} 100.5\nprocess_cpu_seconds_total{pod=\"p1\"} 50\nimap_command_seconds_bucket{x} 3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(after, []byte("process_cpu_seconds_total{pod=\"p0\"} 190.5\nprocess_cpu_seconds_total{pod=\"p1\"} 51.25\nimap_command_seconds_bucket{x} 9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), "bash", "-c", fn+"\nstore_cpu \"$1\" \"$2\"", "-", before, after).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "p0=90.00s p1=1.25s imap_cpu=91.25s"; !strings.Contains(string(out), want) {
+		t.Errorf("store_cpu = %q, want %q", out, want)
+	}
+}
+
+// CRYPT_ONLY=load keeps the keys, the rows under imaptest and the way back to
+// plaintext, and skips every other scenario; the helpers those rows and the
+// way back use are defined outside any skipped block.
+func TestTheCryptLoadModeSkipsOnlyTheOtherScenarios(t *testing.T) {
+	src, err := os.ReadFile("crypt-scenarios.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	guard := `if [ "$ONLY" != load ]; then`
+	inGuard := func(marker string) bool {
+		at := strings.Index(s, marker)
+		if at < 0 {
+			t.Fatalf("no %q in crypt-scenarios.sh", marker)
+		}
+		open := strings.LastIndex(s[:at], guard)
+		if open < 0 {
+			return false
+		}
+		depth := 0
+		for _, line := range strings.Split(s[open:at], "\n") {
+			l := strings.TrimSpace(line)
+			if strings.HasPrefix(l, "if ") {
+				depth++
+			}
+			if l == "fi" {
+				depth--
+			}
+		}
+		return depth > 0
+	}
+	for _, skipped := range []string{`row PASS "mixed-$t"`, `big=$(status_of "$BIG_USER")`, `echo "== pod killed mid-run"`, `echo "== rotation (§13.10)"`, `echo "== speed"`} {
+		if !inGuard(skipped) {
+			t.Errorf("%s runs in the load mode", skipped)
+		}
+	}
+	for _, kept := range []string{`echo "== under imaptest, each type"`, `echo "== back to plaintext"`, `trap finish EXIT`} {
+		if inGuard(kept) {
+			t.Errorf("%s is skipped in the load mode", kept)
+		}
+	}
+	first := strings.Index(s, guard)
+	for _, helper := range []string{"timed() {", "job_done() {", "load_running() {"} {
+		if at := strings.Index(s, helper); at < 0 || at > first {
+			t.Errorf("%s is not defined before the first skipped block", helper)
+		}
+	}
+	if !strings.Contains(s, `"load-$name"`) || !strings.Contains(s, `name="$t-r$round"`) {
+		t.Error("a round past the first does not carry its number in the row")
+	}
+	for _, bad := range []string{"CRYPT_ONLY=all", "CRYPT_LOAD_ROUNDS=0", "CRYPT_LOAD_ROUNDS=x"} {
+		cmd := exec.CommandContext(t.Context(), "bash", "crypt-scenarios.sh", "tag", t.TempDir()+"/out")
+		cmd.Env = append(os.Environ(), bad, "KUBECONFIG=/nonexistent")
+		if err := cmd.Run(); err == nil || cmd.ProcessState.ExitCode() != 2 {
+			t.Errorf("%s: exit %v, want 2 before anything runs", bad, err)
+		}
+	}
+}
+
+// The thread record line reads an arm's delta: bucket bounds for p50 and p99
+// and the saves left outside their conversation.
+func TestTheThreadRecordLineReadsADelta(t *testing.T) {
+	src := armSource(t)
+	i := strings.Index(src, `$1 == "yarilo_threads_save_not_recorded_total"`)
+	if i < 0 {
+		t.Fatal("no thread record line")
+	}
+	start := strings.LastIndex(src[:i], "awk '") + len("awk '")
+	end := i + strings.Index(src[i:], "\n    '")
+	prog := src[start:end]
+	delta := filepath.Join(t.TempDir(), "delta.txt")
+	page := "yarilo_threads_save_not_recorded_total 3\n" +
+		"imap_thread_record_seconds_bucket{le=\"0.001\"} 90\n" +
+		"imap_thread_record_seconds_bucket{le=\"0.016\"} 99\n" +
+		"imap_thread_record_seconds_bucket{le=\"2\"} 100\n" +
+		"imap_thread_record_seconds_bucket{le=\"+Inf\"} 100\n" +
+		"maildir_lock_hold_seconds_bucket{site=\"save\",le=\"1\"} 7\n"
+	if err := os.WriteFile(delta, []byte(page), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(t.Context(), "awk", prog, delta).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := "thread record: n=100 p50<=0.001s p99<=0.016s not_threaded=3"; string(out) != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+}
+
+// Every arm keeps the logs of every pod and every metrics page whole, before
+// the next arm's deploy replaces them: the lock service's and the LMTP's pages
+// held what a window had to explain afterwards.
+func TestEveryArmKeepsEveryPodsLogsAndMetrics(t *testing.T) {
+	src := armSource(t)
+	logs := src[strings.Index(src, `step "logs"`):]
+	logs = logs[:strings.Index(logs, `step "metrics"`)]
+	if strings.Contains(logs, "component=backend") || !strings.Contains(logs, "status.phase=Running") {
+		t.Error("the logs step keeps only the backends")
+	}
+	i := strings.Index(src, `step "metrics"`)
+	if i < 0 {
+		t.Fatal("ab-arm.sh keeps no metrics pages")
+	}
+	if j := strings.Index(src, `message_inventory > "$OUT/messages-last-arm.txt"`); j < i {
+		t.Error("the metrics are kept after the arm's end")
+	}
+	block := src[i:]
+	block = block[:strings.Index(block, "\n\n")]
+	for _, want := range []string{"containerPort", "/metrics", "wget -T 5", "|| continue", `"$OUT/metrics-$ARM/$po-$port.prom"`} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the metrics step does not carry %q", want)
+		}
+	}
+	if strings.Contains(block, "grep -E") {
+		t.Error("the metrics step filters the pages")
 	}
 }

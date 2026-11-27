@@ -31,6 +31,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.jmapLogin.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-jmap-login"
             - name: LOG_LEVEL
@@ -121,7 +122,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.externalTLSVolume" .Values.components.jmapLogin.tls.secretName | nindent 8 }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.jmapLogin.internalTLS "role" "jmap-login") | nindent 8 }}
         {{- with .Values.extraVolumes }}

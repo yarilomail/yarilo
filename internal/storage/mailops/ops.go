@@ -67,6 +67,11 @@ func NewDelivery(cfg Config, box mailbox.Box, user *mailbox.UserInfo) *Ops {
 // Committed runs what follows a committed change to one message: the index,
 // the quota usage and the event. vsize 0 means the size is not known here.
 func (o *Ops) Committed(f *mailbox.Folder, ev locks.EventType, uid, vsize uint32, guid [16]byte) {
+	o.CommittedIn(o.box, f, ev, uid, vsize, guid)
+}
+
+// CommittedIn is Committed for a change in box, whose store names the event.
+func (o *Ops) CommittedIn(box mailbox.Box, f *mailbox.Folder, ev locks.EventType, uid, vsize uint32, guid [16]byte) {
 	if ev == locks.EventDelivered || ev == locks.EventExpunged {
 		o.ftsNotify(f, ev == locks.EventExpunged, uid, guid)
 		d, n := int64(vsize), int64(1)
@@ -75,19 +80,25 @@ func (o *Ops) Committed(f *mailbox.Folder, ev locks.EventType, uid, vsize uint32
 		}
 		o.Quota.committed(vsize > 0, d, n)
 	}
-	o.EmitMessage(f.Name, ev, uid)
+	o.EmitMessageIn(box, f.Name, ev, uid)
 }
 
 // EmitMessage publishes a change to one folder for IDLE sessions on any pod;
 // best effort, the state is already on disk.
 func (o *Ops) EmitMessage(folder string, ev locks.EventType, uid uint32) {
+	o.EmitMessageIn(o.box, folder, ev, uid)
+}
+
+// EmitMessageIn is EmitMessage for a folder of box: a shared store's events go
+// on its own keys, where every user's sessions on it listen (#2600).
+func (o *Ops) EmitMessageIn(box mailbox.Box, folder string, ev locks.EventType, uid uint32) {
 	if o.cfg.Locker == nil || o.user == nil || o.user.Username == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	payload := strconv.FormatUint(uint64(uid), 10)
-	if err := o.cfg.Locker.Emit(ctx, locks.MailboxKey(o.user.Username, folder), ev, payload); err != nil {
+	if err := o.cfg.Locker.Emit(ctx, locks.MailboxKey(mailbox.LockUserOf(box, o.user.Username), folder), ev, payload); err != nil {
 		slog.Debug(o.cfg.Protocol+": emit event failed", "folder", folder, "type", string(ev), "err", err)
 	}
 }

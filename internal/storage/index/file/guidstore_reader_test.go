@@ -17,6 +17,10 @@ func TestGUIDStoreWriterHelper(t *testing.T) {
 	}
 	ui := New().OpenUser(&mailbox.UserInfo{Username: testUser, Home: home}).(*userHandle).ui
 	defer ui.Close() //nolint:errcheck
+	if os.Getenv("YARILO_TEST_GUID_COMPACT") != "" {
+		// The write folds its journal, so the base is replaced as a fold does.
+		ui.b.logCompactMinBytes, ui.b.logCompactMaxBytes = 1, 1
+	}
 	uid := uint32(2041)
 	guid := [16]byte{1}
 	if os.Getenv("YARILO_TEST_GUID_SECOND") != "" {
@@ -29,11 +33,27 @@ func TestGUIDStoreWriterHelper(t *testing.T) {
 	}
 }
 
-// appendFromAnotherProcess runs the helper and fails the row on its output.
+// appendFromAnotherProcess runs the helper and fails the row on its output:
+// the copy goes to the store's journal, the base untouched.
 func appendFromAnotherProcess(t *testing.T, home string, second bool) {
+	t.Helper()
+	runWriter(t, home, second, false)
+}
+
+// appendFoldedFromAnotherProcess is appendFromAnotherProcess with the journal
+// folded after the write, so the base is replaced as a fold replaces it.
+func appendFoldedFromAnotherProcess(t *testing.T, home string, second bool) {
+	t.Helper()
+	runWriter(t, home, second, true)
+}
+
+func runWriter(t *testing.T, home string, second, fold bool) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestGUIDStoreWriterHelper$", "-test.v")
 	cmd.Env = append(os.Environ(), "YARILO_TEST_GUID_HOME="+home)
+	if fold {
+		cmd.Env = append(cmd.Env, "YARILO_TEST_GUID_COMPACT=1")
+	}
 	if second {
 		cmd.Env = append(cmd.Env, "YARILO_TEST_GUID_SECOND=1")
 	}

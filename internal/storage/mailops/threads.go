@@ -3,9 +3,11 @@ package mailops
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/yarilomail/yarilo/v2/internal/userstate/threads"
@@ -19,10 +21,31 @@ const (
 	threadLockTimeout = 10 * time.Second
 	threadLockTTL     = 15 * time.Second
 	threadLockRenew   = 5 * time.Second
+	// threadLockWait is how long a save queues for the account's thread lock.
+	// Taken once, a lock any other save of the account held turned the
+	// message away at once; a save holds it for one append.
+	threadLockWait = 2 * time.Second
+	// mergeLockWait is how long a save waits to merge: another merge running
+	// is the one that folds this log, so it does not wait for it.
+	mergeLockWait = 100 * time.Millisecond
 )
 
-// recordThread puts a saved message into its conversation (#2217); a failure
-// leaves the mail as it is, and the migration step rebuilds the sidecar.
+// withThreadLock runs fn under the account's thread lock. One plain request
+// first, as a free lock costs no more than that; only a lock someone holds
+// (ErrBusy) queues, up to threadLockWait. A free lock taken through the
+// waiting path cost an IMAP save tens of milliseconds (#2591).
+func withThreadLock(ctx context.Context, l locks.Locker, user, owner string, fn func(context.Context) error) error {
+	err := locks.WithLock(ctx, l, locks.ThreadsKey(user), owner, threadLockTTL, threadLockRenew, fn)
+	if !errors.Is(err, locks.ErrBusy) {
+		return err
+	}
+	return locks.WithLockWaiting(ctx, l, locks.ThreadsKey(user), owner, threadLockTTL, threadLockRenew, threadLockWait, fn)
+}
+
+// recordThread puts a saved message into its conversation (#2217), queueing
+// for the account's lock. A failure leaves the mail as it is, outside its
+// conversation, until a client asks for its thread id and ThreadLate records
+// it (#2420).
 func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	if o.cfg.Threads == nil || o.user == nil || guid == ([16]byte{}) {
 		return
@@ -45,8 +68,7 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	defer cancel()
 	var err error
 	if o.cfg.Locker != nil {
-		err = locks.WithLock(ctx, o.cfg.Locker, locks.ThreadsKey(user),
-			owner, threadLockTTL, threadLockRenew, rec)
+		err = withThreadLock(ctx, o.cfg.Locker, user, owner, rec)
 	} else {
 		err = rec(ctx)
 	}
@@ -59,6 +81,62 @@ func (o *Ops) recordThread(guid [16]byte, raw []byte) {
 	// between the two saw the old conversation.
 	if wrote {
 		locks.EmitBest(o.cfg.Locker, locks.ThreadsKey(user), locks.EventThreads, "")
+	}
+	o.mergeThreads(user, path)
+}
+
+// merging is the process's one thread merge in flight; a due merge that
+// finds it taken is left to the account's next save.
+var merging atomic.Bool
+
+// mergeSeam, when set, runs in the merge's goroutine before and after it.
+var mergeSeam func(done bool)
+
+// mergeThreads folds the log into the base once it passes the tail size, in
+// the background: the save returns first (THREADS-STORE.md §4, #2651). The
+// rewrite runs under the merge's own lock, and only the log's swap takes the
+// account's; a process stopped mid-merge leaves a pair the next one finishes.
+func (o *Ops) mergeThreads(user, path string) {
+	if !o.cfg.Threads.MergeDue(path) || !merging.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		if mergeSeam != nil {
+			mergeSeam(false)
+		}
+		// Cleared before the seam says so: a test that saves on "finished"
+		// must find no merge running.
+		defer func() {
+			merging.Store(false)
+			if mergeSeam != nil {
+				mergeSeam(true)
+			}
+		}()
+		o.mergeNow(user, path)
+	}()
+}
+
+func (o *Ops) mergeNow(user, path string) {
+	owner := locks.Owner(user, o.user.LockID())
+	hold := func(fn func() error) error {
+		if o.cfg.Locker == nil {
+			return fn()
+		}
+		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), o.cfg.Protocol+"-threads-swap"), threadLockTimeout)
+		defer cancel()
+		return withThreadLock(ctx, o.cfg.Locker, user, owner, func(context.Context) error { return fn() })
+	}
+	merge := func(context.Context) error { return threads.MergeStore(path, hold) }
+	var err error
+	if o.cfg.Locker == nil {
+		err = merge(context.Background())
+	} else {
+		ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), o.cfg.Protocol+"-threads-merge"), mergeLockWait)
+		defer cancel()
+		err = locks.WithLock(ctx, o.cfg.Locker, locks.ThreadsMergeKey(user), owner, threadLockTTL, threadLockRenew, merge)
+	}
+	if err != nil {
+		slog.Warn(o.cfg.Protocol+": thread log not merged into its base", "user", user, "err", err)
 	}
 }
 
@@ -139,6 +217,7 @@ func (o *Ops) ThreadLate(folder string, msgs []*mailbox.MessageMeta) (map[string
 	}
 	if wrote {
 		locks.EmitBest(o.cfg.Locker, locks.ThreadsKey(user), locks.EventThreads, "")
+		o.mergeThreads(user, path)
 	}
 	return out, err
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt/agestream"
 	"github.com/yarilomail/yarilo/v2/internal/storage/idxrebuild"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/crlf"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailbox/mboxenc"
@@ -49,6 +52,13 @@ type Backend struct {
 	listUTF8 bool
 	// fsync says what reaches the disk before a delivery is answered (#1847).
 	fsync mailbox.FsyncMode
+	// crypt seals bodies on save and opens them on fetch (MAILCRYPT).
+	crypt *mailcrypt.Layer
+}
+
+// WithCrypt sets the layer that encrypts bodies at rest.
+func WithCrypt(l *mailcrypt.Layer) Option {
+	return func(b *Backend) { b.crypt = l.ForDriver(driverName) }
 }
 
 // Option configures a Backend at construction time.
@@ -108,6 +118,7 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserMailbox {
 		separator:  mailbox.SepOrDefault(u.Separator),
 		escapeChar: u.StorageEscapeChar,
 		username:   u.Username,
+		lockUser:   u.LockUser(),
 		owner:      locks.Owner(u.Username, u.LockID()),
 		listUTF8:   b.listUTF8,
 	}
@@ -120,6 +131,7 @@ type userMailbox struct {
 	separator  string // IMAP hierarchy separator; converted to "/" on disk (fs nesting)
 	escapeChar string // storage-name escape char; "" disables escaping
 	username   string
+	lockUser   string // lock keys: the user, or a shared store's name
 	owner      string
 	listUTF8   bool
 	mu         sync.Mutex
@@ -164,13 +176,13 @@ func (u *userMailbox) withMailboxLockSite(folder, site string, fn func() error) 
 	if u.b.locker == nil {
 		return fn()
 	}
-	key := locks.MailboxKey(u.username, folder)
+	key := locks.MailboxKey(u.lockUser, folder)
 	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
 		return err
 	} else if held != locks.HoldNone {
 		return fn()
 	}
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), 35*time.Second)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), site), folderLockWait)
 	defer cancel()
 	lk, err := locks.Acquire(ctx, u.b.locker, key, u.owner, 30*time.Second)
 	if err != nil {
@@ -302,8 +314,8 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 	if a > b {
 		a, b = b, a
 	}
-	keyA := locks.MailboxKey(u.username, a)
-	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "sdbox-folder"), 35*time.Second)
+	keyA := locks.MailboxKey(u.lockUser, a)
+	ctx, cancel := context.WithTimeout(locks.WithSite(context.Background(), "sdbox-folder"), folderLockWait)
 	defer cancel()
 	heldA, herr := locks.Reentrant(u.b.locker, keyA, "sdbox-folder", false)
 	if herr != nil {
@@ -319,7 +331,7 @@ func (u *userMailbox) withTwoMailboxLocks(folderA, folderB string, fn func() err
 	if a == b {
 		return fn()
 	}
-	keyB := locks.MailboxKey(u.username, b)
+	keyB := locks.MailboxKey(u.lockUser, b)
 	heldB, herr := locks.Reentrant(u.b.locker, keyB, "sdbox-folder", false)
 	if herr != nil {
 		return herr
@@ -371,12 +383,22 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 		return "", 0, noGUID, fmt.Errorf("sdbox/save: mkdir: %w", mailboxmetrics.ClassifyWrite(driverName, folder, err))
 	}
 
+	r, err := mailcrypt.Guard(r)
+	if err != nil {
+		return "", 0, noGUID, fmt.Errorf("sdbox/save: %w", err)
+	}
 	body, err := readBodyCRLF(r)
 	if err != nil {
 		return "", 0, noGUID, fmt.Errorf("sdbox/save: read body: %w", err)
 	}
 	physSize := uint32(len(body))
 	virtSize := physSize
+	var stored bytes.Buffer
+	if err := u.b.crypt.Seal(&stored, bytes.NewReader(body)); err != nil {
+		return "", 0, noGUID, fmt.Errorf("sdbox/save: %w", err)
+	}
+	sealed := u.b.crypt.Writes()
+	body = stored.Bytes()
 
 	if guid == noGUID {
 		guid = randomGUID()
@@ -389,15 +411,20 @@ func (u *userMailbox) SaveReceived(folder string, r io.Reader, _ uint32, _ int64
 
 	var buf bytes.Buffer
 	buf.Write(encodeFileHeaderLine(now))
-	buf.Write(encodeMessageHeader(messageHeader{Size: uint64(physSize)}))
+	buf.Write(encodeMessageHeader(messageHeader{Size: uint64(len(body))}))
 	buf.Write(body)
 	// R, V, G: the order the reference writes, so a store of ours differs from
-	// one of theirs in no byte a reader has to skip past.
-	buf.Write(encodeMetadataBlock([]metadataEntry{
+	// one of theirs in no byte a reader has to skip past. Z only when sealed:
+	// the header then counts ciphertext and Z keeps the plaintext's size.
+	meta := []metadataEntry{
 		{Key: metaKeyReceived, Value: fmt.Sprintf("%x", recv)},
 		{Key: metaKeyVirtualSize, Value: fmt.Sprintf("%x", virtSize)},
 		{Key: metaKeyGUID, Value: guidHex(guid)},
-	}))
+	}
+	if sealed {
+		meta = append(meta, metadataEntry{Key: metaKeyPhysicalSize, Value: fmt.Sprintf("%x", physSize)})
+	}
+	buf.Write(encodeMetadataBlock(meta))
 
 	// The file keeps its temp name until a uid exists: the name is u.<uid>, and
 	// only the caller's allocating cycle knows the number (#1704).
@@ -542,49 +569,158 @@ func (u *userMailbox) Move(srcFolder, dstFolder, filename string, guid [16]byte)
 // metadata_magic_post; the file header and metadata are skipped. Caller MUST
 // Close.
 func (u *userMailbox) Fetch(folder, filename string, _ bool) (io.ReadCloser, error) {
-	path := filepath.Join(u.folderPath(folder), filename)
+	return u.fetchPath(filepath.Join(u.folderPath(folder), filename))
+}
+
+func (u *userMailbox) fetchPath(path string) (io.ReadCloser, error) {
+	f, sec, err := openBody(path)
+	if err != nil {
+		return nil, err
+	}
+	// Our own sealed body is CRLF already and is read in place, by chunk.
+	if bodyKind(sec) == mailcrypt.Age {
+		o, err := u.b.crypt.Open(sec, f)
+		if err != nil {
+			return nil, fmt.Errorf("sdbox/fetch %s: %w", path, err)
+		}
+		return o, nil
+	}
+	bodyBytes := make([]byte, sec.Size())
+	if _, err := io.ReadFull(sec, bodyBytes); err != nil {
+		_ = f.Close()
+		return nil, corruptRead("read body", path, err)
+	}
+	_ = f.Close()
+	o, err := u.b.crypt.Open(bytes.NewReader(bodyBytes), nil)
+	if err != nil {
+		return nil, fmt.Errorf("sdbox/fetch %s: %w", path, err)
+	}
+	// Through crlf.New: a record this server wrote is already CRLF and comes
+	// out unchanged, while one written by another implementation can be stored
+	// with bare LF and must not reach the wire that way (#1527).
+	return crlfCloser{Reader: crlf.New(o), Closer: o}, nil
+}
+
+// crlfCloser closes what the CRLF filter reads from: a reference body opened
+// through the cache holds a file.
+type crlfCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// openBody opens a message file and returns the section holding its body.
+func openBody(path string) (*os.File, *io.SectionReader, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		// A vanished file is corruption (the index still references it); any
 		// other open error (EIO, EACCES) is transient and must not rebuild.
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("sdbox/fetch: open %s: %w: %w", path, err, mailbox.ErrCorruptStorage)
+			return nil, nil, fmt.Errorf("sdbox/fetch: open %s: %w: %w", path, err, mailbox.ErrCorruptStorage)
 		}
-		return nil, fmt.Errorf("sdbox/fetch: open %s: %w", path, err)
+		return nil, nil, fmt.Errorf("sdbox/fetch: open %s: %w", path, err)
 	}
 	br := bufio.NewReader(f)
 	fileHdr, err := br.ReadBytes('\n')
 	if err != nil {
 		_ = f.Close()
-		return nil, corruptRead("read file header", path, err)
+		return nil, nil, corruptRead("read file header", path, err)
 	}
 	// The header's size comes from M, not from what this binary writes.
 	hdrSize, err := parseFileHeaderSize(fileHdr)
 	if err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("sdbox/fetch %s: %w: %w", path, err, mailbox.ErrCorruptStorage)
+		return nil, nil, fmt.Errorf("sdbox/fetch %s: %w: %w", path, err, mailbox.ErrCorruptStorage)
 	}
 	hdrBuf := make([]byte, hdrSize)
 	if _, err := io.ReadFull(br, hdrBuf); err != nil {
 		_ = f.Close()
-		return nil, corruptRead("read message header", path, err)
+		return nil, nil, corruptRead("read message header", path, err)
 	}
 	mh, err := decodeMessageHeader(hdrBuf)
 	if err != nil {
 		// Malformed header (bad magic/version) is structural corruption.
 		_ = f.Close()
-		return nil, fmt.Errorf("sdbox/fetch %s: %w: %w", path, err, mailbox.ErrCorruptStorage)
+		return nil, nil, fmt.Errorf("sdbox/fetch %s: %w: %w", path, err, mailbox.ErrCorruptStorage)
 	}
-	bodyBytes := make([]byte, mh.Size)
-	if _, err := io.ReadFull(br, bodyBytes); err != nil {
+	return f, io.NewSectionReader(f, int64(len(fileHdr)+hdrSize), int64(mh.Size)), nil
+}
+
+func bodyKind(sec *io.SectionReader) mailcrypt.Kind {
+	head := make([]byte, mailcrypt.PrefixLen)
+	n, _ := sec.ReadAt(head, 0)
+	return mailcrypt.Classify(head[:n])
+}
+
+// plainBodySize is a record's plaintext length for a listing: Z when the
+// record carries it, the age header's answer, the reference body counted, or
+// for a plaintext record the file's length as before.
+func (u *userMailbox) plainBodySize(path string, fileSize int64) uint32 {
+	if z, ok := readPhysicalSize(path); ok {
+		return z
+	}
+	f, sec, err := openBody(path)
+	if err != nil {
+		return uint32(fileSize)
+	}
+	kind := bodyKind(sec)
+	if kind == mailcrypt.Plain {
 		_ = f.Close()
-		return nil, corruptRead("read body", path, err)
+		return uint32(fileSize)
+	}
+	// Sealed: its plaintext size or 0, unknown, never the ciphertext's.
+	if kind == mailcrypt.Age {
+		n, err := agestream.PlainSize(sec, sec.Size())
+		_ = f.Close()
+		if err != nil {
+			return u.sizeUnknown(path, err)
+		}
+		return uint32(n)
 	}
 	_ = f.Close()
-	// Through crlf.New: a record this server wrote is already CRLF and comes
-	// out unchanged, while one written by another implementation can be stored
-	// with bare LF and must not reach the wire that way (#1527).
-	return io.NopCloser(crlf.New(bytes.NewReader(bodyBytes))), nil
+	rc, err := u.fetchPath(path)
+	if err != nil {
+		return u.sizeUnknown(path, err)
+	}
+	defer rc.Close() //nolint:errcheck
+	n, err := io.Copy(io.Discard, rc)
+	if err != nil {
+		return u.sizeUnknown(path, err)
+	}
+	return uint32(n)
+}
+
+// sizeUnknown counts and logs a sealed record whose size cannot be told, and
+// lists it as 0: unknown, never the ciphertext's length.
+func (u *userMailbox) sizeUnknown(path string, err error) uint32 {
+	u.b.crypt.FailedSize(err)
+	slog.Error("sdbox: plaintext size unknown, listed as 0", "path", path, "err", err)
+	return 0
+}
+
+// readPhysicalSize is the Z field of a record's metadata, when present.
+func readPhysicalSize(path string) (uint32, bool) {
+	f, sec, err := openBody(path)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close() //nolint:errcheck
+	entries, err := decodeMetadataBlock(io.NewSectionReader(f, sec.Size()+bodyOffset(sec), 1<<16))
+	if err != nil {
+		return 0, false
+	}
+	for _, e := range entries {
+		if e.Key == metaKeyPhysicalSize {
+			if v, derr := strconv.ParseUint(strings.TrimSpace(e.Value), 16, 32); derr == nil {
+				return uint32(v), true
+			}
+		}
+	}
+	return 0, false
+}
+
+func bodyOffset(sec *io.SectionReader) int64 {
+	_, off, _ := sec.Outer()
+	return off
 }
 
 // corruptRead classifies a read error: a truncated file (EOF / unexpected EOF)
@@ -673,7 +809,7 @@ func (u *userMailbox) List(folder string) ([]*mailbox.MessageMeta, error) {
 		}
 		meta := &mailbox.MessageMeta{
 			UID:          uint32(uid64),
-			Size:         uint32(info.Size()),
+			Size:         u.plainBodySize(filepath.Join(u.folderPath(folder), e.Name()), info.Size()),
 			InternalDate: info.ModTime(),
 		}
 		// GUID and R come from the metadata block; mtime is only the fallback.
@@ -757,7 +893,7 @@ func (u *userMailbox) Scan(folder string) ([]mailbox.ScanRecord, error) {
 		}
 		rec := mailbox.ScanRecord{
 			Filename:     e.Name(),
-			Size:         uint32(info.Size()),
+			Size:         u.plainBodySize(filepath.Join(dir, e.Name()), info.Size()),
 			InternalDate: info.ModTime(),
 		}
 		// Best-effort metadata pull. Errors are non-fatal: the filename is
@@ -936,8 +1072,14 @@ func randomGUID() [16]byte {
 // Username implements mailbox.SelfNaming: a diagnostic line names the account.
 func (u *userMailbox) Username() string { return u.username }
 
+// LockUser is the name this store's lock keys are built from.
+func (u *userMailbox) LockUser() string { return u.lockUser }
+
 // DriverName is the label this driver's messages are counted under.
 func (u *userMailbox) DriverName() string { return driverName }
+
+// folderLockWait bounds the wait for a folder's lock. Test seam.
+var folderLockWait = 35 * time.Second
 
 // syncFile is the durability call. A test seam: a row counts it, because
 // nothing else in the package observes whether it happened (#1847).

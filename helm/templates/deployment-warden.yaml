@@ -42,6 +42,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.warden.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-warden"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
@@ -80,7 +81,7 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.warden.internalTLS "role" "warden") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

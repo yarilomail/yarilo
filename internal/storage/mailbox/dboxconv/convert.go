@@ -85,8 +85,11 @@ func NewMapCorrespondence(storageDir string, dst *mdboxmap.Map) (*MapCorresponde
 	for _, e := range entries {
 		c.theirs[e.MapUID] = e
 	}
-	for _, r := range dst.Records() {
+	if err := dst.EachRecord(func(r mdboxmap.MapEntry) error {
 		c.ours[[2]uint32{r.FileID, r.Offset}] = r.UID
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("dboxconv: our map: %w", err)
 	}
 	return c, nil
 }

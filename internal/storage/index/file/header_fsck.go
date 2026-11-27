@@ -9,18 +9,7 @@ import (
 // reconcileHeaderLocked re-derives the header from the records it describes,
 // as the reference's fsck does (#1831). Caller holds fs.mu.
 func (fs *folderState) reconcileHeaderLocked() {
-	var maxUID, seen, deleted uint32
-	for _, rec := range fs.file.Records {
-		if rec.UID > maxUID {
-			maxUID = rec.UID
-		}
-		if rec.Flags&mailindex.FlagSeen != 0 {
-			seen++
-		}
-		if rec.Flags&mailindex.FlagDeleted != 0 {
-			deleted++
-		}
-	}
+	maxUID, seen, deleted := fs.countRecordsLocked()
 	h := &fs.file.Header
 	if h.NextUID <= maxUID {
 		fs.headerCorrected("next_uid", h.NextUID, maxUID+1)
@@ -31,7 +20,7 @@ func (fs *folderState) reconcileHeaderLocked() {
 		have  *uint32
 		want  uint32
 	}{
-		{"messages", &h.MessagesCount, uint32(len(fs.file.Records))},
+		{"messages", &h.MessagesCount, uint32(fs.recordCount())},
 		{"seen", &h.SeenMessagesCount, seen},
 		{"deleted", &h.DeletedMessagesCount, deleted},
 	} {
@@ -43,9 +32,54 @@ func (fs *folderState) reconcileHeaderLocked() {
 }
 
 func (fs *folderState) headerCorrected(field string, was, now uint32) {
+	fs.headerFixed = true
 	metricHeaderCorrected.WithLabelValues(field).Inc()
 	slog.Warn("fileindex: header corrected from its records",
-		"trace_id", fs.traceID, "folder", fs.folder, "field", field, "was", was, "now", now)
+		"user", fs.user, "trace_id", fs.traceID, "folder", fs.folder, "field", field, "was", was, "now", now)
+}
+
+// countRecordsLocked is the last uid and the \Seen and \Deleted counts of the
+// records loaded. Caller holds fs.mu.
+func (fs *folderState) countRecordsLocked() (maxUID, seen, deleted uint32) {
+	for i := range fs.recordCount() {
+		maxUID = max(maxUID, fs.recUID(i))
+		flags := fs.recFlags(i)
+		if flags&mailindex.FlagSeen != 0 {
+			seen++
+		}
+		if flags&mailindex.FlagDeleted != 0 {
+			deleted++
+		}
+	}
+	return maxUID, seen, deleted
+}
+
+// recountHeaderLocked loads every record and re-derives the header from them.
+// Caller holds fs.mu.
+func (fs *folderState) recountHeaderLocked() error {
+	if fs.recs != nil && !fs.recs.AllLoaded() {
+		if err := fs.loadWriterRecords(); err != nil {
+			return err
+		}
+	}
+	fs.reconcileHeaderLocked()
+	return nil
+}
+
+// takeOne lowers a counter by one for a record a replay expunged. A counter
+// already at zero says the header was wrong before the expunge: it stays at
+// zero, is counted as a correction, and is marked unknown, so the end of the
+// replay recounts it from the records, as the reference sends a wrong counter
+// to its check.
+func (fs *folderState) takeOne(n *uint32, field string, unknown uint8) {
+	if *n > 0 {
+		*n--
+		return
+	}
+	fs.countersUnknown |= unknown
+	metricHeaderCorrected.WithLabelValues(field).Inc()
+	slog.Warn("fileindex: an expunge took a counter below zero; recounting",
+		"user", fs.user, "trace_id", fs.traceID, "folder", fs.folder, "field", field)
 }
 
 // moveCount adjusts a flag count for one record whose flags went from old to now.
@@ -57,4 +91,55 @@ func moveCount(n uint32, old, now, flag mailindex.MailFlag) uint32 {
 		return n - 1
 	}
 	return n
+}
+
+// checkHeaderLocked is the cheap check after a load or a replay
+// (INDEX-MEMORY.md §4): counts the header can be held to without reading the
+// records, and the last uid from the last chunk only. A failed check is the
+// one sign that recounts all.
+func (fs *folderState) checkHeaderLocked() error {
+	if len(fs.pending) > 0 {
+		// Counted from the journal's absolute updates, or unknown and
+		// resolved by a load at the end of the replay.
+		return nil
+	}
+	h := fs.file.Header
+	n := uint32(fs.recordCount())
+	ok := h.NextUID != 0 && h.MessagesCount == n &&
+		h.SeenMessagesCount <= h.MessagesCount && h.DeletedMessagesCount <= h.MessagesCount
+	// The last uid only from a chunk in memory: a base marked as in order
+	// is written with its next uid above its last record.
+	if ok && n > 0 && (fs.recs == nil || fs.recs.Loaded(fs.recs.Chunks()-1)) {
+		ok = fs.recUID(int(n)-1) < h.NextUID
+	}
+	if ok {
+		return nil
+	}
+	if err := fs.loadRecords(); err != nil {
+		return err
+	}
+	fs.reconcileHeaderLocked()
+	return nil
+}
+
+// loadWriterRecords loads a writer's chunks, and on the load that brings in
+// the last of them recounts the header on the way: a stale count does not
+// outlive the first whole read, and no read is made for it alone.
+func (fs *folderState) loadWriterRecords() error {
+	if fs.recs == nil || fs.loading {
+		return nil
+	}
+	if fs.recs.AllLoaded() {
+		return fs.applyPending()
+	}
+	fs.loading = true
+	defer func() { fs.loading = false }()
+	if err := fs.loadRecords(); err != nil {
+		return err
+	}
+	if len(fs.pending) > 0 || fs.countersUnknown != 0 {
+		return fs.applyPending() // recounts the header too
+	}
+	fs.reconcileHeaderLocked()
+	return nil
 }

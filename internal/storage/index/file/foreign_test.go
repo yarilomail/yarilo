@@ -598,3 +598,44 @@ func TestADboxFolderKeepsTheirIndexFiles(t *testing.T) {
 		}
 	}
 }
+
+// Every converted message has its row in the GUID store: a full-text hit is
+// resolved through it, so without one an adopted folder is indexed and still
+// never found (#2589).
+func TestAConvertedFolderRecordsItsMessagesInTheGUIDStore(t *testing.T) {
+	home := foreignStore(t)
+	idx, _ := openStore(t, home)
+	f, err := idx.OpenFolder("INBOX", 0)
+	if err != nil {
+		t.Fatalf("open INBOX: %v", err)
+	}
+	msgs, err := idx.GetMessages(f.ID, mailbox.SeqSet{{From: 1, To: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, ok := idx.(mailbox.GUIDResolver)
+	if !ok {
+		t.Fatal("the index resolves no GUIDs")
+	}
+	guids := make([][16]byte, 0, len(msgs))
+	for _, m := range msgs {
+		if m.GUID == ([16]byte{}) {
+			t.Fatalf("uid %d converted with no GUID", m.UID)
+		}
+		guids = append(guids, m.GUID)
+	}
+	recs, err := resolver.GUIDCopies(guids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := map[[16]byte]mailbox.GUIDRecord{}
+	for _, r := range recs {
+		at[r.GUID] = r
+	}
+	for _, m := range msgs {
+		r, ok := at[m.GUID]
+		if !ok || r.FolderGUID != f.GUID || r.UID != m.UID {
+			t.Errorf("uid %d: GUID store row %+v (found %v), want folder %x uid %d", m.UID, r, ok, f.GUID, m.UID)
+		}
+	}
+}

@@ -47,7 +47,12 @@ jobs:
             echo "::error::go list -m -u failed; refusing to report 'no updates' from a lookup that did not finish"
             exit 1
           fi
-          UPDATES=$(echo "$LISTED" | grep '\[' || true)
+          # Not listed: a module replaced by our fork ("=>"), whose sync workflow
+          # rebases it onto upstream and opens an issue there on conflict; and
+          # modernc.org/libc and memory, which must stay at the versions
+          # modernc.org/sqlite's go.mod requires and move only with it.
+          UPDATES=$(echo "$LISTED" | grep '\[' | grep -v ' => ' \
+            | grep -vE '^modernc\.org/(libc|memory) ' || true)
           if [ -z "$UPDATES" ]; then
             echo "has_updates=false" >> "$GITHUB_OUTPUT"
           else

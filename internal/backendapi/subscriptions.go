@@ -112,6 +112,7 @@ func (s *Server) openSubsStore(w http.ResponseWriter, r *http.Request, readOnly 
 		uc.info.Username,
 		uc.lockOwner(),
 		s.opts.Locker)
+	store.SetLockName(bundle.info.LockName)
 	// One owner of NFC: a subscription addresses the same folder a session
 	// created, and new records go in NFC (#1113).
 	folder := mailbox.NormalizeName(req.Folder, bundle.info.SkipNFCNormalize)

@@ -1,0 +1,19 @@
+## LMTP CPU overlay for one arm: yarilo-lmtp without its CPU limit. Laid over
+## values-sandbox.yaml as a second -f by hack/stand/ab-arm.sh when the arm asks
+## for it, and never deployed on its own. yarilo delivered half the reference's
+## messages a second, and was throttled at the chart's 500m in every run while
+## the reference ran at 2 CPU (docs-internal#318); this arm asks whether the
+## limit is the whole of that gap.
+##
+## Only components.lmtp.resources belongs here: ab-arm.sh refuses an arm if
+## anything else appears. The request and the memory figures repeat the
+## chart's, so the arm differs in its CPU limit alone.
+components:
+  lmtp:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: null
+        memory: 256Mi

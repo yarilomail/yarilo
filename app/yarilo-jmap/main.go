@@ -22,6 +22,7 @@ import (
 	"github.com/yarilomail/yarilo/v2/internal/readyfile"
 	"github.com/yarilomail/yarilo/v2/internal/sieve"
 	"github.com/yarilomail/yarilo/v2/internal/storage/index/file"
+	"github.com/yarilomail/yarilo/v2/internal/storage/mailboxbuild"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
 	submproxy "github.com/yarilomail/yarilo/v2/internal/submission/proxy"
 	"github.com/yarilomail/yarilo/v2/internal/telemetry"
@@ -46,6 +47,10 @@ func main() {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		slog.Error("config load failed", "err", err, "path", cfgPath)
+		os.Exit(1)
+	}
+	if err := cfg.CheckRole("yarilo-jmap"); err != nil {
+		slog.Error("config validation failed", "err", err)
 		os.Exit(1)
 	}
 
@@ -284,6 +289,7 @@ func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error)
 	// file.withDistLock runs those unguarded when no locker is wired. That
 	// would race a live IMAP SELECT on the same shared index.
 	idxOpts := backend.IndexOptions(cfg.Storage, locker)
+	backend.SetWalkBudget(cfg.Storage)
 	return &jmap.Storage{
 		Mailbox: backend.BuildMailbox(cfg.Storage, locker),
 		MailboxByDriver: func(driver string) mailbox.MailboxBackend {
@@ -295,6 +301,7 @@ func buildStorage(cfg *config.Config, intTLS *tls.Config) (*jmap.Storage, error)
 		SpecialUseDefaults: cfg.Protocol.IMAP.SpecialUseDefaults,
 		Mailboxes:          cfg.PersonalAutoMailboxes(),
 		MailboxLimit:       cfg.Quota.QuotaPolicy().MailboxCount,
+		Crypt:              mailboxbuild.CryptLayer(cfg.Storage),
 	}, nil
 }
 

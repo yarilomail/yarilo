@@ -9,12 +9,37 @@ Windows run on the runner (`sb-run-01`), from a clean checkout, with
 runs from a laptop measures the same cluster with different tooling, and the
 checkout guard then guards nothing.
 
+## The rollout step
+
+Every deploy of a tag goes through `stand_deploy` in `deploy.sh`: the acceptance
+run, an arm of a window, the MAILCRYPT window's restore and the re-encryption
+scenarios.
+
+- A release left `pending-*` by a cut-off helm stops the step. Clearing it is a
+  manual act: delete the pending revision's `sh.helm.release.v1.yarilo.vN`
+  Secret, repeat the same upgrade, and say so in the run's row.
+- The images the chart renders are pulled first, by a pod per node asking no
+  CPU (`prepull.txt`). The node has no room for an old and a new backend pod at
+  once; a pull the new pods waited on held `yarilo-backend-1` down for 3.5
+  minutes (2026-11-19).
+- `backend-downtime.txt` holds the seconds each backend pod was not Ready
+  during the upgrade, and `backend-pending.txt` how long each new pod waited
+  to be scheduled and to be Ready; both go into the run's row. A StatefulSet
+  stops a pod before it starts its successor, so a few seconds a pod are the
+  design; time pending is a wait for CPU.
+
 ## The arm
 
 ```
 KUBECONFIG=~/.kube/sbox.yaml \
   bash hack/stand/ab-arm.sh <arm-label> <image-tag> <out-dir>
 ```
+
+An arm that fails past its checkout leaves `<out-dir>/snap-<arm>/`: pods and
+workloads wide, the namespace events by time, `helm status`, and `describe`,
+`logs` and `logs --previous` of every pod that is not ready. It is taken in the
+exit trap, before anything else touches the stand; a window script that stops
+on a failed arm keeps the stand as the snapshot shows it.
 
 | knob | default | what it changes |
 |:---|:---|:---|
@@ -36,6 +61,29 @@ git -C ~/stand worktree add ~/stand-v2.4.4 v2.4.4
 YARILO_ARM_CHART=~/stand-v2.4.4 bash hack/stand/ab-arm.sh A1 2.4.4 <out-dir>
 ```
 
+### The release window
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/release-window.sh <cut-tag> <last-release> <out-dir>
+```
+
+A1 (the last release, its own chart from a `stand-v<last-release>` worktree
+beside the checkout) / B (the cut image) / A2 (the last release, same slot as
+B), `store-parallel.sh` after each, and the stand goes back to the cut through
+`stand_deploy`. Each arm keeps every container's log of every backend pod in
+`logs-<arm>/` before the next arm's deploy replaces the pods, whether the arm
+passed or not (every running pod of the namespace, not only the backends),
+every metrics page of every pod whole in `metrics-<arm>/<pod>-<port>.prom`
+(an arm's pods are fresh, so a page read at its end is the arm's total), and
+the index files of every account (`yarilo.index`, `.log`,
+`.log.2`, no bodies) in `index-<arm>.tgz` before the next arm empties them. Each A arm runs on a store its own release filled: before A1
+the window empties every account of the test domains and the public namespace,
+which the scenarios write with the cut, and each arm empties the mailbox its
+seed fills. No arm runs the last release on a store the cut wrote: the old
+release is not meant to read it (#2685); the report says so in one line.
+`progress.txt` holds a line a step; a failed arm leaves `snap-<arm>/` and
+stops the window.
+
 ### Overlays
 
 `YARILO_ARM_OVERLAY=<name>` lays `helm_values/values-sandbox-<name>.yaml` over the
@@ -47,6 +95,98 @@ the ones allowed for it. An overlay is never deployed on its own.
   rule adds to every login. It repeats the whole list because helm replaces
   lists, so keep it in step with `values-sandbox.yaml`: the only difference is
   those two lines.
+
+## The MAILCRYPT window
+
+```
+KUBECONFIG=~/.kube/sbox.yaml YARILO_ARM_COMMIT=$(git rev-parse HEAD) \
+  bash hack/stand/mailcrypt-window.sh <image-tag> <out-dir>
+```
+
+A1 B1 A2 B2 A3 in one slot on one image: each change of `storage.mail_crypt.write`
+is crossed twice in each direction.
+
+- Every arm mounts the same keys (`mailcrypt-keys` overlay); B arms write age
+  (`mailcrypt-write`), and the two overlays differ in `write` alone, which a
+  test holds. Each arm wipes and fills, so A2 and A3 read no ciphertext from the
+  B arm before them.
+- `mailcrypt-keys.sh` makes the one-time hybrid age key under umask 077, never
+  printed, into Secret `yarilo-mail-crypt-window`, with the reference-format
+  test key of `internal/mailcrypt/refstream/testdata`. The window deletes it
+  after putting the stand back on its own values. A row names the key's type
+  only.
+- `watch-tmp.sh` samples `/tmp` in every pod, one container a pod, every 15 s,
+  through all five arms alike; `tmp-peak.txt` is each pod's peak.
+- Every arm writes `disk-<arm>.txt` after the fill: per type, the message
+  files' bytes and count (maildir `cur/` and `new/`, sdbox `u.*`, mdbox `m.*`,
+  no indexes) and the accounts' du. B's bytes less A's over the messages filled
+  is what age costs a message.
+- `crypt-checks.sh` after each B arm: `yarctl config check` exits 0,
+  `mailbox_crypt_sealed_total` grew and `mailbox_crypt_failed_total` is 0, no
+  message file of the arm is plaintext, disk = index, RFC822.SIZE is the
+  plaintext size, and a reference-format file in a maildir INBOX reads whole
+  and in part through FETCH. PASS/FAIL lines in `crypt-<arm>.txt`.
+
+The reference check alone, without a window, on the `mailcrypt-keys` overlay
+(reference keys set, nothing written encrypted), with the same one-time Secret
+and the same restore:
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/mailcrypt-reference-check.sh <image-tag> <out-dir>
+```
+
+Result in `crypt-reference.txt`.
+
+## The re-encryption scenarios
+
+```sh
+screen -dmS crypt bash -lc "cd ~/stand && KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/crypt-scenarios.sh <tag> ~/windows/<name>"
+```
+
+The six rows of MAILCRYPT §13.12, each a PASS or FAIL line in
+`crypt-scenarios.txt` naming the image and the status counts before and after:
+
+| Row | Passes when |
+|:---|:---|
+| `mixed-<type>` | a folder of plaintext and age mail on each type is rewritten: plain 0, other_key 0, failed 0 |
+| `speed` | messages a second for each type and source state (plain to age, the old key to the new, age to plain), nine figures, and status on a user of `CRYPT_BIG` (10000) messages, which says nothing of larger mailboxes (owner, 2026-11-19) |
+| `load-<type>` | on each type, a user of imaptest's range is re-encrypted while imaptest runs: running when the job starts and when it ends, or the row fails; a rerun after the load leaves plain 0 and imaptest logged no error |
+| `kill` | the backend pod holding a running job is deleted; the rerun finishes, plain 0, failed 0 |
+| `rotate` | a new key beside the old (`mailcrypt-keys.sh rotate-add`), `--all`: other_key 0 and reference 0; the old key removed (`rotate-drop`): no_key 0 |
+| `plain` | `--all --to plain` leaves no encrypted message |
+| `cleanup` | the stand is back on its values and the Secret is gone; a restore or a delete that did not finish, or encrypted mail left, is a FAIL and the run exits 1 |
+
+After each row, and before each deploy and restart, every container's log of
+every backend pod goes to `logs/<row or step>/<container>-<pod>.log`: a message
+a job failed is named only in backend-api's, a client's error only in its
+protocol's, and a restart takes the logs with it.
+
+Before the rows, the run checks the stand live: backend-api answers `crypt
+keys`, a hybrid key is the one new mail is sealed to, and a delivery under
+`write: age` counts as current.
+
+The keys live in Secret `yarilo-mail-crypt-window` for the run only, made by
+`mailcrypt-keys.sh` with `age-keygen` (in `~/bin` on the runner) and never
+printed. However the run ends, it removes them only when `status --all` shows
+no encrypted message; otherwise the stand stays on its keys with write off
+(`values-sandbox-mailcrypt-keys.yaml`), the Secret is kept and a `cleanup` FAIL
+names the users holding encrypted mail. The run's own rows go to docs-internal
+`stand-runs.md` with the downtime of each deploy.
+
+Each run adds `CRYPT_LOAD_N` (1000) messages to the first user of every
+imaptest range and fills its own users: imaptest figures after it are not
+comparable with rows before it.
+
+
+`CRYPT_ONLY=load` runs only the keys, the `load-<type>` rows and the way back
+to plaintext, `CRYPT_LOAD_ROUNDS` times over `CRYPT_TYPES` (default all three).
+A round past the first is named `load-<type>-r<round>`, with its own
+`imaptest-load-<type>-r<round>.log`. It is a reproduction run for a fault seen
+once under load (#2700), not the scenario set, and its rows do not stand for one:
+
+```sh
+CRYPT_ONLY=load CRYPT_TYPES=maildir CRYPT_LOAD_ROUNDS=5 bash hack/stand/crypt-scenarios.sh <tag> ~/windows/<name>
+```
 
 ## The acceptance run
 
@@ -72,7 +212,7 @@ issue it verifies.
 | SRS domain is the forwarder's sign domain | relay-postsrsd's `SRS_DOMAIN` equals the `sign_domain` dkim-milter-fwd logs at start: bounces of forwarded mail come back through the one, the forwarded copy is signed with the other. SKIP while `yarilo-relay` has no relay-fwd-out |
 | spam into Junk, clean mail into INBOX | two messages to u2 by LMTP, one carrying `X-Spam: Yes`; waits up to 60 s for the first in Junk and the second in INBOX, then neither may be in the other folder; the stand's `spam-junk` global Sieve script does the filing |
 | imaptest 0 errors, 0 stalled lines, per type | `hack/imaptest/job.yaml`, one type at a time |
-| an aged sdbox and maildir mailbox survive an open | an account with 20+ files modified over a day ago (mtime, as the #2172 sweep judged), counted right before and after an IMAP SELECT |
+| an aged sdbox and maildir mailbox survive an open | the run makes the account: `u149@d00003.test` and `u98@d00002.test`, emptied, 30 messages delivered, one open, the message files set two days back (mtime, as the #2172 sweep judged; the stand keeps no old account after a window); 20+ such files, counted right before and after an IMAP SELECT; a preparation that did not take fails the row with its reason |
 | a passdb nologin refused as a wrong password | `nologin@d00001.test` (`mailbox.nologin = 1`, set by `hack/db/seed-sandbox.sh`) logs in over IMAP with its password and with a wrong one; both answer the same `NO` (#2229) |
 | a per-protocol rule: IMAP refused as a wrong password, POP3 in | `ruleimap@d00001.test` (`mailbox.imap_enabled = 0`; the stand's password query reads it through `CASE %s`) answers IMAP with its password exactly as with a wrong one, and logs in over POP3 (#2227) |
 | a per-protocol rule: delivery refused as an unknown recipient | `rulelmtp@d00001.test` (`mailbox.lmtp_enabled = 0`; the stand's user query reads it through `CASE %s`) and a nonexistent address in one LMTP transaction: the login proxy takes both RCPTs, the backend answers both after DATA with the same reply but for the address (`550 5.1.1 … No such user here`), so nothing is stored; the probe's own IMAP login succeeds (#2227) |
@@ -114,7 +254,7 @@ failure; recorded in docs-internal `stand-runs.md` and on the issue.
 
 | Criterion | How |
 |:---|:---|
-| clock in sync | ntpd offset under `ACCEPT_CLOCK_MAX_MS` (1000) |
+| clock in sync | chronyd offset (ntpd when chronyd does not run) under `ACCEPT_CLOCK_MAX_MS` (1000) |
 | port builds, check-plist clean, only the libxapian stage-qa note, port installs | `make BATCH=yes clean makesum build stage check-plist stage-qa`, then `deinstall install`, with `DISTVERSION` set and the module fetched from the Go proxy |
 | installed version | `pkg info` names the module version |
 | processes running | `service yarilo status` after a restart on the installed binaries: `ACCEPT_PROCS` (17) |
@@ -162,6 +302,7 @@ that arm deployed, and in the same slot as the other arms of the window.
 | `YARILO_STORE_CLIENTS` | 5 | clients per folder |
 | `YARILO_STORE_SECS` | 60 | seconds per type |
 | `YARILO_STORE_MSGS` | 100 | messages copied from INBOX into each folder |
+| `YARILO_STORE_PROFILE` | empty | pprof kinds (`profile`, `block`) taken from every backend pod inside each type's run, from 10 s in for `SECS - 20` s, as `<kind>-store-<label>-<type>-<pod>-req<N>s.pprof`; `block` needs an arm deployed with `YARILO_ARM_BLOCKPROFILE=1` |
 
 Each type prints `store_parallel` (stores per second, from imaptest's totals)
 and `store_latency` (count, p50 and p99 bounds of `imap_command_seconds` for
@@ -195,6 +336,30 @@ One run on one image, never alongside a window arm; bash 5, so the runner.
 
 It prints `push_latency` (count, lost, p50, p99 and max in milliseconds). A
 lost event fails the run. The stand-runs row takes p99 under 1 s as its bar.
+
+## The thread merge
+
+```
+KUBECONFIG=~/.kube/sbox.yaml bash hack/stand/thread-merge.sh <out-dir> <merges> \
+  u60@d00002.test /var/mail/vhosts/d00002.test/u60@d00002.test/Maildir ...
+```
+
+Times the merge of an account's thread log into its base, on the tag the stand
+runs. Per account the backend restarts first, so the lmtp container's memory
+peak is that account's; `mem.txt` also gives its anon and file bytes, because
+the peak counts page cache. The log is filled in batches to 20 KB short of
+`threading_tail_size`, the watchers start, and then one delivery goes at a time
+with the log's size after each, until one crosses and 30 more after it.
+
+- `thread-merge-watch.sh` runs in each backend pod and reports, in hundredths
+  of a second of uptime, the log passing the size and the new base appearing.
+  It is copied with `kubectl exec -i` and checked: without `-i` the pod got an
+  empty file and the window measured nothing (d2621e).
+- A batch must not cross the size itself: the merge then ran before the
+  watchers did (d2621f, d2621g).
+- `thread-merge-summary.sh <out-dir>` prints per merge its time, the delivery
+  that triggered it and the 30 after it, the memory, and the deliveries not
+  answered 250. It exits 0 when that count is none, 1 otherwise.
 
 ## The same start
 

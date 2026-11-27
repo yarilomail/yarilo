@@ -15,10 +15,12 @@ type txUndo struct {
 	extHdr  map[string][]byte
 	keyword keywordsHdr
 	vsize   hdrVsize
-	// records is taken only for a transaction that adds or removes one: those
-	// shift the slice in place, and a per-record pre-image cannot undo that.
-	records []*mailindex.Record
-	recs    map[uint32]*mailindex.Record
+	// chunks is the pre-image of a transaction that adds or removes a record:
+	// a snapshot, which its changes copy around, released once it is settled.
+	chunks *mailindex.Records
+	// raw is the pre-image of the touched records of a transaction that adds
+	// and removes none: no snapshot, no copy.
+	raw map[uint32][]byte
 	// metas is the caller's own message: an append stamps uid and modseq on it,
 	// and a uid nothing was written under must not travel back to the caller.
 	metas   []metaUndo
@@ -38,7 +40,6 @@ func (fs *folderState) snapshotForTx(ops []txOp) *txUndo {
 		extHdr:  make(map[string][]byte, len(fs.file.Extensions)),
 		keyword: keywordsHdr{Names: append([]string(nil), fs.keywords.Names...)},
 		vsize:   fs.vsize,
-		recs:    make(map[uint32]*mailindex.Record),
 		flushes: fs.flushes,
 	}
 	for _, ext := range fs.file.Extensions {
@@ -60,14 +61,18 @@ func (fs *folderState) snapshotForTx(ops []txOp) *txUndo {
 			touched[ops[i].uid] = struct{}{}
 		}
 	}
-	if structural {
-		u.records = append([]*mailindex.Record(nil), fs.file.Records...)
+	if fs.recs == nil {
+		return u
 	}
-	for _, rec := range fs.file.Records {
-		if _, ok := touched[rec.UID]; !ok {
-			continue
+	if structural {
+		u.chunks = fs.recs.Snapshot()
+		return u
+	}
+	u.raw = make(map[uint32][]byte, len(touched))
+	for uid := range touched {
+		if seq, ok := fs.recs.SeqOfUID(uid); ok {
+			u.raw[uid] = fs.recs.RecordBytes(seq)
 		}
-		u.recs[rec.UID] = cloneRecord(rec)
 	}
 	return u
 }
@@ -88,13 +93,16 @@ func (fs *folderState) restore(u *txUndo) {
 		m.m.UID = m.uid
 		m.m.ModSeq = m.modseq
 	}
-	if u.records != nil {
-		fs.file.Records = u.records
-	}
-	for _, rec := range fs.file.Records {
-		if pre, ok := u.recs[rec.UID]; ok {
-			*rec = *cloneRecord(pre)
+	for uid, raw := range u.raw {
+		if seq, ok := fs.recs.SeqOfUID(uid); ok {
+			fs.recs.SetRecord(seq, raw)
 		}
+	}
+	if u.chunks != nil {
+		// The writer's chunks since the snapshot are dropped; it goes on from
+		// the pre-image, copying a chunk of it before changing it.
+		fs.recs = u.chunks.Fork()
+		u.settle()
 	}
 	// A transaction whose first append registered a keyword name wrote a base
 	// mid-flight; restored memory has to reach the disk or the two disagree.
@@ -106,13 +114,11 @@ func (fs *folderState) restore(u *txUndo) {
 	}
 }
 
-func cloneRecord(rec *mailindex.Record) *mailindex.Record {
-	cp := *rec
-	if rec.Ext != nil {
-		cp.Ext = make(map[string][]byte, len(rec.Ext))
-		for k, v := range rec.Ext {
-			cp.Ext[k] = append([]byte(nil), v...)
-		}
+// settle releases the chunks' pre-image: a transaction that committed or was
+// restored no longer needs it, and with it alive every change copies.
+func (u *txUndo) settle() {
+	if u != nil && u.chunks != nil {
+		u.chunks.Release()
+		u.chunks = nil
 	}
-	return &cp
 }

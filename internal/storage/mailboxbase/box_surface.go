@@ -62,17 +62,22 @@ func (t *boxTx) MarkDirty(uid uint32, dirty bool)  { t.tx.MarkDirty(uid, dirty) 
 func (t *boxTx) Commit() (mailbox.TxResult, error) { return t.tx.Commit() }
 func (t *boxTx) Rollback()                         { t.tx.Rollback() }
 
+// CarryDirTimes passes the stamp's carry to an index transaction that takes it.
+func (t *boxTx) CarryDirTimes(pre, post mailbox.DirTimes) {
+	if c, ok := t.tx.(mailbox.DirCarryTx); ok {
+		c.CarryDirTimes(pre, post)
+	}
+}
+
 // unlockedReader is an index whose files prove their own freshness, so a read
 // that only answers a client skips the cross-process lock (#1249).
 type unlockedReader interface {
-	VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error)
 	KeywordsUnlocked(folderID uint64) ([]string, error)
 }
 
-func (b *Box) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	if u, ok := b.index.(unlockedReader); ok {
-		return u.VanishedUnlocked(folderID, sinceModSeq)
-	}
+// Vanished decides and reads under the index's folder lock: a fold between a
+// floor check and the read would shorten an answer marked whole (#2664).
+func (b *Box) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, bool, error) {
 	return b.index.Vanished(folderID, sinceModSeq)
 }
 
@@ -152,8 +157,12 @@ func (b *Box) BackfillGUIDs(f *mailbox.Folder, name string) error {
 // EnvelopeCache opens the folder's cache; a nil handle answers every call as a
 // miss, so none served is not an error to the protocol.
 func (b *Box) EnvelopeCache(folderID uint64, opts mailbox.EnvelopeCacheOptions) mailbox.EnvelopeCache {
+	lockUser := ""
+	if ln, ok := mailbox.Driver(b.store).(mailbox.LockNamer); ok && ln.LockUser() != opts.User {
+		lockUser = ln.LockUser()
+	}
 	return msgcache.Open(b.index, folderID, msgcache.Options{
-		Locker: opts.Locker, User: opts.User, SessionID: opts.SessionID, Folder: opts.Folder,
+		Locker: opts.Locker, User: opts.User, LockUser: lockUser, SessionID: opts.SessionID, Folder: opts.Folder,
 		TraceID: opts.TraceID, DeferWrites: opts.DeferWrites, Shared: opts.Shared,
 	})
 }

@@ -11,7 +11,7 @@ func (o *Ops) ExpungeMarked(box mailbox.Box, f *mailbox.Folder, folder string, m
 	o.Quota.CaptureSnap()
 	removed, failed, err := box.ExpungeMarked(f, folder, msgs)
 	for _, m := range removed {
-		o.Committed(f, locks.EventExpunged, m.UID, UsageDelta(m), m.GUID)
+		o.CommittedIn(box, f, locks.EventExpunged, m.UID, UsageDelta(m), m.GUID)
 	}
 	return removed, failed, err
 }

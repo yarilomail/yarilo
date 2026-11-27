@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/pkg/filelock"
 	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
@@ -123,7 +124,8 @@ func parseUIDListRecord(line string) (uidRecord, bool) {
 		return uidRecord{}, false
 	}
 	uid, err := strconv.ParseUint(fields[0], 10, 32)
-	if err != nil {
+	if err != nil || uid == 0 || uid > mailbox.MaxUID {
+		// The reference reads a uid of 2^32-1 or above as a corrupt list.
 		return uidRecord{}, false
 	}
 	rec.uid = uint32(uid)
@@ -174,8 +176,8 @@ func nameCarriesSizes(base string) bool {
 
 // measureSizes reads the file for the two numbers a name does not carry: the
 // physical size, and the virtual one a lone LF grows under CRLF.
-func measureSizes(path string) (psize, vsize uint32, err error) {
-	f, err := openPath(path)
+func measureSizes(l *mailcrypt.Layer, path string) (psize, vsize uint32, err error) {
+	f, err := l.OpenFile(path)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -190,14 +192,17 @@ func measureSizes(path string) (psize, vsize uint32, err error) {
 // holdList takes the list's lock for site and returns its release, which
 // records how long the site held it.
 func (u *userMailbox) holdList(folder, site string) (func(), error) {
+	forget := u.noteHold("list:"+folder, site)
 	unlock, err := u.dotlock(u.uidListPath(folder))
 	if err != nil {
+		forget()
 		return nil, err
 	}
 	heldFrom := time.Now()
 	metricLockAcquired.WithLabelValues(site).Inc()
 	return func() {
 		unlock()
+		forget()
 		metricLockHold.WithLabelValues(site).Observe(time.Since(heldFrom).Seconds())
 	}, nil
 }
@@ -215,6 +220,12 @@ func (u *userMailbox) appendUIDRowHeld(folder string, rec uidRecord) (bool, erro
 	if serr != nil || st.Size() == 0 {
 		return false, nil
 	}
+	// A list ending mid-line is torn: the rewrite reports and mends it, and a
+	// row after it would join the broken one.
+	last := make([]byte, 1)
+	if _, rerr := f.ReadAt(last, st.Size()-1); rerr != nil || last[0] != '\n' {
+		return false, nil
+	}
 	// The header's next uid follows the row (#1701), patched in place while it
 	// keeps its width; a wider number is the whole rewrite's to write.
 	at, width, next, found := headerNextUID(f)
@@ -228,9 +239,15 @@ func (u *userMailbox) appendUIDRowHeld(folder string, rec uidRecord) (bool, erro
 	if patch && len(digits) != width {
 		return false, nil
 	}
-	if _, werr := f.WriteAt([]byte(rec.String()+"\n"), st.Size()); werr != nil {
+	row := []byte(rec.String() + "\n")
+	if _, werr := f.WriteAt(row, st.Size()); werr != nil {
 		return false, fmt.Errorf("maildir/uidlist: append row: %w", werr)
 	}
+	defer func() {
+		if after, aerr := f.Stat(); aerr == nil {
+			u.appendedFrom(folder, stampOfFileInfo(st), stampOfFileInfo(after), len(row))
+		}
+	}()
 	if patch {
 		if _, werr := f.WriteAt([]byte(digits), at); werr != nil {
 			return false, fmt.Errorf("maildir/uidlist: header next uid: %w", werr)
@@ -423,7 +440,7 @@ func (u *userMailbox) recordUIDsHeld(folder string, entries []listEntry, seed ui
 			}
 			rec := uidRecord{uid: e.uid, base: base}
 			if !nameCarriesSizes(base) {
-				psize, vsize, merr := measureSizes(filepath.Join(u.folderPath(folder), "cur", e.filename))
+				psize, vsize, merr := measureSizes(u.b.crypt, filepath.Join(u.folderPath(folder), "cur", e.filename))
 				if merr == nil {
 					rec.psize, rec.vsize, rec.hasSizes = psize, vsize, true
 				}
@@ -589,4 +606,14 @@ var syncDir = func(dir string) error {
 		return serr
 	}
 	return cerr
+}
+
+// stampOfFileInfo is the list's stamp from a stat already taken.
+func stampOfFileInfo(fi os.FileInfo) mailbox.MaildirStamp {
+	mt := fi.ModTime()
+	return mailbox.MaildirStamp{
+		UIDListMtime:      uint32(mt.Unix()),
+		UIDListMtimeNsecs: uint32(mt.Nanosecond()),
+		UIDListSize:       uint32(fi.Size()),
+	}
 }

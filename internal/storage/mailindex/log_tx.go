@@ -2,6 +2,7 @@ package mailindex
 
 import (
 	"encoding/binary"
+	"fmt"
 )
 
 // TxType is the type-enum portion of a transaction-log record's type field
@@ -422,16 +423,60 @@ func EncodeTxBoundaryPayload(rec TxBoundary) []byte {
 	return out
 }
 
-// EncodeTxAppendPayload emits the payload for APPEND. Each record encodes a
-// full Record (base + extensions) using the supplied layout; the reader slices
-// the payload by layout.RecordSize (learned from earlier EXT_INTRO records).
-func EncodeTxAppendPayload(layout RecordLayout, recs []*Record) ([]byte, error) {
+// EncodeTxAppendPayload emits the payload for APPEND: the records as they lie
+// in layout, which the reader slices by layout.RecordSize (learned from earlier
+// EXT_INTRO records).
+func EncodeTxAppendPayload(layout RecordLayout, recs [][]byte) ([]byte, error) {
 	stride := int(layout.RecordSize)
-	out := make([]byte, stride*len(recs))
+	out := make([]byte, 0, stride*len(recs))
 	for i, rec := range recs {
-		if err := EncodeRecord(out[i*stride:(i+1)*stride], layout, rec); err != nil {
-			return nil, err
+		if len(rec) != stride {
+			return nil, fmt.Errorf("mailindex: append payload: record %d has %d bytes, layout %d: %w", i, len(rec), stride, ErrCorrupted)
 		}
+		out = append(out, rec...)
 	}
 	return out, nil
+}
+
+// TxExtRecUpdate sets one record's bytes of the extension the preceding
+// EXT_INTRO named: uid, then the intro's record_size bytes, padded to 4.
+type TxExtRecUpdate struct {
+	UID  uint32
+	Data []byte
+}
+
+// EncodeTxExtRecUpdatePayload lays out updates of width-byte extension data.
+func EncodeTxExtRecUpdatePayload(width int, upds []TxExtRecUpdate) []byte {
+	stride := (4 + width + 3) &^ 3
+	out := make([]byte, stride*len(upds))
+	for i, u := range upds {
+		binary.LittleEndian.PutUint32(out[i*stride:], u.UID)
+		copy(out[i*stride+4:i*stride+4+width], u.Data)
+	}
+	return out
+}
+
+// TxExtReset starts a new generation of the extension the preceding EXT_INTRO
+// named; unless Preserve, every record's data of it is cleared.
+type TxExtReset struct {
+	NewResetID uint32
+	Preserve   bool
+}
+
+// EncodeTxExtResetPayload lays out new_reset_id, preserve_data and padding.
+func EncodeTxExtResetPayload(r TxExtReset) []byte {
+	out := make([]byte, 8)
+	binary.LittleEndian.PutUint32(out, r.NewResetID)
+	if r.Preserve {
+		out[4] = 1
+	}
+	return out
+}
+
+// DecodeTxExtResetPayload is the inverse; ok is false for a short payload.
+func DecodeTxExtResetPayload(payload []byte) (TxExtReset, bool) {
+	if len(payload) < 5 {
+		return TxExtReset{}, false
+	}
+	return TxExtReset{NewResetID: binary.LittleEndian.Uint32(payload), Preserve: payload[4] != 0}, true
 }

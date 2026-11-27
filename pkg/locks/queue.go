@@ -30,6 +30,14 @@ type WaitQueue interface {
 	Wakes(ctx context.Context, resource, ticket string) (turns <-chan struct{}, cancel func(), err error)
 }
 
+// joinTrier is a queue that joins the line and makes the first try in one
+// round trip. The shared store's queue is one: every step there is a trip to
+// the store. ahead > 0 means the ticket waits and nothing was tried;
+// otherwise id is the grant or err says why not (ErrBusy with the holder).
+type joinTrier interface {
+	JoinAndTry(ctx context.Context, resource, owner, site, ticket string, ttl time.Duration, shared bool) (ahead int, id string, holder Holder, err error)
+}
+
 // queueing reports whether a backend carries the shared queue.
 func queueing(b Backend) (WaitQueue, bool) {
 	q, ok := b.(WaitQueue)

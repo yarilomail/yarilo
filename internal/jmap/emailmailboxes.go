@@ -3,6 +3,7 @@ package jmap
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -173,8 +174,13 @@ func (h *userHandle) expungeCopies(copies []emailCopy) *jmapcore.SetError {
 	for _, c := range copies {
 		metas = append(metas, c.meta)
 	}
-	if _, _, err := h.ops.ExpungeMarked(h.mbox, f, copies[0].folder, metas); err != nil {
+	_, failed, err := h.ops.ExpungeMarked(h.mbox, f, copies[0].folder, metas)
+	if err != nil {
 		return &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: err.Error()}
+	}
+	if failed > 0 {
+		// The copy stays where its body could not be removed: not destroyed.
+		return &jmapcore.SetError{Type: jmapcore.SetErrForbidden, Description: fmt.Sprintf("%d of %d copies could not be removed", failed, len(metas))}
 	}
 	return nil
 }

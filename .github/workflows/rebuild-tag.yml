@@ -10,12 +10,20 @@ name: Rebuild a released tag
 # demand. The rebuilt image is pushed as <version>-rebuild rather than over the
 # original tag: a tag that once meant one set of bytes must not silently come to
 # mean another, even if the source is identical.
+#
+# A develop commit rebuilds the same way, for a measurement against a dev image
+# the prune already took: <version>-rebuild-<commit>, the commit's first eight
+# hex digits, which the prune keeps (ci-develop.yml).
 on:
   workflow_dispatch:
     inputs:
       tag:
         description: "Released version to rebuild, e.g. 2.3.134 (with or without the leading v)"
-        required: true
+        required: false
+        type: string
+      commit:
+        description: "Or a commit on develop to rebuild, e.g. c5403f9"
+        required: false
         type: string
 
 permissions:
@@ -30,19 +38,40 @@ jobs:
   rebuild:
     runs-on: [self-hosted, linux]
     steps:
-      - name: Normalise the tag
+      - name: Pick the source
         id: tag
+        # The inputs reach the shell as variables, never as script text.
+        env:
+          RAW: ${{ inputs.tag }}
+          COMMIT_IN: ${{ inputs.commit }}
         run: |
-          raw='${{ inputs.tag }}'
+          raw="$RAW"
+          commit="$COMMIT_IN"
+          if [ -n "$raw" ] && [ -n "$commit" ] || [ -z "$raw" ] && [ -z "$commit" ]; then
+            echo "::error::give a released version or a develop commit, one of the two"
+            exit 1
+          fi
+          if [ -n "$commit" ]; then
+            if ! printf '%s' "$commit" | grep -Eq '^[0-9a-f]{7,40}$'; then
+              echo "::error::$commit is not a commit id"
+              exit 1
+            fi
+            echo "kind=commit" >> "$GITHUB_OUTPUT"
+            echo "commit=$commit" >> "$GITHUB_OUTPUT"
+            echo "ref=develop" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           version="${raw#v}"
           if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "::error::$raw is not a released version (want X.Y.Z)"
             exit 1
           fi
+          echo "kind=release" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$version-rebuild" >> "$GITHUB_OUTPUT"
           echo "ref=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Check out the tag
+      - name: Check out the source
         uses: actions/checkout@v7.0.1
         with:
           ref: ${{ steps.tag.outputs.ref }}
@@ -52,12 +81,32 @@ jobs:
         # A tag whose chart says another version would rebuild something other
         # than what the operator asked for, and the image would carry a name it
         # does not match.
+        if: steps.tag.outputs.kind == 'release'
         run: |
           chart=$(grep '^appVersion:' helm/Chart.yaml | tr -d '"' | awk '{print $2}')
           if [ "$chart" != "${{ steps.tag.outputs.version }}" ]; then
             echo "::error::tag ${{ steps.tag.outputs.ref }} carries appVersion $chart"
             exit 1
           fi
+
+      - name: Name a develop commit's image
+        # Only a commit develop holds: anything else was never a dev image to
+        # measure against. The version is the chart's without its dev counter,
+        # which the prune would match.
+        id: commit
+        if: steps.tag.outputs.kind == 'commit'
+        env:
+          COMMIT: ${{ steps.tag.outputs.commit }}
+        run: |
+          if ! git merge-base --is-ancestor "$COMMIT" origin/develop 2>/dev/null; then
+            echo "::error::$COMMIT is not on develop"
+            exit 1
+          fi
+          git checkout -q --detach "$COMMIT"
+          chart=$(grep '^appVersion:' helm/Chart.yaml | tr -d '"' | awk '{print $2}')
+          short=$(git rev-parse --short=8 HEAD)
+          echo "image_tag=${chart%%-*}-rebuild-$short" >> "$GITHUB_OUTPUT"
+          echo "chart=$chart" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -80,16 +129,24 @@ jobs:
           file: docker/Dockerfile
           push: true
           platforms: linux/amd64
+          # Nothing from the layer cache: a rebuild must not inherit an
+          # earlier build's packages, and older tags have no runtime stage to
+          # name in no-cache-filters.
+          no-cache: true
+          # A develop commit's image is a sandbox one: GHCR only.
           tags: |
-            ${{ env.IMAGE }}:${{ steps.tag.outputs.version }}-rebuild
-            ${{ env.DOCKERHUB_IMAGE }}:${{ steps.tag.outputs.version }}-rebuild
+            ${{ env.IMAGE }}:${{ steps.tag.outputs.image_tag || steps.commit.outputs.image_tag }}
+            ${{ steps.tag.outputs.kind == 'release' && format('{0}:{1}', env.DOCKERHUB_IMAGE, steps.tag.outputs.image_tag) || '' }}
           build-args: |
-            BUILD_VERSION=${{ steps.tag.outputs.version }}
+            BUILD_VERSION=${{ steps.tag.outputs.version || steps.commit.outputs.image_tag }}
+            BUILD_CHART_VERSION=${{ steps.commit.outputs.chart || steps.tag.outputs.version }}
 
       - name: Say what to pull
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.image_tag || steps.commit.outputs.image_tag }}
         run: |
-          echo "### Rebuilt ${{ steps.tag.outputs.ref }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Rebuilt ${{ steps.tag.outputs.commit || steps.tag.outputs.ref }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ env.IMAGE }}:${{ steps.tag.outputs.version }}-rebuild" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ env.IMAGE }}:$IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "Deploy with --set image.tag=${{ steps.tag.outputs.version }}-rebuild" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy with --set image.tag=$IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"

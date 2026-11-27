@@ -1,6 +1,7 @@
 package file
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"sync"
@@ -89,7 +90,7 @@ func TestAHeldViewKeepsItsImageAcrossAFold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := len(held.file.Records)
+	before := held.recordCount()
 
 	uid, err := u.AllocateUID(folder.ID)
 	if err != nil {
@@ -104,17 +105,19 @@ func TestAHeldViewKeepsItsImageAcrossAFold(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release2()
-	if len(held.file.Records) != before {
-		t.Errorf("the held view grew from %d to %d records under its reader", before, len(held.file.Records))
+	if held.recordCount() != before {
+		t.Errorf("the held view grew from %d to %d records under its reader", before, held.recordCount())
 	}
-	if len(after.file.Records) != before+1 {
-		t.Errorf("the view opened after the append has %d records, want %d", len(after.file.Records), before+1)
+	if after.recordCount() != before+1 {
+		t.Errorf("the view opened after the append has %d records, want %d", after.recordCount(), before+1)
 	}
 	release()
 }
 
-// With nobody holding the image, a fold copies no records; with a holder, it
-// copies once -- the reference's move-to-private, and the only copy left.
+// A fold copies only what somebody holds, and a chunk, not the folder: the
+// reference's move-to-private, per chunk (INDEX-MEMORY.md §4; reviewer,
+// 2026-11-20). The first change of a chunk copies it from the shared base
+// image once; a change of a chunk the view owns copies nothing.
 func TestAFoldCopiesOnlyWhatSomebodyHolds(t *testing.T) {
 	u, fs, folder := openTestFolder(t, 5)
 
@@ -129,31 +132,67 @@ func TestAFoldCopiesOnlyWhatSomebodyHolds(t *testing.T) {
 		}
 	}
 
-	v, rel, err := fs.openView()
+	chunkCopies := func() int {
+		t.Helper()
+		fs.mapMu.Lock()
+		defer fs.mapMu.Unlock()
+		if fs.current == nil || fs.current.w == nil {
+			t.Fatal("the current map writes no chunks")
+		}
+		return fs.current.w.ChunkCopies()
+	}
+
+	_, rel, err := fs.openView()
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = v
 	rel() // nobody holds it now
 
-	grow()
 	ResetMapCounters()
+	grow()
+	_, rel1, err := fs.openView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel1()
+	first := chunkCopies()
+	grow()
 	_, rel2, err := fs.openView()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := MapCopies(); got != 0 {
-		t.Errorf("a fold with no view held copied %d times", got)
+		t.Errorf("folds with no view held copied the folder %d times", got)
+	}
+	if got := chunkCopies(); got != first {
+		t.Errorf("a change of a chunk the view owns copied %d chunks", got-first)
 	}
 
-	grow()
-	_, rel3, err := fs.openView() // rel2 still held: this one must copy
+	// rel2 still held: the next fold copies the one chunk the append touches.
+	held, release, err := fs.openView()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := MapCopies(); got != 1 {
-		t.Errorf("a fold under a held view copied %d times, want 1", got)
+	if err := held.loadRecords(); err != nil {
+		t.Fatal(err)
 	}
+	heldBytes := held.recs.Bytes()
+	before := chunkCopies()
+	grow()
+	_, rel3, err := fs.openView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := MapCopies(); got != 0 {
+		t.Errorf("a fold under a held view copied the folder %d times", got)
+	}
+	if got := chunkCopies() - before; got != 1 {
+		t.Errorf("a fold under a held view copied %d chunks, want the one the append touched", got)
+	}
+	if !bytes.Equal(held.recs.Bytes(), heldBytes) {
+		t.Error("the held view changed under its reader")
+	}
+	release()
 	rel2()
 	rel3()
 }
@@ -184,7 +223,7 @@ func TestConcurrentOpensPayForOneFold(t *testing.T) {
 				t.Error(verr)
 				return
 			}
-			counts[i] = len(v.file.Records)
+			counts[i] = v.recordCount()
 			rel()
 		}(i)
 	}
@@ -209,7 +248,7 @@ func TestANewBaseIsNotReadThroughTheOldImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	rel1()
-	before := len(v1.file.Records)
+	before := v1.recordCount()
 
 	uid, err := u.AllocateUID(folder.ID)
 	if err != nil {
@@ -231,9 +270,9 @@ func TestANewBaseIsNotReadThroughTheOldImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rel2()
-	if len(v2.file.Records) != before+1 {
+	if v2.recordCount() != before+1 {
 		t.Errorf("after the base was rewritten the read has %d records, want %d (path %s)",
-			len(v2.file.Records), before+1, filepath.Base(fs.indexPath))
+			v2.recordCount(), before+1, filepath.Base(fs.indexPath))
 	}
 }
 
@@ -258,7 +297,10 @@ func TestAFoldExtendsOnlyTheSameBaseAndTheSameLog(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				mf.Records = mf.Records[:3]
+				all := mf.Records.Bytes()
+				if mf.Records, err = mailindex.ChunksFromBytes(all[:3*int(mf.Layout.RecordSize)], mf.Layout); err != nil {
+					t.Fatal(err)
+				}
 				mf.Header.MessagesCount = 3
 				if _, err := mailindex.Recreate(mf.ToRecreateInput(base)); err != nil {
 					t.Fatal(err)
@@ -321,9 +363,12 @@ func viewUIDs(t *testing.T, fs *folderState) []uint32 {
 		t.Fatal(err)
 	}
 	defer release()
+	if err := v.loadRecords(); err != nil {
+		t.Fatal(err)
+	}
 	var out []uint32
-	for _, r := range v.file.Records {
-		out = append(out, r.UID)
+	for i := range v.recordCount() {
+		out = append(out, v.recUID(i))
 	}
 	return out
 }
@@ -385,7 +430,7 @@ func TestAPublishedMapIsNotExtendedInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.view == from.view || len(from.view.file.Records) != 5 {
-		t.Errorf("the published image was extended in place: it holds %d records, want 5", len(from.view.file.Records))
+	if m.view == from.view || from.view.recordCount() != 5 {
+		t.Errorf("the published image was extended in place: it holds %d records, want 5", from.view.recordCount())
 	}
 }

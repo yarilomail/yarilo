@@ -1,7 +1,6 @@
 package guard_test
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -22,7 +21,7 @@ type envVar struct {
 // Sieve sender, the secret and key each submission variable comes from.
 func sieveSenderEnv(t *testing.T, args ...string) map[string]map[string]string {
 	t.Helper()
-	out, err := exec.CommandContext(t.Context(), "helm", append([]string{"template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml"}, args...)...).Output()
+	out, err := helmOutput(t, append([]string{"template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml"}, args...)...)
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}
@@ -63,6 +62,7 @@ func sieveSenderEnv(t *testing.T, args ...string) map[string]map[string]string {
 // logs in with sieve.sieve_submission_auth_secret, in the co-located
 // StatefulSet and in the per-protocol Deployments.
 func TestSieveSenderLogsInWhereverItRuns(t *testing.T) {
+	t.Parallel()
 	want := map[string]string{"YARILO_SIEVE_SUBMISSION_USER": "sieve-smtp-auth/user", "YARILO_SIEVE_SUBMISSION_PASSWORD": "sieve-smtp-auth/password"}
 	for _, tc := range []struct {
 		name       string
@@ -92,8 +92,9 @@ func TestSieveSenderLogsInWhereverItRuns(t *testing.T) {
 
 // The key the chart used to read for the env is refused, not dropped.
 func TestTheOldSieveAuthSecretKeyIsRefused(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml",
-		"--set", "sieve.submission.authSecret=sieve-smtp-auth").CombinedOutput()
+	t.Parallel()
+	out, err := helmCombined(t, "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml",
+		"--set", "sieve.submission.authSecret=sieve-smtp-auth")
 	if err == nil || !strings.Contains(string(out), "set sieve.sieve_submission_auth_secret") {
 		t.Errorf("helm template with sieve.submission.authSecret: %v\n%s", err, out)
 	}
@@ -101,8 +102,9 @@ func TestTheOldSieveAuthSecretKeyIsRefused(t *testing.T) {
 
 // An explicit false and the CA path reach the ConfigMap as written.
 func TestSieveSubmissionTLSReachesTheConfig(t *testing.T) {
-	out, err := exec.CommandContext(t.Context(), "helm", "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml",
-		"--set", "sieve.sieve_submission_ssl_verify=false").Output()
+	t.Parallel()
+	out, err := helmOutput(t, "template", "yarilo", "../../helm", "-f", "../../helm_values/values-sandbox.yaml",
+		"--set", "sieve.sieve_submission_ssl_verify=false")
 	if err != nil {
 		t.Fatalf("helm template: %v", err)
 	}

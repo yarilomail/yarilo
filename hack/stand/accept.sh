@@ -125,12 +125,96 @@ disk_messages() {
   esac
 }
 
-# aged_account finds an account of the domain whose INBOX holds at least 20
-# message files modified over a day ago: the class #2172's sweep judged by mtime.
-aged_account() {
-  local dom="$1" sub="$2" pattern="$3"
+# The imaptest accounts of each type, wiped and filled at the start: runs that
+# start from whatever the last one left are not comparable (#2661).
+IMAPTEST_RANGES="d00001.test:3:20 d00002.test:53:70 d00003.test:103:120"
+ACCEPT_FILL="${ACCEPT_FILL:-200}"
+
+# store_sizes prints "<domain> files=<n> du_kb=<k>" for each type's domain: the
+# size the run's numbers belong to, at its start and at its end.
+store_sizes() {
+  local spec dom
+  for spec in $IMAPTEST_RANGES; do
+    dom=${spec%%:*}
+    kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
+      "d=/var/mail/vhosts/$dom; echo \"$dom files=\$(find \$d -type f 2>/dev/null | wc -l) du_kb=\$(du -sk \$d 2>/dev/null | cut -f1)\"" 2>/dev/null ||
+      echo "$dom unreadable"
+  done
+}
+
+# fill_start empties the imaptest accounts and delivers ACCEPT_FILL messages to
+# each, as an arm starts: the smoketest and aged accounts are outside them.
+fill_start() {
+  local spec dom from to pod
+  for spec in $IMAPTEST_RANGES; do
+    IFS=: read -r dom from to <<< "$spec"
+    for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+      kube exec "$pod" -c yarilo-imap -- sh -c \
+        "for n in \$(seq $from $to); do rm -rf \"/var/mail/vhosts/$dom/u\${n}@$dom\"; done" > /dev/null
+    done
+    # As an arm checks its wipe: a start from more than nothing is not the fill.
+    left=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
+      "f=0; for n in \$(seq $from $to); do f=\$((f+\$(find \"/var/mail/vhosts/$dom/u\${n}@$dom\" -type f 2>/dev/null | wc -l))); done; echo \$f" 2>/dev/null)
+    [ "$left" = 0 ] || { echo "accept: the wipe of $dom $from-$to left ${left:-an unreadable count of} files" >&2; exit 1; }
+    YARILO_NS="$NS" YARILO_FILL_DOMAIN="$dom" \
+      bash "$REPO/hack/stand/fill-mailboxes.sh" "$from" "$to" "$ACCEPT_FILL" >> "$OUT/fill.txt" 2>&1 ||
+      { echo "accept: the fill of $dom did not take ($OUT/fill.txt)" >&2; exit 1; }
+  done
+}
+
+# terminations prints, for every container that restarted, why its last run
+# ended: an OOM kill and a crash read the same in a restart count (#2661).
+terminations() {
+  local pod
+  for pod in $(kube get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+    kube get pod "$pod" -o jsonpath='{range .status.containerStatuses[?(@.restartCount>0)]}{.name}{" restarts="}{.restartCount}{" reason="}{.lastState.terminated.reason}{" exit="}{.lastState.terminated.exitCode}{" at="}{.lastState.terminated.finishedAt}{"\n"}{end}' 2>/dev/null |
+      sed "s|^|pod=$pod container=|"
+  done
+}
+
+# aged_prepare makes the account the aged row opens, rather than hoping the
+# stand kept one: the row guards #2172's class, a sweep that judged message
+# files by mtime and lost some on the open of a mailbox whose files were old.
+# What it needs is old mtimes, not an old account, so the files are set two
+# days back by hand; an account the stand happened to keep is gone after every
+# window, which empties the test domains (#2686). The account is outside the
+# imaptest ranges and the MAILCRYPT scenarios, and is used by nothing else.
+# Prints "<user> <files>", or "prep: <why>" when it could not be made.
+AGED_N=30
+
+# aged_target reads one "<what aged_prepare printed>:<type>": the type after
+# the last colon, since a preparation's reason holds colons of its own. Prints
+# "<type> user <user>", or "<type> fail <reason>".
+aged_target() {
+  local acct="${1%:*}" type="${1##*:}"
+  case "$acct" in
+    "prep: "* | "") echo "$type fail ${acct#prep: }" ;;
+    *) echo "$type user ${acct%% *}" ;;
+  esac
+}
+
+aged_prepare() {
+  local user="$1" type="$2" dom="${1#*@}" home dir n pattern pod
+  home="/var/mail/vhosts/$dom/$user"
+  case "$type" in
+    sdbox) dir="$home/sdbox/mailboxes/INBOX/dbox-Mails"; pattern='u.*' ;;
+    maildir) dir="$home/Maildir/cur"; pattern='*' ;;
+  esac
+  for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+    kube exec "$pod" -c yarilo-imap -- rm -rf "$home" > /dev/null
+  done
+  n=${user%%@*}; n=${n#u}
+  YARILO_NS="$NS" YARILO_FILL_DOMAIN="$dom"     bash "$REPO/hack/stand/fill-mailboxes.sh" "$n" "$n" "$AGED_N" >> "$OUT/fill-aged.txt" 2>&1 ||
+    { echo "prep: the fill of $user did not take ($OUT/fill-aged.txt)"; return; }
+  # One open first, so maildir moves new/ into cur/, where the sweep looked.
+  imap_session "a LOGIN $user $PASSWORD\r\nb SELECT INBOX\r\nc LOGOUT\r\n" > /dev/null
   kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
-    "cd /var/mail/vhosts/$dom 2>/dev/null && for u in *; do n=\$(find \"\$u/$sub\" -maxdepth 1 -type f -name '$pattern' -mmin +1440 2>/dev/null | wc -l); [ \"\$n\" -ge 20 ] && echo \"\$u \$n\" && break; done" 2>/dev/null || true
+    "t=\$(date -u -d @\$((\$(date +%s) - 172800)) +%Y%m%d%H%M.%S) && find '$dir' -maxdepth 1 -type f -name '$pattern' -exec touch -t \$t {} +" > /dev/null 2>&1 ||
+    { echo "prep: the mtimes of $user could not be set"; return; }
+  n=$(kube exec yarilo-backend-0 -c yarilo-imap -- sh -c \
+    "find '$dir' -maxdepth 1 -type f -name '$pattern' -mmin +1440 2>/dev/null | wc -l" 2>/dev/null | tr -d ' ')
+  [ "${n:-0}" -ge 20 ] || { echo "prep: $user has ${n:-an unreadable count of} files older than a day, want 20 or more"; return; }
+  echo "$user $n"
 }
 
 # uid_pairs prints "user uid" for every UID both vanished and present, for the
@@ -370,9 +454,8 @@ VALUES=(-f "$REPO/helm_values/values-sandbox.yaml")
 echo "-- tooling: $(git -C "$REPO" log --oneline -1) tag=$TAG${ACCEPT_VALUES:+ values+=$ACCEPT_VALUES}"
 
 echo "== deploy $(date -u +%FT%TZ)"
-helm upgrade yarilo "$REPO/helm" -n "$NS" "${VALUES[@]}" \
-  --set image.tag="$TAG" --wait --timeout 10m > "$OUT/deploy.txt" 2>&1
-kube rollout status sts/yarilo-backend --timeout=280s >> "$OUT/deploy.txt" 2>&1
+. "$REPO/hack/stand/deploy.sh"
+stand_deploy "$OUT" "$TAG" "$REPO/helm" "${VALUES[@]}" || { echo "accept: the deploy did not settle ($OUT/deploy.txt)" >&2; exit 1; }
 settle >> "$OUT/deploy.txt" 2>&1
 START=$(date -u +%FT%TZ)
 pod_state > "$OUT/pods-start.txt"
@@ -382,10 +465,14 @@ watch_stopped_naming &
 WATCHER=$!
 trap 'kill "$WATCHER" 2>/dev/null || true' EXIT
 
+echo "== the imaptest accounts from a fixed fill of $ACCEPT_FILL"
+fill_start
+store_sizes | tee "$OUT/store-start.txt"
+
 echo "== aged mailboxes before"
-SDBOX_AGED=$(aged_account d00003.test sdbox/mailboxes/INBOX/dbox-Mails 'u.*')
-MAILDIR_AGED=$(aged_account d00002.test Maildir/cur '*')
-echo "sdbox: ${SDBOX_AGED:-none}; maildir: ${MAILDIR_AGED:-none}" | tee "$OUT/aged-before.txt"
+SDBOX_AGED=$(aged_prepare u149@d00003.test sdbox)
+MAILDIR_AGED=$(aged_prepare u98@d00002.test maildir)
+echo "sdbox: $SDBOX_AGED; maildir: $MAILDIR_AGED" | tee "$OUT/aged-before.txt"
 
 uid_pairs | sort > "$OUT/uid-pairs-before.txt"
 
@@ -515,12 +602,12 @@ kube delete job imaptest --ignore-not-found > /dev/null
 
 echo "== aged mailboxes after an open"
 for spec in "${SDBOX_AGED:-}:sdbox" "${MAILDIR_AGED:-}:maildir"; do
-  acct=${spec%%:*}; type=${spec#*:}
-  if [ -z "$acct" ]; then
-    verdict "aged $type mailbox survives an open" fail "no $type account with 20+ files older than a day on the stand"
+  read -r type what rest <<< "$(aged_target "$spec")"
+  if [ "$what" = fail ]; then
+    verdict "aged $type mailbox survives an open" fail "the aged account was not made: $rest"
     continue
   fi
-  user=${acct%% *}
+  user=$rest
   # Counted right before the open: the smoketest appends to these accounts.
   before=$(disk_messages "$user" "$type")
   imap_session "a LOGIN $user $PASSWORD\r\nb SELECT INBOX\r\nc LOGOUT\r\n" > /dev/null
@@ -619,9 +706,12 @@ for pod in $(kube get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{
   done
 done
 
+terminations > "$OUT/terminations.txt"
+echo "== store at the end"
+store_sizes | tee "$OUT/store-end.txt"
 changed=$(diff "$OUT/pods-start.txt" "$OUT/pods-end.txt" | grep '^[<>]' || true)
 [ -z "$changed" ] && verdict "no pod restarted or replaced" ok "$(wc -l < "$OUT/pods-end.txt" | tr -d ' ') pods" ||
-  verdict "no pod restarted or replaced" fail "$(echo "$changed" | tr '\n' ' ' | cut -c1-400)"
+  verdict "no pod restarted or replaced" fail "$(echo "$changed" | tr '\n' ' ' | cut -c1-300); $(tr '\n' ' ' < "$OUT/terminations.txt" | cut -c1-300)"
 
 for spec in \
   "panic|panic: |fatal error: " \

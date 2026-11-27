@@ -65,6 +65,11 @@ func (u *userMailbox) DiscardSaved(folder, saved string, _ *mailbox.MessageMeta)
 // destination's naming put it.
 func (u *userMailbox) RestoreMoved(srcFolder, orig, dstFolder, moved string, _ *mailbox.MessageMeta) error {
 	u.takeGUID(dstFolder, moved)
+	release, err := u.sharedCrypt(srcFolder, lockSiteMove)
+	if err != nil {
+		return fmt.Errorf("maildir/restore: %w", err)
+	}
+	defer release()
 	return u.withTwoMailboxLocks(srcFolder, dstFolder, lockSiteMove, func() error {
 		from, ok := u.locate(dstFolder, moved)
 		if !ok {
@@ -105,10 +110,11 @@ func (u *userMailbox) AssignUIDHeld(folder, filename string, uid uint32) (string
 	// The caller's save section holds the list and the mailbox: the file enters
 	// cur/ and is named there, and its record lands before the list is let go,
 	// so no other process sees the row without the record (#1736, #2184).
-	if err := u.publishFromTemp(folder, filename, received); err != nil {
+	fresh, err := u.publishFromTemp(folder, filename, received)
+	if err != nil {
 		return "", err
 	}
-	if err := u.appendUIDListLocked(folder, uid, filename, override, guid); err != nil {
+	if err := u.appendUIDListLocked(folder, uid, filename, fresh, override, guid); err != nil {
 		return "", err
 	}
 	if testAfterAssign != nil {
@@ -120,15 +126,16 @@ func (u *userMailbox) AssignUIDHeld(folder, filename string, uid uint32) (string
 // publishFromTemp moves a saved body out of tmp/ into the directory its name
 // asks for: a name with no ":2," carries no flags, and a file that carries no
 // flags belongs in new/ (#1959). A message already published is one a caller
-// named twice, which is not an error to fail on.
-func (u *userMailbox) publishFromTemp(folder, filename string, received time.Time) error {
+// named twice, which is not an error to fail on. moved says the name came out
+// of tmp/ in this call: a name no list has seen.
+func (u *userMailbox) publishFromTemp(folder, filename string, received time.Time) (moved bool, err error) {
 	dir := u.folderPath(folder)
 	src := filepath.Join(dir, "tmp", filename)
 	if _, err := lstatPath(src); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("maildir/assign: stat temp %q: %w", filename, err)
+		return false, fmt.Errorf("maildir/assign: stat temp %q: %w", filename, err)
 	}
 	sub := "cur"
 	if maildirBase(filename) == filename {
@@ -143,7 +150,7 @@ func (u *userMailbox) publishFromTemp(folder, filename string, received time.Tim
 		}
 	}
 	if err := os.Rename(src, filepath.Join(dir, sub, filename)); err != nil {
-		return fmt.Errorf("maildir/assign: publish %q: %w", filename, err)
+		return false, fmt.Errorf("maildir/assign: publish %q: %w", filename, err)
 	}
 	if testAfterPublish != nil {
 		testAfterPublish()
@@ -151,11 +158,11 @@ func (u *userMailbox) publishFromTemp(folder, filename string, received time.Tim
 	// The entry, not the file: a crash here loses the name, not the bytes.
 	if u.b.fsync.SyncsDir() {
 		if err := syncDir(filepath.Join(dir, sub)); err != nil {
-			return fmt.Errorf("maildir/assign: sync %s: %w", sub, err)
+			return false, fmt.Errorf("maildir/assign: sync %s: %w", sub, err)
 		}
 	}
 	u.afterPublish(folder, sub, filename)
-	return nil
+	return true, nil
 }
 
 // afterPublish keeps the window over a name this process wrote. A file landing

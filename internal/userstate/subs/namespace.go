@@ -13,7 +13,8 @@ func ForNamespace(namespaces []config.NamespaceConfig, i int, nsUI, personal *ma
 	ns := namespaces[i]
 	if ns.KeepsSubscriptions() {
 		file := mailbox.SubsFileFor(shapes, i, ns.Prefix, separatorOf(ns))
-		return New(mailbox.ControlRoot(nsUI), file, personal.Username, owner, locker), ""
+		// In the namespace's store: a shared one's lock is the store's (#2598).
+		return New(mailbox.ControlRoot(nsUI), file, personal.Username, owner, locker).SetLockName(nsUI.LockName), ""
 	}
 	file := "subscriptions"
 	if p := mailbox.PrimaryPersonalIndex(shapes); p >= 0 {

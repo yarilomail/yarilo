@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yarilomail/yarilo/v2/internal/mailcrypt"
 	"github.com/yarilomail/yarilo/v2/internal/storage/mailops"
 	"github.com/yarilomail/yarilo/v2/pkg/jmapcore"
 	"github.com/yarilomail/yarilo/v2/pkg/locks"
@@ -72,9 +73,15 @@ type uploadStore struct {
 	dir, user, owner string
 	locker           locks.Locker
 	ttl              time.Duration
+	// crypt seals blobs that land on the mail volume. A sealed blob is named
+	// <id>.age: a blob is any bytes, an age file among them, so its first
+	// bytes cannot tell the two apart.
+	crypt *mailcrypt.Layer
 }
 
-func (h *userHandle) uploads(locker locks.Locker, ttl time.Duration) (*uploadStore, error) {
+const sealedSuffix = ".age"
+
+func (h *userHandle) uploads(locker locks.Locker, ttl time.Duration, crypt *mailcrypt.Layer) (*uploadStore, error) {
 	root := mailbox.ControlRoot(h.info)
 	if root == "" {
 		return nil, fmt.Errorf("jmap: no control root for %s", h.info.Username)
@@ -85,6 +92,7 @@ func (h *userHandle) uploads(locker locks.Locker, ttl time.Duration) (*uploadSto
 		owner:  locks.Owner(h.info.Username, h.info.LockID()),
 		locker: locker,
 		ttl:    ttl,
+		crypt:  crypt,
 	}, nil
 }
 
@@ -109,8 +117,12 @@ func (st *uploadStore) put(ctx context.Context, r io.Reader, max int64) (uploadI
 		return uploadID{}, fmt.Errorf("jmap/upload create: %w", err)
 	}
 	defer os.Remove(part) //nolint:errcheck // gone after the rename
+	// The id is the plaintext's: its digest and its size, which the client
+	// is told and the sweep and the quota count by.
 	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(r, max+1))
+	counted := &countWriter{w: hash}
+	err = st.crypt.Encrypt(f, io.TeeReader(io.LimitReader(r, max+1), counted))
+	n := counted.n
 	if err == nil {
 		err = f.Sync()
 	}
@@ -127,6 +139,9 @@ func (st *uploadStore) put(ctx context.Context, r io.Reader, max int64) (uploadI
 	copy(id.sum[:], hash.Sum(nil))
 	err = st.locked(ctx, func() error {
 		final := filepath.Join(st.dir, id.String())
+		if st.crypt.Writes() {
+			final += sealedSuffix
+		}
 		if _, serr := os.Stat(final); serr == nil {
 			now := time.Now()
 			return os.Chtimes(final, now, now)
@@ -143,24 +158,33 @@ func (st *uploadStore) put(ctx context.Context, r io.Reader, max int64) (uploadI
 	return id, nil
 }
 
-// open hands back an open blob; a missing, expired or mis-sized one is errNoBlob.
-func (st *uploadStore) open(ctx context.Context, id uploadID) (*os.File, error) {
-	var f *os.File
+// open hands back an open blob; a missing, expired or mis-sized one is
+// errNoBlob. A sealed blob comes back decrypted.
+func (st *uploadStore) open(ctx context.Context, id uploadID) (io.ReadCloser, error) {
+	var rc io.ReadCloser
 	err := st.locked(ctx, func() error {
 		st.sweepLocked()
-		var oerr error
-		f, oerr = os.Open(filepath.Join(st.dir, id.String()))
+		base := filepath.Join(st.dir, id.String())
+		if o, oerr := st.crypt.OpenFile(base + sealedSuffix); oerr == nil {
+			if o.Size() != id.size {
+				o.Close() //nolint:errcheck
+				return errNoBlob
+			}
+			rc = o
+			return nil
+		}
+		f, oerr := os.Open(base)
 		if oerr != nil {
 			return errNoBlob
 		}
 		if fi, serr := f.Stat(); serr != nil || fi.Size() != id.size {
 			f.Close() //nolint:errcheck
-			f = nil
 			return errNoBlob
 		}
+		rc = f
 		return nil
 	})
-	return f, err
+	return rc, err
 }
 
 // pending is the size of the account's live blobs.
@@ -170,6 +194,11 @@ func (st *uploadStore) pending() int64 {
 	for _, e := range entries {
 		fi, err := e.Info()
 		if err != nil || strings.HasPrefix(e.Name(), ".") || time.Since(fi.ModTime()) > st.ttl {
+			continue
+		}
+		// The plaintext's size, from the name: a sealed file is larger.
+		if id, ok := parseUploadID(strings.TrimSuffix(e.Name(), sealedSuffix), 1<<62); ok {
+			total += id.size
 			continue
 		}
 		total += fi.Size()
@@ -216,7 +245,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, id identit
 		return
 	}
 	defer h.close()
-	st, err := h.uploads(s.opts.Storage.Locker, s.opts.UploadTTL)
+	st, err := h.uploads(s.opts.Storage.Locker, s.opts.UploadTTL, s.opts.Storage.Crypt)
 	if err != nil {
 		jmapcore.WriteProblem(w, http.StatusServiceUnavailable, "Mail store unavailable")
 		return
@@ -269,4 +298,14 @@ func writeLimit(w http.ResponseWriter, limit string) {
 		Type: jmapcore.ProblemLimit, Status: http.StatusRequestEntityTooLarge,
 		Limit: limit, Detail: "The upload exceeds " + limit + ".",
 	}).Write(w)
+}
+
+type countWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	c.n += int64(len(p))
+	return c.w.Write(p)
 }

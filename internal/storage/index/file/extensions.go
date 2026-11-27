@@ -155,7 +155,7 @@ func (fs *folderState) declareRecordExtLocked(name string, hdrData []byte, recSi
 	if err := fs.file.AddRecordExtension(name, hdrData, recSize, align, resetID); err != nil {
 		return fmt.Errorf("fileindex: add %q extension: %w", name, err)
 	}
-	return nil
+	return fs.reencodeRecords()
 }
 
 // ensureVsizeExtLocked declares the extension in a folder written before it

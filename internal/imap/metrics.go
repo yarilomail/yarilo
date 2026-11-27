@@ -3,9 +3,12 @@ package imap
 import (
 	"errors"
 	"io/fs"
+	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/yarilomail/yarilo/v2/pkg/mailbox"
 )
 
 // metricCommandSeconds times a client command end to end, on the server side.
@@ -98,8 +101,39 @@ const (
 // an index that still references it has diverged from the store -- so this
 // looks underneath for the original fs.ErrNotExist rather than at the sentinel.
 func unreadableReason(err error) string {
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, mailbox.ErrExpunged) {
 		return reasonGone
 	}
 	return reasonUnreadable
 }
+
+// unreadableLevel is the log level of one unreadable message: a message
+// expunged under the read is Debug, as the reference neither fails nor logs it
+// (FETCH sends NIL, SEARCH marks the result lossy, SORT puts it first); a
+// message that is there and cannot be read is WARN.
+func unreadableLevel(reason string) slog.Level {
+	if reason == reasonGone {
+		return slog.LevelDebug
+	}
+	return slog.LevelWarn
+}
+
+// unreadableLevelOf is unreadableLevel for a command's counts: Debug only when
+// every message it could not read was expunged under it.
+func unreadableLevelOf(byReason map[string]int) slog.Level {
+	for reason, n := range byReason {
+		if n > 0 && reason != reasonGone {
+			return slog.LevelWarn
+		}
+	}
+	return slog.LevelDebug
+}
+
+// metricThreadRecordSeconds times the conversation write of an IMAP save, the
+// wait for the account's thread lock included: a save now queues for it, so
+// the queue is part of the save's cost and is read from here (#2591).
+var metricThreadRecordSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
+	Name:    "imap_thread_record_seconds",
+	Help:    "Duration of the conversation write within an IMAP save, the wait for the account's thread lock included.",
+	Buckets: []float64{0.000125, 0.00025, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.016, 0.064, 0.256, 1, 2, 5},
+})

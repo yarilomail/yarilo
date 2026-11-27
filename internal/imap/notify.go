@@ -3,6 +3,7 @@ package imap
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -315,6 +316,7 @@ func (s *session) startNotifyWatch(items []imaplib.NotifyItem) {
 		wake:       make(chan struct{}, 1),
 		stop:       cancel,
 	}
+	keys := s.notifyKeys()
 	// hear marks folder when key changes: its own key, or a folder a virtual
 	// mailbox draws from.
 	hear := func(folder, key string) {
@@ -346,22 +348,27 @@ func (s *session) startNotifyWatch(items []imaplib.NotifyItem) {
 		}
 		w.subscribed[folder] = struct{}{}
 		w.mu.Unlock()
-		hear(folder, locks.MailboxKey(s.userInfo.Username, folder))
+		hear(folder, keys.folder(folder))
 	}
 
 	for folder, mask := range static {
 		w.addSub(folder, mask)
 		// Resolved here, on the session: the list watcher runs apart from it.
 		for _, back := range s.virtualBackingNames(folder) {
-			hear(folder, locks.MailboxKey(s.userInfo.Username, back))
+			hear(folder, keys.folder(back))
 		}
 	}
 
 	// Mailbox-list subscription drives dynamic membership and MailboxName /
 	// SubscriptionChange notifications.
-	if listCh, err := s.srv.opts.Locker.Subscribe(ctx, locks.MailboxListKey(s.userInfo.Username)); err != nil {
-		slog.Debug("imap: notify list subscribe failed", "err", err)
-	} else {
+	// The user's own list, and each shared store's, where a change to its
+	// folders is published for every user (#2600).
+	for _, name := range keys.listNames() {
+		listCh, err := s.srv.opts.Locker.Subscribe(ctx, locks.MailboxListKey(name))
+		if err != nil {
+			slog.Debug("imap: notify list subscribe failed", "err", err)
+			continue
+		}
 		go func() {
 			for {
 				select {
@@ -511,4 +518,47 @@ func (s *session) drainNotifyStatus(w *imapserver.UpdateWriter) error {
 		}
 	}
 	return nil
+}
+
+// notifyKeySet is what the watcher needs to key a folder by full name, taken
+// from the session when it starts: the list watcher runs apart from it.
+type notifyKeySet struct {
+	user   string
+	shared []sharedPrefix // longest first
+}
+
+type sharedPrefix struct{ prefix, store string }
+
+// notifyKeys snapshots the shared stores among the session's namespaces.
+func (s *session) notifyKeys() notifyKeySet {
+	ks := notifyKeySet{user: s.userInfo.Username}
+	for prefix, h := range s.namespaces {
+		if h == nil || h.mbox == nil || prefix == "" {
+			continue
+		}
+		if name := mailbox.LockUserOf(h.mbox, ks.user); mailbox.IsSharedStoreName(name) {
+			ks.shared = append(ks.shared, sharedPrefix{prefix: prefix, store: name})
+		}
+	}
+	sort.Slice(ks.shared, func(i, j int) bool { return len(ks.shared[i].prefix) > len(ks.shared[j].prefix) })
+	return ks
+}
+
+// folder is the key a folder's changes come on: a shared store's, by the name
+// within its namespace, or the user's, by the full name.
+func (ks notifyKeySet) folder(name string) string {
+	for _, p := range ks.shared {
+		if strings.HasPrefix(name, p.prefix) {
+			return locks.MailboxKey(p.store, strings.TrimPrefix(name, p.prefix))
+		}
+	}
+	return locks.MailboxKey(ks.user, name)
+}
+
+func (ks notifyKeySet) listNames() []string {
+	out := []string{ks.user}
+	for _, p := range ks.shared {
+		out = append(out, p.store)
+	}
+	return out
 }

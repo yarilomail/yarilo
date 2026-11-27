@@ -27,6 +27,8 @@ type Sender struct {
 	cfg config.SieveConfig
 	// send replaces submit in tests.
 	send func(ctx context.Context, from string, to []string, body *bytes.Reader) error
+	// limit is sieve_send_rate_limit, shared with the engine's redirects.
+	limit *sendLimit
 }
 
 func newSender(cfg config.SieveConfig) *Sender {
@@ -35,7 +37,11 @@ func newSender(cfg config.SieveConfig) *Sender {
 
 // sendRedirect forwards the original message to addr with the original envelope-from.
 func (s *Sender) sendRedirect(ctx context.Context, envFrom, addr string, raw []byte) error {
-	return s.submit(ctx, envFrom, []string{addr}, bytes.NewReader(raw))
+	send := s.send
+	if send == nil {
+		send = s.submit
+	}
+	return send(ctx, envFrom, []string{addr}, bytes.NewReader(raw))
 }
 
 func (s *Sender) submit(ctx context.Context, from string, to []string, body *bytes.Reader) error {
@@ -191,8 +197,23 @@ func (s *Sender) sendNotify(ctx context.Context, opts FilterOptions, hdr textpro
 		from = n.From
 	}
 
+	// Every address of the mailto: counts against the send limit.
+	var allowed []string
+	for _, a := range strings.Split(recipient, ",") {
+		if a = strings.TrimSpace(a); a != "" && s.limit.allow(ctx, opts.Username, opts.HomeDir, "notify") {
+			allowed = append(allowed, a)
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	recipient = strings.Join(allowed, ",")
 	msg := buildNotifyMessage(from, recipient, subject, body)
-	if err := s.submit(ctx, envelopeFrom, []string{recipient}, bytes.NewReader(msg)); err != nil {
+	send := s.send
+	if send == nil {
+		send = s.submit
+	}
+	if err := send(ctx, envelopeFrom, allowed, bytes.NewReader(msg)); err != nil {
 		return fmt.Errorf("sieve/sender: notify send to %s: %w", recipient, err)
 	}
 	// Breadcrumb (#625): confirm the enotify fired. Only the destination address
@@ -215,7 +236,11 @@ func (s *Sender) sendReport(ctx context.Context, opts FilterOptions, r interp.Ac
 		ua = "yarilo"
 	}
 	msg := buildReportMessage(from, r.Target, ua, opts.EnvFrom, opts.EnvTo, r, opts.MsgRaw)
-	if err := s.submit(ctx, from, []string{r.Target}, bytes.NewReader(msg)); err != nil {
+	send := s.send
+	if send == nil {
+		send = s.submit
+	}
+	if err := send(ctx, from, []string{r.Target}, bytes.NewReader(msg)); err != nil {
 		return fmt.Errorf("sieve/sender: report send to %s: %w", r.Target, err)
 	}
 	return nil

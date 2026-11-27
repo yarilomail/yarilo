@@ -227,6 +227,32 @@ func (d *Dict) trim(set *dict.OpSettings, k string) string {
 	return k
 }
 
+// Incr implements dict.Counter: INCRBY and EXPIRE in one MULTI, so the key
+// is made, counted and given its lifetime in one step, with the prefix and
+// the indexes of every other write.
+func (d *Dict) Incr(ctx context.Context, set *dict.OpSettings, key string, delta int64, ttl time.Duration) (int64, error) {
+	if d.closed.Load() {
+		return 0, dict.ErrClosed
+	}
+	full := d.key(set, key)
+	var sum *redis.IntCmd
+	_, err := d.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		sum = p.IncrBy(ctx, full, delta)
+		p.ZAdd(ctx, d.idxKey(), redis.Z{Member: full})
+		if ttl > 0 {
+			p.Expire(ctx, full, ttl)
+			p.ZAdd(ctx, d.expKey(), redis.Z{Score: float64(d.now().Add(ttl).Unix() + 1), Member: full})
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("redis incr: %w", err)
+	}
+	return sum.Val(), nil
+}
+
+var _ dict.Counter = (*Dict)(nil)
+
 // Lookup implements dict.Dict.
 func (d *Dict) Lookup(ctx context.Context, set *dict.OpSettings, key string) ([][]byte, bool, error) {
 	if d.closed.Load() {

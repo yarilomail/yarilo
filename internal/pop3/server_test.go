@@ -175,8 +175,8 @@ func (m *mockIndex) FolderVSize(_ uint64) (uint64, uint32, error)   { return 0, 
 func (m *mockIndex) RecomputeVSize(_ uint64) error                  { return nil }
 func (m *mockIndex) GUIDBackfillNeeded(_ uint64) (bool, error)      { return false, nil }
 func (m *mockIndex) SetGUIDs(_ uint64, _ map[uint32][16]byte) error { return nil }
-func (m *mockIndex) Vanished(_ uint64, _ uint64) ([]uint32, error) {
-	return nil, nil
+func (m *mockIndex) Vanished(_ uint64, _ uint64) ([]uint32, bool, error) {
+	return nil, true, nil
 }
 
 func (m *mockIndex) VanishedGUIDs(_ uint64, _ uint64) ([]mailbox.ExpungedCopy, bool, error) {

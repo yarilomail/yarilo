@@ -32,6 +32,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.dict.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-dict"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
@@ -74,7 +75,7 @@ spec:
         - name: varlib
           emptyDir: {}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.dict.internalTLS "role" "dict") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

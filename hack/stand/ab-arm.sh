@@ -20,9 +20,29 @@ YARILO_PASSWORD="$(sandbox_password)"
 YARILO_DB_PASSWORD="$(sandbox_db_password)"
 export YARILO_PASSWORD YARILO_DB_PASSWORD
 
+# snapshot keeps the stand as the failure left it, before anything else runs:
+# "pods did not settle" alone named no pod, and the namespace events had
+# expired by the time anyone looked (winrel247).
+snapshot() {
+  local d="$OUT/snap-$ARM" po
+  mkdir -p "$d" || return 0
+  kube get pods -o wide > "$d/pods.txt" 2>&1 || true
+  kube get sts,deploy,job -o wide > "$d/workloads.txt" 2>&1 || true
+  kube get events --sort-by=.lastTimestamp > "$d/events.txt" 2>&1 || true
+  helm --kubeconfig="$KCFG" status yarilo -n "$NS" > "$d/helm-status.txt" 2>&1 || true
+  # Every pod not ready, by its READY column, Completed jobs aside.
+  for po in $(kube get pods --no-headers 2>/dev/null | awk '{split($2, r, "/"); if (r[1] != r[2] && $3 != "Completed") print $1}'); do
+    kube describe pod "$po" > "$d/describe-$po.txt" 2>&1 || true
+    kube logs "$po" --all-containers --timestamps > "$d/logs-$po.txt" 2>&1 || true
+    kube logs "$po" --all-containers --timestamps --previous > "$d/logs-previous-$po.txt" 2>&1 || true
+  done
+  echo "ab-arm: the stand as this arm left it is in $d" >&2
+}
+
 # An arm that ends anywhere but its own last line says so: three runs died
-# inside the fill leaving only the line before it (#1875).
-trap 'rc=$?; [ "$rc" = 0 ] || echo "ab-arm: arm ${ARM:-?} ended during ${STEP:-?} with status $rc" >&2' EXIT
+# inside the fill leaving only the line before it (#1875). Past the checkout
+# the stand is the arm's, so its state is kept too.
+trap 'rc=$?; if [ "$rc" != 0 ]; then echo "ab-arm: arm ${ARM:-?} ended during ${STEP:-?} with status $rc" >&2; case "${STEP:-starting}" in starting|checkout) ;; *) snapshot ;; esac; fi' EXIT
 
 ARM="${1:?arm label}"
 TAG="${2:?image tag}"
@@ -178,6 +198,9 @@ overlay_allows() {
     fsync-never) echo '^storage(\.mail_fsync)?$' ;;
     notls) echo '^internalTLS(\.enabled)?$' ;;
     no-protocol-rule) echo '^components(\.auth)?$' ;;
+    mailcrypt-keys|mailcrypt-write) echo '^(mailCrypt(\.secretName)?|storage(\.mail_crypt)?)$' ;;
+    locks-cpu) echo '^components(\.locks)?$' ;;
+    lmtp-nocpu) echo '^components(\.lmtp)?$' ;;
     *) return 1 ;;
   esac
 }
@@ -268,7 +291,7 @@ backend_counters() {
         # read is retried rather than answered from the pods that did reply.
         [ -n "$page" ] || { total=""; break; }
         total+=$(printf '%s\n' "$page" |
-          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{|index_cache_record_crc_mismatch_total|mailbox_message_opened_total\{|fileindex_journal_write_failed_total\{|mailbox_write_failed_total\{|maildir_uidlist_read_total\{|maildir_dir_read_total\{|maildir_listing_miss_total\{|maildir_listing_retry_total\{|maildir_uidlist_stamp_hit_total|fileindex_maildir_stamp_unchanged_total|maildir_uidlist_stamp_miss_total|maildir_cache_stat_total\{|maildir_window_closed_total\{|maildir_lock_hold_seconds_(bucket|count|sum)\{)" || true)
+          grep -E "^(imap_maildir_sync_total\{|imap_maildir_sync_seconds_(count|sum)\{|maildir_partial_pass_empty_total|quota_folders_opened_total|quota_usage_count_total\{|index_cache_record_crc_mismatch_total|mailbox_message_opened_total\{|fileindex_journal_write_failed_total\{|mailbox_write_failed_total\{|maildir_uidlist_read_total\{|maildir_dir_read_total\{|maildir_listing_miss_total\{|maildir_listing_retry_total\{|maildir_uidlist_stamp_hit_total|fileindex_maildir_stamp_unchanged_total|maildir_uidlist_stamp_miss_total|maildir_cache_stat_total\{|maildir_window_closed_total\{|maildir_lock_hold_seconds_(bucket|count|sum)\{|imap_thread_record_seconds_bucket\{|yarilo_threads_save_not_recorded_total )" || true)
         total+=$'\n'
         # The FTS service reconciles the same folders and takes the same list
         # lock: its holds are half of what the section costs (#2184).
@@ -323,16 +346,7 @@ dict_delta() {
 # The file name carries the window asked for, not the sample seconds -- those
 # are inside the profile, and naming them here would be a promise this script
 # cannot keep without reading the file back.
-# A forward that never came up is the flake this retries: status 2 is that
-# and only that, so a genuinely unprofilable pod still stops the arm.
-retry_capture() {
-  local kind="$1" label="$2" secs="$3" rc
-  pprof_capture "$kind" "$label" "$secs" && return 0
-  rc=$?
-  [ "$rc" = 2 ] || return "$rc"
-  echo "ab-arm: the $kind forward did not come up; taking it once more" >&2
-  pprof_capture "$kind" "$label" "$secs"
-}
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pprof.sh"
 
 block_profile() { retry_capture block "$1" "${2:-40}"; }
 
@@ -340,66 +354,15 @@ block_profile() { retry_capture block "$1" "${2:-40}"; }
 # overlay: pprof is on in the sandbox values with the block rate at zero.
 cpu_profile() { retry_capture profile "$1" "${2:-40}"; }
 
-pprof_capture() {
-  local kind="$1" label="$2" secs="${3:-40}" pod port=18080 pid pids=() files=() rc=0
-  local pods
-  pods=$(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2)
-  [ -n "$pods" ] || { echo "ab-arm: no backend pod to profile" >&2; return 1; }
-  for pod in $pods; do
-    kube port-forward "pod/$pod" "$port:8080" >/dev/null 2>&1 &
-    pids+=($!)
-    files+=("$OUT/$kind-$label-$pod-req${secs}s.pprof")
-    port=$((port + 1))
-  done
-  # Ready, not slept for: a fixed pause captured one pod and missed the other,
-  # and a forward that is not up yet writes no profile at all.
-  port=18080
-  for pod in $pods; do
-    local deadline=$(( $(date +%s) + 30 ))
-    until curl -fsS -o /dev/null "http://127.0.0.1:$port/healthz" 2>/dev/null; do
-      if [ "$(date +%s)" -ge "$deadline" ]; then
-        echo "ab-arm: the forward to $pod on $port never came up" >&2
-        for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null || true; done
-        return 2
-      fi
-      sleep 1
-    done
-    port=$((port + 1))
-  done
-
-  port=18080
-  local curls=()
-  for pod in $pods; do
-    curl -fsS -o "$OUT/$kind-$label-$pod-req${secs}s.pprof" \
-      "http://127.0.0.1:$port/debug/pprof/$kind?seconds=$secs" &
-    curls+=($!)
-    port=$((port + 1))
-  done
-  # Only the captures: a bare wait also waits for the port-forwards, which
-  # never exit, and the arm stops there for ever (seen: 80 minutes).
-  # Empty arrays are "unbound" under set -u on bash 3.2, which is what macOS
-  # ships: a window with no pod to profile must say so, not die here.
-  for pid in ${curls[@]+"${curls[@]}"}; do wait "$pid" || rc=1; done
-  for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null || true; done
-  # An empty file is a capture that did not happen, and it reads exactly like
-  # a pod where nobody waited.
-  local f
-  for f in ${files[@]+"${files[@]}"}; do
-    if [ ! -s "$f" ]; then
-      echo "ab-arm: the $kind profile for $(basename "$f") is empty; that pod was not profiled" >&2
-      rc=1
-    fi
-  done
-  return "$rc"
-}
-
 step "deploy"
 # The knobs beside the tag, so a window says what kind of arm it is: a quick
 # arm's numbers are per-login ratios, not throughput (README.md).
 echo "== arm $ARM: $TAG types=[$TYPES] fill=$FILL"
-helm --kubeconfig="$KCFG" upgrade yarilo "$CHART/helm" -n "$NS" \
-  -f "$CHART/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} \
-  --set image.tag="$TAG" --timeout 10m >/dev/null
+. "$REPO/hack/stand/deploy.sh"
+mkdir -p "$OUT/deploy-$ARM"
+stand_deploy "$OUT/deploy-$ARM" "$TAG" "$CHART/helm" \
+  -f "$CHART/helm_values/values-sandbox.yaml" ${overlay_args[@]+"${overlay_args[@]}"} ||
+  { echo "ab-arm: the deploy did not settle ($OUT/deploy-$ARM/deploy.txt)" >&2; exit 1; }
 
 deadline=$(( $(date +%s) + 600 ))
 until [ "$(kube get pods --no-headers | grep -cv 'Running\|Completed')" = "0" ]; do
@@ -483,24 +446,28 @@ done
 # throughput further than anything under test, and an arm that starts bigger
 # than the one before it is not a comparison (#1875).
 start_inventory() {
-  local pod f=0 k=0 out
-  pod=$(first_pod backend)
+  local f=0 k=0 t
   for t in $TYPES; do
-    set -- $(type_domain "$t")
-    out=$(kube exec "$pod" -c yarilo-imap -- sh -c "
-      f=0; k=0
-      for n in \$(seq $2 $3); do
-        d=\"/var/mail/vhosts/$1/u\${n}@$1\"
-        [ -d \"\$d\" ] || continue
-        f=\$((f+\$(find \"\$d\" -type f 2>/dev/null | wc -l)))
-        k=\$((k+\$(du -sk \"\$d\" 2>/dev/null | cut -f1)))
-      done
-      echo \"\$f \$k\"" 2>/dev/null)
-    set -- $out
+    set -- $(type_inventory "$t")
     f=$((f + ${1:-0}))
     k=$((k + ${2:-0}))
   done
   echo "files=$f du_kb=$k"
+}
+# type_inventory prints "<files> <du_kb>" over one type's filled accounts.
+type_inventory() {
+  local pod
+  pod=$(first_pod backend)
+  set -- $(type_domain "$1")
+  kube exec "$pod" -c yarilo-imap -- sh -c "
+    f=0; k=0
+    for n in \$(seq $2 $3); do
+      d=\"/var/mail/vhosts/$1/u\${n}@$1\"
+      [ -d \"\$d\" ] || continue
+      f=\$((f+\$(find \"\$d\" -type f 2>/dev/null | wc -l)))
+      k=\$((k+\$(du -sk \"\$d\" 2>/dev/null | cut -f1)))
+    done
+    echo \"\$f \$k\"" 2>/dev/null
 }
 # probe_inventory counts the one mailbox the seed itself fills.
 probe_inventory() {
@@ -542,6 +509,11 @@ for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut 
     kube exec "$pod" -c yarilo-imap -- sh -c \
       "for n in \$(seq $2 $3); do rm -rf \"/var/mail/vhosts/$1/u\${n}@$1\"; done" >/dev/null
   done
+done
+# The seed fills this mailbox again; left from the arm before, it is a store
+# another release wrote (#2685).
+for pod in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+  kube exec "$pod" -c yarilo-imap -- rm -rf "/var/mail/vhosts/$MDBOX_DOMAIN/over@$MDBOX_DOMAIN" >/dev/null
 done
 
 
@@ -587,6 +559,36 @@ if [ "$KEEP_STORE" = "1" ]; then
 else
   seeded=$(start_inventory)
   echo "-- start after seed: ${seeded:-unreadable}" | tee "$OUT/start-$ARM-seeded.txt"
+  # Per type, as one type's growth hides in another's block rounding.
+  for t in $TYPES; do
+    set -- $(type_inventory "$t")
+    echo "-- start after seed: type=$t files=${1:-?} du_kb=${2:-?}"
+  done | tee "$OUT/start-$ARM-seeded-types.txt"
+  # Per type, the message files' bytes (maildir cur/ and new/, sdbox u.*, mdbox
+  # m.*) apart from the indexes: every arm fills the same messages, so one
+  # arm's bytes against another's is what its write mode costs on disk.
+  : > "$OUT/disk-$ARM.txt"
+  for t in $TYPES; do
+    set -- $(type_domain "$t")
+    case "$t" in
+      maildir) pat="-path '*/Maildir/cur/*' -o -path '*/Maildir/new/*'" ;;
+      sdbox) pat="-path '*/dbox-Mails/u.*'" ;;
+      mdbox) pat="-path '*/storage/m.*'" ;;
+    esac
+    out=$(kube exec "$(first_pod backend)" -c yarilo-imap -- sh -c "
+      cd /var/mail/vhosts/$1 2>/dev/null || exit 0
+      b=0; n=0; k=0
+      for i in \$(seq $2 $3); do
+        d=\"u\${i}@$1\"
+        [ -d \"\$d\" ] || continue
+        k=\$((k + \$(du -sk \"\$d\" | cut -f1)))
+        set -- \$(find \"\$d\" -type f \\( $pat \\) -exec stat -c %s {} + | awk '{ b += \$1; n++ } END { print b + 0, n + 0 }')
+        b=\$((b + \$1)); n=\$((n + \$2))
+      done
+      echo \"\$b \$n \$k\"" 2>/dev/null)
+    set -- $out
+    echo "disk: arm=$ARM type=$t message_bytes=${1:-?} message_files=${2:-?} du_kb=${3:-?}" | tee -a "$OUT/disk-$ARM.txt"
+  done
 fi
 # u1-150 are empty at the start by design: the seed puts them in the database
 # and imaptest fills them during the run. What the seed does deliver is the
@@ -827,12 +829,124 @@ for type in $TYPES; do
         }
       }
     ' "$OUT/backend-$ARM-$name-delta.txt")"
+  # An IMAP save's conversation write, its queue for the account's thread lock
+  # included, and the saves it left outside their conversation (#2591): the
+  # queue is part of the save's cost, so the p99 is read beside the A arms'.
+  echo "$ARM $name $(awk '
+      $1 == "yarilo_threads_save_not_recorded_total" { missed += $2; next }
+      $1 !~ /^imap_thread_record_seconds_bucket\{/ { next }
+      {
+        le = $1; sub(/.*le="/, "", le); sub(/".*/, "", le)
+        n[le] += $2; les[le] = 1
+      }
+      END {
+        m = 0
+        for (l in les) if (l != "+Inf") bounds[++m] = l + 0
+        for (i = 1; i <= m; i++) for (j = i + 1; j <= m; j++) if (bounds[j] < bounds[i]) { x = bounds[i]; bounds[i] = bounds[j]; bounds[j] = x }
+        total = n["+Inf"]; p50 = "-"; p99 = "-"
+        for (i = 1; i <= m; i++) {
+          c = 0
+          for (l in les) if (l != "+Inf" && l + 0 == bounds[i]) c = n[l]
+          if (p50 == "-" && total > 0 && c >= 0.5 * total) p50 = bounds[i] "s"
+          if (p99 == "-" && total > 0 && c >= 0.99 * total) p99 = bounds[i] "s"
+        }
+        if (total > 0 && p99 == "-") p99 = "+Inf"
+        printf "thread record: n=%d p50<=%s p99<=%s not_threaded=%d", total, p50, p99, missed
+      }
+    ' "$OUT/backend-$ARM-$name-delta.txt")"
  done
 done
 
 kube exec "$authpod" -- sh -c \
   'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep -E "^yarilo_auth_request_seconds_(bucket|count|sum)\{.*verb=\"AUTH\""' \
   > "$OUT/auth-$ARM-after.txt"
+
+# Every container's log of every backend pod, kept before the next arm's
+# deploy replaces the pods: an imaptest error that did not fail the arm is
+# named only in its protocol's log, and only until then.
+step "logs"
+# Every pod of the namespace, not only the backends: the lock service, the
+# directors and the login proxies say what the backends waited on.
+mkdir -p "$OUT/logs-$ARM"
+for po in $(kube get pods --field-selector=status.phase=Running -o name | cut -d/ -f2); do
+  for c in $(kube get pod "$po" -o jsonpath='{.spec.containers[*].name}'); do
+    kube logs "$po" -c "$c" --timestamps > "$OUT/logs-$ARM/$c-$po.log" 2>&1 || true
+    kube logs "$po" -c "$c" --timestamps --previous > "$OUT/logs-$ARM/$c-$po.previous.log" 2>/dev/null ||
+      rm -f "$OUT/logs-$ARM/$c-$po.previous.log"
+  done
+done
+
+# Every metrics page of every pod, whole: an arm deploys its pods fresh, so a
+# page read at its end is the arm's total, and a figure nobody listed in a
+# filter (a command's latency, a lock client's wait) is read from here after
+# the window instead of being lost with the next deploy. A port that is not a
+# telemetry one answers nothing and is skipped.
+step "metrics"
+mkdir -p "$OUT/metrics-$ARM"
+pages=0
+for po in $(kube get pods --field-selector=status.phase=Running -o name | cut -d/ -f2); do
+  ports=$(kube get pod "$po" -o jsonpath='{.spec.containers[*].ports[*].containerPort}' 2>/dev/null) || ports=
+  first=$(kube get pod "$po" -o jsonpath='{.spec.containers[0].name}' 2>/dev/null) || first=
+  for port in $ports; do
+    page=$(kube exec "$po" -c "$first" -- sh -c "wget -T 5 -qO- http://127.0.0.1:$port/metrics" 2>/dev/null) || continue
+    case "$page" in "# HELP"* | "# TYPE"*) ;; *) continue ;; esac
+    printf '%s\n' "$page" > "$OUT/metrics-$ARM/$po-$port.prom"
+    pages=$((pages + 1))
+  done
+done
+echo "-- metrics: $pages pages of every pod in metrics-$ARM/"
+
+# The index of every account, base and journals, no bodies: the next arm
+# empties the accounts, and a header correction names only the folder, so the
+# journal that shows where it began is found only among all of them.
+# The backends are live: a fold may remove a file between find and tar. A
+# failure is said in the arm's output and never stops an arm that passed.
+step "index"
+idxrc=0
+idxpod=$(first_pod backend) || idxpod=
+kube exec "$idxpod" -c yarilo-imap -- sh -c \
+  'find /var/mail/vhosts -type f \( -name yarilo.index -o -name yarilo.index.log -o -name yarilo.index.log.2 \) | tar czf - -T -' \
+  > "$OUT/index-$ARM.tgz" 2> "$OUT/index-$ARM.err" || idxrc=$?
+idxn=$(( $( { tar tzf "$OUT/index-$ARM.tgz" 2>/dev/null || true; } | wc -l) ))
+if [ "$idxrc" != 0 ] || [ "$idxn" -eq 0 ]; then
+  echo "-- index of every account: FAILED rc=$idxrc, $idxn files in index-$ARM.tgz, see index-$ARM.err"
+else
+  echo "-- index of every account: $idxn files in index-$ARM.tgz"
+fi
+
+# The index's own counters from every service of every backend pod: header
+# corrections and stale base and log pairs are counted in the process that
+# read, fts as much as imap, and each serves its telemetry on its own port.
+step "index-counters"
+: > "$OUT/index-counters-$ARM.txt"
+# A port that did not answer and a counter that never rose both leave no
+# line: the summary says how many ports were asked and how many answered, by
+# the request's own exit code, so a zero is a zero that was read.
+asked=0
+answered=0
+for po in $(kube get pods -l app.kubernetes.io/component=backend -o name | cut -d/ -f2); do
+  ports=$(kube get pod "$po" -o jsonpath='{.spec.containers[*].ports[*].containerPort}' 2>/dev/null) || ports=
+  for port in $ports; do
+    case "$port" in 808[0-9]) ;; *) continue ;; esac
+    asked=$((asked + 1))
+    if page=$(kube exec "$po" -c yarilo-imap -- sh -c "wget -qO- http://127.0.0.1:$port/metrics" 2>/dev/null); then
+      answered=$((answered + 1))
+      printf '%s\n' "$page" | grep -E '^fileindex_(stale_pair|header_corrected)_total' |
+        sed "s/^/$po :$port /" >> "$OUT/index-counters-$ARM.txt" || true
+    else
+      echo "$po :$port no-answer" >> "$OUT/index-counters-$ARM.txt"
+    fi
+  done
+done
+awk -v asked="$asked" -v answered="$answered" '
+  $3 ~ /^fileindex_header_corrected_total/ { corrected += $4 }
+  $3 ~ /^fileindex_stale_pair_total/ && $3 ~ /result="retried"/ { retried += $4 }
+  $3 ~ /^fileindex_stale_pair_total/ && $3 ~ /result="failed"/ { failed += $4 }
+  END {
+    mark = (asked == answered && asked > 0) ? "" : " INCOMPLETE"
+    printf "-- index counters:%s ports=%d answered=%d header_corrected=%d stale_pair_retried=%d stale_pair_failed=%d (index-counters-'"$ARM"'.txt)\n", mark, asked, answered, corrected, retried, failed
+  }
+' "$OUT/index-counters-$ARM.txt"
 
 # What the next arm must find if it carries this state over.
 message_inventory > "$OUT/messages-last-arm.txt"

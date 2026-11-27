@@ -117,7 +117,7 @@ func (u *userIndex) purgeCacheIfDue(fs *folderState, folderID uint64, path strin
 	}
 	var msgs uint32
 	if err := u.withFolderROUnlocked(folderID, func(v *folderState) error {
-		msgs = uint32(len(v.file.Records))
+		msgs = uint32(v.recordCount())
 		return nil
 	}); err != nil {
 		return err
@@ -145,7 +145,7 @@ func (u *userIndex) holdCachePair(path, folder string) (func(), error) {
 	if u.b.locker == nil {
 		return mailindex.LockCachePath(path, false), nil
 	}
-	key := locks.MailboxKey(u.username, folder)
+	key := locks.MailboxKey(u.lockUser, folder)
 	if held, err := locks.Reentrant(u.b.locker, key, site, false); err != nil {
 		return nil, err
 	} else if held != locks.HoldNone {

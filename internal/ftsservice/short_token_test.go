@@ -18,8 +18,8 @@ import (
 // returned its neighbour through the prefix "1*" (#2454).
 func TestASubjectWithAOneCharacterTokenIsSearchedAsASubstring(t *testing.T) {
 	svc, box, uidx := newTestService(t)
-	for uid, subject := range map[uint32]string{1: "xtok-1793573171-7", 2: "xtok-1793573171-1", 3: "xtok-1793573171-77"} {
-		saveRawMessage(t, box, uidx, uid, "From: a@test.com\r\nSubject: "+subject+"\r\n\r\nshort token\r\n")
+	for i, subject := range []string{"xtok-1793573171-7", "xtok-1793573171-1", "xtok-1793573171-77"} { // in uid order
+		saveRawMessage(t, box, uidx, uint32(i+1), "From: a@test.com\r\nSubject: "+subject+"\r\n\r\nshort token\r\n")
 	}
 	if err := svc.Index(testUser, testMbox, 3, 0); err != nil {
 		t.Fatal(err)

@@ -19,7 +19,7 @@ func TestTheDestinationStore(t *testing.T) {
 		{"mdbox", "mdbox", func(b any) bool { _, ok := b.(*mdbox.Backend); return ok }},
 	}
 	for _, tc := range tests {
-		be, err := pickBackend(tc.dst)
+		be, err := pickBackend(tc.dst, nil)
 		if err != nil || !tc.check(be) {
 			t.Errorf("pickBackend(%q) = %T, %v", tc.dst, be, err)
 		}
@@ -27,7 +27,7 @@ func TestTheDestinationStore(t *testing.T) {
 			t.Errorf("destinationDriver(%q) = %q, want %q", tc.dst, got, tc.driver)
 		}
 	}
-	if _, err := pickBackend("maildir"); err == nil {
+	if _, err := pickBackend("maildir", nil); err == nil {
 		t.Error("maildir was accepted as an import destination")
 	}
 	if got := destinationDriver("Maildir"); got != "maildir" {

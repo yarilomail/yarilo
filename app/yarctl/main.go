@@ -7,6 +7,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -126,7 +127,9 @@ func main() {
 	}
 
 	if err := dispatch(args); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		if !errors.Is(err, errConfigRefused) { // the reason is printed already
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -138,6 +141,10 @@ func dispatch(args []string) error {
 	// dispatches `wait` as a backend service and fails.
 	if len(args) > 0 && args[0] == "wait" {
 		return dispatchWait(args[1:])
+	}
+	// Local, like wait: reads the configuration file, calls no service.
+	if len(args) > 0 && args[0] == "config" {
+		return dispatchConfig(args[1:], os.Stdout, os.Stderr)
 	}
 
 	// When YARILO_ADMIN_TYPE is set the plane is implicit: first arg is the
@@ -222,6 +229,8 @@ func dispatchBackend(args []string) error {
 		return dispatchQuota(args[1:])
 	case "fts":
 		return dispatchFTS(args[1:])
+	case "crypt":
+		return dispatchCrypt(args[1:])
 	case "warden":
 		// warden introspection runs against the backend plane, so it must resolve
 		// here too: the backend-api container sets YARILO_ADMIN_TYPE=backend, which
@@ -229,7 +238,7 @@ func dispatchBackend(args []string) error {
 		// top-level shorthand.
 		return dispatchWarden(args[1:])
 	default:
-		return fmt.Errorf("unknown backend service %q - available: dict, folder, user, index, mdbox, subscriptions, specialuse, metadata, acl, who, sessions, quota, fts, warden", args[0])
+		return fmt.Errorf("unknown backend service %q - available: dict, folder, user, index, mdbox, subscriptions, specialuse, metadata, acl, who, sessions, quota, fts, crypt, warden", args[0])
 	}
 }
 
@@ -303,6 +312,7 @@ Services:
   mailbox       - message retrieval (mailbox message get mime|raw)
   who           - active session listing
   sessions      - session management (kick)
+  crypt         - mail encryption at rest: status, re-encryption, keys
 
 Run 'yarctl backend <service>' with no command for that service's usage.`)
 }

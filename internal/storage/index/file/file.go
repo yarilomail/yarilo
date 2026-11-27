@@ -38,6 +38,8 @@ var (
 	defaultLogCompactMinBytes = logrotate.MinSize
 	defaultLogCompactMaxBytes = logrotate.MaxSize
 	defaultLogCompactMinAge   = logrotate.MinAge
+	// defaultLog2MaxAge is the reference's mail_index_log2_max_age.
+	defaultLog2MaxAge = 48 * time.Hour
 )
 
 // sidecarTmpSeq gives concurrent sidecar writers unique tmp names, so a shared
@@ -125,6 +127,8 @@ type Backend struct {
 	logCompactMinBytes int64
 	logCompactMaxBytes int64
 	logCompactMinAge   time.Duration
+	// log2MaxAge caps the age of the log a fold keeps as .log.2; zero keeps none.
+	log2MaxAge time.Duration
 
 	// cachePurgeDeletePct is the deleted-record share that purges a folder's
 	// cache; negative never purges on its own.
@@ -192,6 +196,12 @@ func WithLogCompaction(minBytes, maxBytes int64, minAge time.Duration) Option {
 	}
 }
 
+// WithLog2MaxAge sets how long a fold keeps the log it folded as .log.2, for
+// the expunge history JMAP and QRESYNC read; zero keeps none.
+func WithLog2MaxAge(d time.Duration) Option {
+	return func(b *Backend) { b.log2MaxAge = d }
+}
+
 // WithCachePurgeDeletePercentage sets the deleted-record share that purges a
 // cache; zero keeps the default, negative never purges on its own.
 func WithCachePurgeDeletePercentage(p int) Option {
@@ -202,6 +212,13 @@ func WithCachePurgeDeletePercentage(p int) Option {
 // a cache; zero keeps the default.
 func WithCachePurgeContinuedPercentage(p int) Option {
 	return func(b *Backend) { b.cachePurgeContinuedPct = p }
+}
+
+// WithIndexIdleCacheSize sets what base images no folder state references
+// may hold together; the cache is the process's, so the last Backend built
+// sets it.
+func WithIndexIdleCacheSize(n int64) Option {
+	return func(*Backend) { imageIdleBudget.Store(n) }
 }
 
 // WithCachePurgeMinSize sets the cache file size below which nothing purges it;
@@ -220,6 +237,7 @@ func New(opts ...Option) *Backend {
 		logCompactMinBytes: defaultLogCompactMinBytes,
 		logCompactMaxBytes: defaultLogCompactMaxBytes,
 		logCompactMinAge:   defaultLogCompactMinAge,
+		log2MaxAge:         defaultLog2MaxAge,
 
 		cachePurgeDeletePct: defaultCachePurgeDeletePct,
 		cachePurgeMinSize:   defaultCachePurgeMinSize,
@@ -261,13 +279,14 @@ func (b *Backend) OpenUser(u *mailbox.UserInfo) mailbox.UserIndex {
 			// spelling of a path rule is what misplaced our map (#1579).
 			controlRoot: mailbox.ControlRoot(u),
 			username:    u.Username,
+			lockUser:    u.LockUser(),
 			// The shared index keeps one for the paths that have no handle in hand;
 			// a locked call made through a handle stamps its own (#1664).
 			owner: locks.Owner(u.Username, u.LockID()),
 			open:  make(map[uint64]*folderState),
 		}
-		ui.uidValidity = uidvalidity.New(ui.controlRoot, ui.username, ui.owner, b.locker)
-		ui.folders = folders.New(ui.controlRoot, ui.username, ui.owner, b.locker)
+		ui.uidValidity = uidvalidity.New(ui.controlRoot, ui.lockUser, ui.owner, b.locker)
+		ui.folders = folders.New(ui.controlRoot, ui.lockUser, ui.owner, b.locker)
 		ref = &refUserIndex{ui: ui}
 		b.users[key] = ref
 	}
@@ -387,8 +406,31 @@ func (h *userHandle) ClaimRecent(folderID uint64) (uint32, uint32, error) {
 func (h *userHandle) AllocateUID(folderID uint64) (uint32, error) {
 	return h.stamped(folderID).AllocateUID(folderID)
 }
+
+var _ mailbox.UIDReleaser = (*userHandle)(nil)
+var _ mailbox.DirCarrier = (*userHandle)(nil)
+var _ mailbox.CarryingAppender = (*userHandle)(nil)
+
+func (h *userHandle) AllocateAndAppendCarried(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, *mailbox.MaildirStamp, *mailbox.DirCarry, error)) error {
+	return h.stamped(folderID).AllocateAndAppendCarried(folderID, m, name)
+}
+
+func (h *userHandle) CarryDirTimes(folderID uint64, pre, post mailbox.DirTimes) error {
+	return h.stamped(folderID).CarryDirTimes(folderID, pre, post)
+}
+
+func (h *userHandle) ReleaseUID(folderID uint64, uid uint32) { h.ui.ReleaseUID(folderID, uid) }
+
+var _ mailbox.NextUIDReader = (*userHandle)(nil)
+
+func (h *userHandle) NextUIDHeld(folderID uint64, want uint32) (uint32, error) {
+	return h.stamped(folderID).NextUIDHeld(folderID, want)
+}
 func (h *userHandle) AllocateAndAppend(folderID uint64, m *mailbox.MessageMeta) error {
 	return h.stamped(folderID).AllocateAndAppend(folderID, m)
+}
+func (h *userHandle) AllocateAndAppendStamped(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, *mailbox.MaildirStamp, error)) error {
+	return h.stamped(folderID).AllocateAndAppendStamped(folderID, m, name)
 }
 func (h *userHandle) AllocateAndAppendNamed(folderID uint64, m *mailbox.MessageMeta, name func(uint32) (string, error)) error {
 	return h.stamped(folderID).AllocateAndAppendNamed(folderID, m, name)
@@ -435,10 +477,6 @@ func (h *userHandle) GetPOP3UIDLsUnlocked(folderID uint64) (map[uint32]string, e
 	return h.stamped(folderID).GetPOP3UIDLsUnlocked(folderID)
 }
 
-func (h *userHandle) VanishedUnlocked(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
-	return h.stamped(folderID).VanishedUnlocked(folderID, sinceModSeq)
-}
-
 func (h *userHandle) KeywordsUnlocked(folderID uint64) ([]string, error) {
 	return h.stamped(folderID).KeywordsUnlocked(folderID)
 }
@@ -465,7 +503,7 @@ func (h *userHandle) SetGUIDs(folderID uint64, guids map[uint32][16]byte) error 
 func (h *userHandle) ExpungeMessage(folderID uint64, uid uint32) error {
 	return h.stamped(folderID).ExpungeMessage(folderID, uid)
 }
-func (h *userHandle) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, error) {
+func (h *userHandle) Vanished(folderID uint64, sinceModSeq uint64) ([]uint32, bool, error) {
 	return h.stamped(folderID).Vanished(folderID, sinceModSeq)
 }
 func (h *userHandle) VanishedGUIDs(folderID uint64, sinceModSeq uint64) ([]mailbox.ExpungedCopy, bool, error) {
@@ -545,6 +583,7 @@ type userIndex struct {
 	// index does not lose its identity.
 	folders  *folders.Store
 	username string
+	lockUser string // lock keys: the user, or a shared store's name
 	owner    string
 
 	mu    sync.Mutex
@@ -552,6 +591,14 @@ type userIndex struct {
 	open  map[uint64]*folderState // folderID → state
 	byDir map[string]uint64       // index dir path → folderID (dedup OpenFolder)
 	guid  guidStore               // the per-user GUID store, opened by name (#1711)
+
+	issuedMu sync.Mutex
+	issued   map[issuedUID]struct{} // handed out by AllocateUID, not yet appended
+}
+
+type issuedUID struct {
+	folderID uint64
+	uid      uint32
 }
 
 // folderState is one folder's fileindex in memory: mutations append to the log
@@ -565,6 +612,8 @@ type folderState struct {
 	mapMu   sync.Mutex
 	foldMu  sync.Mutex
 	current *indexMap
+	// pinned is the base image this state references (imagecache.go).
+	pinned *baseImage
 
 	// gone marks a folder deleted under this state; guarded by userIndex.mu.
 	gone bool
@@ -576,6 +625,10 @@ type folderState struct {
 	cacheGone   uint32
 	indexPath   string // <indexDir>/yarilo.index
 	volatileDir string // local dir for tmp files (empty = same as indexDir)
+	// log2MaxAge is how long a fold keeps the log it folded; zero keeps none.
+	log2MaxAge time.Duration
+	// log2Checked is when this state last looked at the kept log's age.
+	log2Checked time.Time
 
 	// intent is why this folder is being opened. A missing index means
 	// different things to the two answers.
@@ -585,8 +638,26 @@ type folderState struct {
 	// only where the only other copy is removed right after (#1524).
 	fsyncOnFlush bool
 
-	file     *mailindex.File // the wire-format snapshot
-	keywords keywordsHdr     // parsed keyword name registry
+	file        *mailindex.File    // the wire-format snapshot
+	recs        *mailindex.Records // the records, as chunks; file holds none
+	onBase      bool               // a view whose records are the base's, with no tail on them
+	recordsLeft bool               // file holds the header only; the next locked use reads all
+	// pending is the journal records deferred for chunks not loaded, in
+	// journal order; pendingUIDs the uids they append; countersUnknown the
+	// header counters they moved unseen; baseNextUID no base record reaches.
+	pending         [][]byte
+	pendingUIDs     map[uint32]struct{}
+	countersUnknown uint8
+	baseNextUID     uint32
+	pendingExpunge  bool // pending holds an expunge: pendingUIDs may name gone uids
+	// A view keeps pending as published; ensureRecords applies it once, under
+	// pendMu, to records of its own, and every read of recs follows it.
+	isView      bool
+	pendMu      sync.Mutex
+	applied     atomic.Bool
+	loading     bool        // loadWriterRecords is running; a call from inside it returns at once
+	headerFixed bool        // the header was corrected from records in memory
+	keywords    keywordsHdr // parsed keyword name registry
 
 	// flushes counts base rewrites, so a transaction can tell whether one
 	// happened while it was applying its own ops (#1831).
@@ -601,6 +672,13 @@ type folderState struct {
 	// baseIdent is compared by inode+device: coarse mtime hides a same-tick
 	// replace, and reload()'s fast path would trust a stale snapshot.
 	baseIdent os.FileInfo
+	// baseFrom is how this state took its base (open, reload, adopt, flush,
+	// fresh): the label a stale base is counted under.
+	baseFrom string
+	// countersChecked says the header was held to the records once since the
+	// state took its base: later writes move both by increments and are not
+	// counted again.
+	countersChecked bool
 
 	// logFD stays open so an append costs one write(2). Callers must
 	// closeFDs() before anything that replaces the file on disk.
@@ -675,6 +753,7 @@ func (fs *folderState) sinceLastFold() time.Duration {
 // compactLogIfNeeded flushes and resets the log once it crosses the thresholds.
 // Errors are non-fatal; the log stays larger. Caller holds fs.mu.
 func (u *userIndex) compactLogIfNeeded(fs *folderState) {
+	fs.pruneKeptLogSometimesLocked()
 	min := u.b.logCompactMinBytes
 	if min == 0 {
 		return // compaction disabled
@@ -704,7 +783,7 @@ func (u *userIndex) compactLogIfNeeded(fs *folderState) {
 		return
 	}
 	fs.closeFDs()
-	if err := truncateLogLineage(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage); err != nil {
+	if err := rotateLog(fs.indexPath, fs.file.Header.IndexID, fs.lineage.Lineage, fs.logStartModSeq(), fs.log2MaxAge > 0); err != nil {
 		slog.Warn("fileindex: log compaction truncate failed", "folder", fs.folder, "err", err)
 		return
 	}
@@ -785,6 +864,16 @@ func (u *userIndex) folderVolatileDir(folder string) string {
 // what to rewrite or delete stays locked: a stale answer there does not become
 // visible a moment later, it decides wrongly and the write lands anyway (#1249).
 func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) error) error {
+	return u.withFolderUnlocked(folderID, false, fn)
+}
+
+// withFolderHeaderUnlocked is withFolderROUnlocked for a read of the header
+// alone: a view leaves the chunks a tail touched on disk (INDEX-MEMORY.md §4).
+func (u *userIndex) withFolderHeaderUnlocked(folderID uint64, fn func(*folderState) error) error {
+	return u.withFolderUnlocked(folderID, true, fn)
+}
+
+func (u *userIndex) withFolderUnlocked(folderID uint64, headerOnly bool, fn func(*folderState) error) error {
 	whole := time.Now()
 	defer func() { metricReadSeconds.Observe(time.Since(whole).Seconds()) }()
 
@@ -792,7 +881,7 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	if err != nil {
 		return err
 	}
-	if !fs.canReadUnlocked() {
+	if !fs.canReadUnlocked() || lockedReadsSeam {
 		// Counted apart: this is the migration not having reached this folder,
 		// not a read that wanted the lock.
 		return u.withFolderROSite(folderID, lockSiteFallback, fn)
@@ -802,7 +891,7 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 	reloadStart := time.Now()
 	view, release, err := fs.openView()
 	observeReadPart("reload", time.Since(reloadStart))
-	if errors.Is(err, errBaseMoving) {
+	if errors.Is(err, errBaseMoving) || errors.Is(err, mailindex.ErrBaseMoved) {
 		return u.withFolderROSite(folderID, lockSiteFallback, fn)
 	}
 	if err != nil {
@@ -814,12 +903,33 @@ func (u *userIndex) withFolderROUnlocked(folderID uint64, fn func(*folderState) 
 		}
 		return u.evictIfGone(folderID, fs, err)
 	}
-	defer release()
+	if view.onBase {
+		// Only a view the base alone holds: a handle dropping its records
+		// under one with a tail would read the base whole on every write.
+		fs.leaveRecordsOnDisk()
+	}
 	buildStart := time.Now()
-	ferr := fn(view)
+	ferr := error(nil)
+	if !headerOnly {
+		ferr = view.ensureRecords()
+	}
+	if ferr == nil {
+		ferr = fn(view)
+	}
 	observeReadPart("build", time.Since(buildStart))
+	release()
+	if errors.Is(ferr, mailindex.ErrBaseMoved) {
+		// The base went from under a lazy load: forget it and answer from the
+		// one the path names now (INDEX-MEMORY.md §4).
+		fs.dropView(view)
+		return u.withFolderROSite(folderID, lockSiteFallback, fn)
+	}
 	return ferr
 }
+
+// lockedReadsSeam is a test seam: every read takes the locked path, the
+// writer's records, so a row can compare it with the views. False elsewhere.
+var lockedReadsSeam bool
 
 // canReadUnlocked reports whether this folder's files carry the pairing a
 // lock-free read stands on. Per read: a folder gains it mid-session.
@@ -899,10 +1009,14 @@ func (u *userIndex) Close() error {
 	u.mu.Lock()
 	for _, fs := range u.open {
 		fs.closeFDs()
+		fs.unpinImage()
 	}
 	u.open = nil
 	u.byDir = nil
 	u.mu.Unlock()
+	u.guid.mu.Lock()
+	u.guid.retireLookupLocked()
+	u.guid.mu.Unlock()
 	return nil
 }
 
@@ -926,6 +1040,7 @@ func (u *userIndex) RenameFolder(oldName, newName string) error {
 		for id, fs := range u.open {
 			if fs.folder == oldName {
 				fs.closeFDs()
+				fs.unpinImage()
 				delete(u.open, id)
 			}
 		}
@@ -974,7 +1089,7 @@ func (u *userIndex) DeleteFolder(folder string) error {
 		if guid == ([16]byte{}) {
 			// Not open here: read the identity off the file rather than leave
 			// the folder's copies in the store for ever.
-			if f, ferr := mailindex.Open(filepath.Join(dir, IndexFileName)); ferr == nil {
+			if f, _, ferr := mailindex.OpenLazy(filepath.Join(dir, IndexFileName)); ferr == nil {
 				if ext := findExt(f.Extensions, extNameDboxHdr); ext != nil {
 					if hdr, herr := decodeDboxHdr(ext.HdrData); herr == nil {
 						guid = hdr.MailboxGUID
@@ -1051,24 +1166,30 @@ func imapFlagsToIndex(flags []string) uint8 {
 // indexFlagsToIMAP is the inverse: per-record flag byte → IMAP
 // flag list (stable order, useful for tests).
 func indexFlagsToIMAP(b uint8) []string {
-	var flags []string
-	if b&flagAnswered != 0 {
-		flags = append(flags, `\Answered`)
-	}
-	if b&flagFlagged != 0 {
-		flags = append(flags, `\Flagged`)
-	}
-	if b&flagDeleted != 0 {
-		flags = append(flags, `\Deleted`)
-	}
-	if b&flagSeen != 0 {
-		flags = append(flags, `\Seen`)
-	}
-	if b&flagDraft != 0 {
-		flags = append(flags, `\Draft`)
-	}
-	return flags
+	return imapFlagSets[b&(flagAnswered|flagFlagged|flagDeleted|flagSeen|flagDraft)]
 }
+
+// imapFlagSets is every set of system flags as one shared, read-only slice, by
+// the record's flag bits: one per record was a fifth of a walk (#2661). Their
+// capacity is their length, so a caller that appends gets a copy.
+var imapFlagSets = func() (out [256][]string) {
+	order := []struct {
+		bit  uint8
+		name string
+	}{{flagAnswered, `\Answered`}, {flagFlagged, `\Flagged`}, {flagDeleted, `\Deleted`}, {flagSeen, `\Seen`}, {flagDraft, `\Draft`}}
+	for set := 1; set < 256; set++ {
+		var f []string
+		for _, o := range order {
+			if uint8(set)&o.bit != 0 {
+				f = append(f, o.name)
+			}
+		}
+		if f != nil {
+			out[set] = f[:len(f):len(f)]
+		}
+	}
+	return out
+}()
 
 // seqSetContains reports whether uid falls in the set; an empty one matches
 // everything, the "give me all records" idiom.
@@ -1195,7 +1316,7 @@ func migrateLegacyFilenames(indexDir string) error {
 
 // ensureLogStub writes an empty .log if none exists: the canonical reader fails
 // hard when .index is present without it, even though Recreate never appends.
-func ensureLogStub(indexPath, volatileDir string, indexID, lineage uint32) error {
+func ensureLogStub(indexPath, volatileDir string, indexID, lineage uint32, initial uint64) error {
 	logPath := indexPath + ".log"
 	if _, err := os.Stat(logPath); err == nil {
 		return nil
@@ -1214,7 +1335,8 @@ func ensureLogStub(indexPath, volatileDir string, indexID, lineage uint32) error
 	}
 	// The stub announces the base it belongs to: carrying the old constant it
 	// would pair with nothing, leaving the folder unprovable until an append.
-	hdr := mailindex.NewLogHeader(indexID, lineage, uint32(time.Now().Unix()))
+	hdr := mailindex.NewLogHeader(indexID, lineage, uint32(nowUnix()))
+	hdr.InitialModSeq = initial
 	if err := hdr.Encode(f); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)

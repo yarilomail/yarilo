@@ -36,6 +36,7 @@ spec:
           image: {{ include "yarilo.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
+            {{- include "yarilo.goMemLimitEnv" (.Values.components.backendAPI.resources) | nindent 12 }}
             - name: YARILO_COMPONENT
               value: "yarilo-backend-api"
             {{- include "yarilo.redisPasswordEnv" . | nindent 12 }}
@@ -101,6 +102,7 @@ spec:
               mountPath: {{ .Values.storage.maildir_root }}
             {{- end }}
             {{- include "yarilo.internalTLSMount" (dict "root" $ "itls" .Values.components.backendAPI.internalTLS "role" "backend-api") | nindent 12 }}
+            {{- include "yarilo.mailCryptMount" $ | nindent 12 }}
             {{- include "yarilo.adminTLSMount" (dict "root" $ "role" "admin") | nindent 12 }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
@@ -110,13 +112,14 @@ spec:
           configMap:
             name: {{ include "yarilo.fullname" . }}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {{ include "yarilo.tmpEmptyDir" $ }}
         {{- if .Values.storage.persistence.enabled }}
         - name: mail
           persistentVolumeClaim:
             claimName: {{ include "yarilo.fullname" . }}-mail
         {{- end }}
         {{- include "yarilo.internalTLSVolume" (dict "root" $ "itls" .Values.components.backendAPI.internalTLS "role" "backend-api") | nindent 8 }}
+        {{- include "yarilo.mailCryptVolume" $ | nindent 8 }}
         {{- include "yarilo.adminTLSVolume" (dict "root" $ "role" "admin") | nindent 8 }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

@@ -105,11 +105,9 @@ func TestReferencesAreReadInEveryShapeClientsSend(t *testing.T) {
 	}
 }
 
-// Folding is what the cache exists to avoid, so a second delivery to the same
-// account must not fold again. The recorder has to tell the cache about its own
-// write for that to hold -- and without that call the fold happens on every
-// delivery, silently, which is the O(account)-per-message trap wearing the
-// cache as a disguise.
+// A delivery does not fold the account at all: it searches the pair of base
+// and log (#2641). Zero folds for two deliveries; one would be the
+// O(account)-per-message trap on a log too small for the slope row to see.
 func TestASecondRecordDoesNotFoldAgain(t *testing.T) {
 	cache := NewCache(time.Minute)
 	rec := NewRecorder(cache)
@@ -121,8 +119,8 @@ func TestASecondRecordDoesNotFoldAgain(t *testing.T) {
 	if _, err := rec.Record("u@example.com", path, "guid-2", rawMessage("b@x", "a@x", "", "Re: One")); err != nil {
 		t.Fatal(err)
 	}
-	if got := cache.Folds(); got != 1 {
-		t.Errorf("folds = %d for two deliveries, want 1", got)
+	if got := cache.Folds(); got != 0 {
+		t.Errorf("folds = %d for two deliveries, want 0", got)
 	}
 }
 

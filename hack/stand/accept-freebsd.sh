@@ -17,6 +17,9 @@ set -Eeuo pipefail
 trap 'rc=$?; echo "accept-freebsd: line $LINENO: $BASH_COMMAND exited $rc" >&2' ERR
 
 VERSION="${1:?module version}"
+# The port's DISTVERSION carries no v (DISTVERSIONPREFIX adds it), and the
+# proxy paths below add their own: a v given here is taken off once.
+VERSION="${VERSION#v}"
 SMOKE_SRC="${2:?smoketest binary}"
 OUT="${3:?output directory}"
 PORT="${ACCEPT_PORT:-/usr/ports/mail/yarilo}"
@@ -27,8 +30,21 @@ CLIENT="${ACCEPT_CLIENT_USER:-support}"
 CA="${ACCEPT_CA:-/home/$CLIENT/host-cert.pem}"
 IMAPTEST="${ACCEPT_IMAPTEST:-/home/$CLIENT/imaptest/src/imaptest}"
 MBOX="${ACCEPT_MBOX:-/home/$CLIENT/test.mbox}"
-PROCS="${ACCEPT_PROCS:-17}"
+# yarilo processes: the components, the log process and yarilo-master (#2715).
+PROCS="${ACCEPT_PROCS:-19}"
+# CPU of the supervisor and of the log process over the imaptest part, at
+# info: measured on the host at 0.4-0.7 % and 2.1-4.3 % (2026-11-26).
+MASTER_CPU_MAX="${ACCEPT_MASTER_CPU_MAX:-3}"
+LOG_CPU_MAX="${ACCEPT_LOG_CPU_MAX:-15}"
+# The hard open-files limit a session process must keep: by default the
+# kernel's per-process limit, read at the run, since the kernel sets it at
+# boot from the memory (116928 before a reboot of the host, 116919 after).
+MIN_NOFILE="${ACCEPT_MIN_NOFILE:-$(sysctl -n kern.maxfilesperproc)}"
+MASTER_METRICS="${ACCEPT_MASTER_METRICS:-http://127.0.0.1:18079/metrics}"
 CLOCK_MAX_MS="${ACCEPT_CLOCK_MAX_MS:-1000}"
+# Both whole-server stalls on the host came with 12 % free and none of the
+# runs with 44 % free (#2715); no run lies between.
+DISK_MIN_FREE_PCT="${ACCEPT_DISK_MIN_FREE_PCT:-25}"
 
 # A run never writes over another run's evidence.
 [ -e "$OUT" ] && { echo "accept-freebsd: $OUT exists; pick a new directory" >&2; exit 2; }
@@ -74,7 +90,52 @@ verdict() {
 }
 
 as_client() { su -m "$CLIENT" -c "$*"; }
-running() { service yarilo status 2>&1 | grep -c 'is running' || true; }
+# Components the supervisor reports running; status lines are tab-separated
+# fields: name, state, pid, uptime, restarts, why.
+# status exits 1 while a component is down; under pipefail that must not end
+# the run, so each reader below ends in "|| true".
+running() { { service yarilo status 2>/dev/null || true; } | awk -F'\t' '$2 == "running"' | wc -l | tr -d ' '; }
+# The supervisor is /usr/local/sbin/yarilo-master; daemon(8) writes its pid.
+MASTER_PIDFILE="${ACCEPT_MASTER_PIDFILE:-/var/run/yarilo/master.pid}"
+# Empty while there is none, as just after a kill; never a failure, which
+# set -e would end the run on.
+master_pid() {
+  local pid
+  pid=$(cat "$MASTER_PIDFILE" 2>/dev/null || true)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "$pid"; fi
+  return 0
+}
+log_pid() { pgrep -f '^/usr/local/sbin/yarilo-master log' | head -1 || true; }
+# Every yarilo process: the components in libexec, the log process, and the
+# supervisor.
+yarilo_procs() {
+  local n
+  n=$(ps -axo command | grep -cE '^/usr/local/libexec/yarilo/yarilo-' || true)
+  [ -n "$(master_pid)" ] && n=$((n + 1))
+  [ -n "$(log_pid)" ] && n=$((n + 1))
+  echo "$n"
+}
+cpu_s() { ps -o time= -p "$1" 2>/dev/null | awk '{n=split($1,a,":"); s=0; for(i=1;i<=n;i++) s=s*60+a[i]; print s+0}'; }
+# starts: every component process with its start time, one a line.
+starts() { ps -axo pid,lstart,command | grep -E '/usr/local/libexec/yarilo/yarilo-' | grep -v grep | sort; }
+# comp_uptime name: seconds the component has run, from status.
+comp_uptime() { { service yarilo status "$1" 2>/dev/null || true; } | awk -F'\t' -v c="$1" '$1 == c {print $4}'; }
+comp_pid() { { service yarilo status "$1" 2>/dev/null || true; } | awk -F'\t' -v c="$1" '$1 == c {print $3}'; }
+restarts_metric() {
+  { curl -s "$MASTER_METRICS" || true; } | awk -v c="$1" -v r="$2" \
+    'index($0, "yarilo_master_restarts_total{") == 1 && index($0, "component=\"" c "\"") && index($0, "reason=\"" r "\"") {print $2}' | head -1
+}
+# up_within N name...: every named component is running within N seconds.
+up_within() {
+  local n="$1" c ok; shift
+  for _ in $(seq 1 $((n * 10))); do
+    ok=1
+    for c in "$@"; do service yarilo status "$c" > /dev/null 2>&1 || ok=0; done
+    [ "$ok" = 1 ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
 imap_start() { ps -axo lstart,command | grep '[l]ibexec/yarilo/yarilo-imap$' | head -1; }
 
 # imaps sends the IMAP stream on stdin and prints the replies. The stream comes
@@ -130,19 +191,45 @@ smoke_part() {
 date -u +"start %FT%TZ" > "$OUT/times"
 cp "$CONF" "$OUT/yarilo.yaml.start"
 cp "$RCCONF" "$OUT/rc.conf.start"
+# The owner and mode go back as they were: yarilo.yaml is root:yarilo-auth
+# 0640, and a run that left it 0644 failed the next run's log-process row.
+set -- $(stat -f '%Su %Sg %Lp' "$CONF")
+conf_owner=$1 conf_group=$2 conf_mode=$3
+set -- $(stat -f '%Su %Sg %Lp' "$RCCONF")
+rc_owner=$1 rc_group=$2 rc_mode=$3
 restore() {
-  install -m 0644 -o root -g wheel "$OUT/yarilo.yaml.start" "$CONF"
-  install -m 0644 "$OUT/rc.conf.start" "$RCCONF"
+  install -m "$conf_mode" -o "$conf_owner" -g "$conf_group" "$OUT/yarilo.yaml.start" "$CONF"
+  install -m "$rc_mode" -o "$rc_owner" -g "$rc_group" "$OUT/rc.conf.start" "$RCCONF"
   service yarilo restart > /dev/null 2>&1 || true
 }
 trap restore EXIT
 
 echo "== clock"
-off=$(ntpq -pn 2>/dev/null | awk '/^\*/{print $9}')
-if [ -n "$off" ] && awk -v o="$off" -v m="$CLOCK_MAX_MS" 'BEGIN{exit !(o < m && o > -m)}'; then
-  verdict "clock in sync" ok "ntpd offset ${off} ms"
+# chronyd when it runs (the host steps a paused VM's clock with it), else ntpd.
+if command -v chronyc > /dev/null 2>&1 && chronyc -c tracking > /dev/null 2>&1; then
+  src=chronyd
+  off=$(chronyc -c tracking | awk -F, '$14 == "Normal" {printf "%.3f", $5 * 1000}')
 else
-  verdict "clock in sync" fail "ntpd offset '${off:-none}' ms, date $(date -u +%FT%TZ)"
+  src=ntpd
+  off=$(ntpq -pn 2>/dev/null | awk '/^\*/{print $9}')
+fi
+if [ -n "$off" ] && awk -v o="$off" -v m="$CLOCK_MAX_MS" 'BEGIN{exit !(o < m && o > -m)}'; then
+  verdict "clock in sync" ok "$src offset ${off} ms"
+else
+  verdict "clock in sync" fail "$src offset '${off:-none}' ms, date $(date -u +%FT%TZ)"
+fi
+
+echo "== disk"
+# Every file system the mail, the state and the logs live on, and / (the
+# figures in #2715 are df /), each once.
+free=$(df -kP / /var/mail/vhosts /var/db/yarilo /var/log/yarilo 2>/dev/null | awk 'NR > 1 && !seen[$6]++ {
+  printf "%s%s %d%%", sep, $6, 100 - $5; sep = ", "
+  if (100 - $5 < min || min == "") min = 100 - $5
+} END {print "|" min}')
+if [ -n "${free#*|}" ] && [ "${free#*|}" -ge "$DISK_MIN_FREE_PCT" ]; then
+  verdict "free space at least ${DISK_MIN_FREE_PCT} %" ok "${free%|*} free"
+else
+  verdict "free space at least ${DISK_MIN_FREE_PCT} %" fail "${free%|*} free"
 fi
 
 echo "== port"
@@ -177,8 +264,160 @@ install -o "$CLIENT" -m 755 "$SMOKE_SRC" "$SMOKE"
 echo "== restart on the installed binaries"
 service yarilo restart > /dev/null 2>&1 || true
 sleep 6
-n=$(running)
-[ "$n" = "$PROCS" ] && verdict "processes running" ok "$n" || verdict "processes running" fail "$n of $PROCS: $(service yarilo status 2>&1 | grep -v 'is running' | tr '\n' ' ')"
+n=$(running); p=$(yarilo_procs)
+[ "$n" = "$((PROCS - 1))" ] && [ "$p" = "$PROCS" ] && verdict "processes running" ok "$n components and yarilo-master" ||
+  verdict "processes running" fail "$n components running of $((PROCS - 1)), $p yarilo processes of $PROCS: $(service yarilo status 2>&1 | awk -F'\t' '$2 != "running"' | tr '\n' ' ')"
+
+echo "== yarilo-master"
+service yarilo status > "$OUT/logs/master-status.start" 2>&1 || true
+mpid=$(master_pid)
+# No component runs as root, real or effective; only yarilo-master does.
+rootc=$(ps -axo uid,ruid,command | awk '$3 ~ /^\/usr\/local\/libexec\/yarilo\/yarilo-/ && ($1 == 0 || $2 == 0)' | wc -l | tr -d ' ')
+[ "$rootc" = 0 ] && [ -n "$mpid" ] && [ "$(ps -o uid= -p "$mpid" | tr -d ' ')" = 0 ] &&
+  verdict "only yarilo-master runs as root" ok "master pid $mpid" ||
+  verdict "only yarilo-master runs as root" fail "components as root: $rootc, master pid '${mpid:-none}'"
+
+# The log process runs as yarilo-log, which may not read yarilo.yaml.
+lpid=$(log_pid)
+luser=$(ps -o user= -p "${lpid:-0}" 2>/dev/null | tr -d ' ')
+if [ -n "$lpid" ] && [ "$luser" = yarilo-log ] && ! su -m yarilo-log -c "cat $CONF" > /dev/null 2>&1; then
+  verdict "the log process cannot read yarilo.yaml" ok "pid $lpid as yarilo-log, $CONF refused"
+else
+  verdict "the log process cannot read yarilo.yaml" fail "log pid '${lpid:-none}' as '${luser:-?}', or yarilo-log reads $CONF"
+fi
+
+# kill -KILL of the log process: it is back within 1 s, and no component
+# restarted, their start times all unchanged.
+starts > "$OUT/logs/starts-before-log-kill.txt"
+kill -KILL "$lpid" 2>/dev/null || true
+back=""
+for _ in $(seq 1 10); do
+  back=$(log_pid)
+  [ -n "$back" ] && [ "$back" != "$lpid" ] && break
+  sleep 0.1
+done
+sleep 1
+starts > "$OUT/logs/starts-after-log-kill.txt"
+if [ -n "$back" ] && [ "$back" != "$lpid" ] && cmp -s "$OUT/logs/starts-before-log-kill.txt" "$OUT/logs/starts-after-log-kill.txt"; then
+  verdict "log process killed comes back" ok "pid $lpid -> $back within 1 s; every component kept its start time"
+else
+  verdict "log process killed comes back" fail "log pid '${back:-none}' (was $lpid); components $(diff "$OUT/logs/starts-before-log-kill.txt" "$OUT/logs/starts-after-log-kill.txt" | grep -c '^>') changed"
+fi
+
+ipid=$(comp_pid imap)
+procstat -e "$ipid" > "$OUT/logs/imap-env.txt" 2>&1 || true
+procstat -l "$ipid" > "$OUT/logs/imap-limits.txt" 2>&1 || true
+# master_environment as "NAME=value" lines, from a block map or a one-line
+# flow map; any other form stops the run, not a criterion.
+master_env() {
+  awk '
+    /^[^[:space:]#]/ { m = ($0 ~ /^master:/); e = 0 }
+    m && /^[[:space:]]+master_environment:/ {
+      line = $0; sub(/^[^:]*:[[:space:]]*/, "", line)
+      if (line ~ /^\{.*\}[[:space:]]*$/) {
+        gsub(/^\{|\}[[:space:]]*$/, "", line); n = split(line, kv, ",")
+        for (i = 1; i <= n; i++) { k = kv[i]; v = kv[i]; sub(/:.*/, "", k); sub(/^[^:]*:/, "", v)
+          gsub(/[[:space:]"'"'"']/, "", k); gsub(/^[[:space:]]+|[[:space:]]+$|["'"'"']/, "", v); if (k != "") print k "=" v }
+        next
+      }
+      if (line == "" ) { e = 1; next }
+      print "UNREADABLE"; next
+    }
+    e && /^[[:space:]][[:space:]][[:space:]][[:space:]][A-Za-z_][A-Za-z0-9_]*:/ { k = $0; v = $0; sub(/:.*/, "", k); sub(/^[^:]*:/, "", v)
+      gsub(/[[:space:]]/, "", k); gsub(/^[[:space:]]+|[[:space:]]+$|["'"'"']/, "", v); print k "=" v; next }
+    e && !/^[[:space:]][[:space:]][[:space:]][[:space:]]/ { e = 0 }
+  ' "$CONF"
+}
+menv=$(master_env)
+case "$menv" in *UNREADABLE*) echo "accept-freebsd: master_environment in $CONF is neither a block nor a one-line map" >&2; exit 2 ;; esac
+want_gmp=$(printf '%s\n' "$menv" | sed -n 's/^GOMAXPROCS=//p' | head -1)
+# Unset in master_environment, the supervisor gives the default, 2.
+gmp_from="master_environment"
+[ -z "$want_gmp" ] && { want_gmp=2; gmp_from="the default"; }
+if grep -qw "GOMAXPROCS=$want_gmp" "$OUT/logs/imap-env.txt"; then
+  verdict "GOMAXPROCS from master_environment, else 2" ok "GOMAXPROCS=$want_gmp in yarilo-imap, from $gmp_from"
+else
+  verdict "GOMAXPROCS from master_environment, else 2" fail "yarilo-imap lacks GOMAXPROCS=$want_gmp from $gmp_from (logs/imap-env.txt)"
+fi
+# Only the variables yarilo-master gives: its fixed four, GOMAXPROCS, which it
+# always gives, and master_environment.
+allowed="PATH CONFIG LOG_LEVEL TELEMETRY_LISTEN GOMAXPROCS $(printf '%s\n' "$menv" | cut -d= -f1 | tr '\n' ' ')"
+extra=$(tail -n +2 "$OUT/logs/imap-env.txt" | tr ' ' '\n' | grep '=' | cut -d= -f1 | sort -u | while read -r v; do
+  case " $allowed " in (*" $v "*) ;; (*) printf '%s ' "$v" ;; esac
+done)
+[ -z "$extra" ] && verdict "a component's environment is its own" ok "only: $allowed" ||
+  verdict "a component's environment is its own" fail "yarilo-imap also has: $extra"
+nofile=$(awk '$3 == "openfiles" {print $5}' "$OUT/logs/imap-limits.txt" | head -1)
+if [ -n "$nofile" ] && { [ "$nofile" = infinity ] || [ "$nofile" -ge "$MIN_NOFILE" ]; }; then
+  verdict "open-files limit kept" ok "hard $nofile >= $MIN_NOFILE"
+else
+  verdict "open-files limit kept" fail "hard ${nofile:-?} < $MIN_NOFILE (logs/imap-limits.txt)"
+fi
+
+# A kill of a component that has worked: back at once (within 1 s), under the
+# same supervisor, counted once. Then a kill of the same one, now young: back
+# after the first backoff (2 s), within 4 s.
+for c in pop3-login imap; do
+  for _ in $(seq 1 90); do [ "$(comp_uptime "$c")" -ge 61 ] 2>/dev/null && break; sleep 1; done
+  before=$(restarts_metric "$c" signal); before=${before:-0}
+  pid=$(comp_pid "$c")
+  kill -KILL "$pid" 2>/dev/null || true
+  if up_within 1 "$c" && [ "$(comp_pid "$c")" != "$pid" ]; then
+    after=$(restarts_metric "$c" signal); after=${after:-0}
+    [ "$(master_pid)" = "$mpid" ] && [ "$((after - before))" = 1 ] &&
+      verdict "$c that worked comes back at once" ok "within 1 s of kill -KILL, same supervisor, restarts{signal} +1" ||
+      verdict "$c that worked comes back at once" fail "supervisor $(master_pid) (was $mpid), restarts{signal} $before -> $after"
+  else
+    verdict "$c that worked comes back at once" fail "not running 1 s after kill -KILL of $pid (uptime was 60 s+): $(service yarilo status "$c" 2>&1)"
+  fi
+  pid=$(comp_pid "$c")
+  t0=$(date +%s)
+  kill -KILL "$pid" 2>/dev/null || true
+  if up_within 4 "$c" && [ "$(comp_pid "$c")" != "$pid" ]; then
+    waited=$(( $(date +%s) - t0 ))
+    [ "$waited" -ge 1 ] && verdict "$c that died young waits" ok "back after ${waited} s" ||
+      verdict "$c that died young waits" fail "back after ${waited} s; the 2 s backoff was skipped"
+  else
+    verdict "$c that died young waits" fail "not running 4 s after the second kill: $(service yarilo status "$c" 2>&1)"
+  fi
+done
+
+# stop keeps one down, start brings it back.
+service yarilo stop imap > /dev/null 2>&1 || true
+sleep 3
+if ! service yarilo status imap > /dev/null 2>&1 && ! pgrep -qf '^/usr/local/libexec/yarilo/yarilo-imap$'; then
+  service yarilo start imap > /dev/null 2>&1 || true
+  up_within 10 imap && verdict "stop and start one component" ok "imap stayed down, then came back" ||
+    verdict "stop and start one component" fail "imap not back after start: $(service yarilo status imap 2>&1)"
+else
+  verdict "stop and start one component" fail "imap still up after stop: $(service yarilo status imap 2>&1)"
+fi
+
+# reopen: after a rename the log goes to a new file.
+mv /var/log/yarilo/imap-login.log /var/log/yarilo/imap-login.log.accept
+service yarilo reopen > /dev/null 2>&1 || true
+printf 'a LOGIN u1@d00001.test %s\r\nz LOGOUT\r\n' "$PASS" | imaps 2 > /dev/null
+sleep 2
+[ -s /var/log/yarilo/imap-login.log ] && verdict "reopen writes a new log file" ok "imap-login.log written after the rename" ||
+  verdict "reopen writes a new log file" fail "no new imap-login.log after reopen"
+cat /var/log/yarilo/imap-login.log.accept >> "$OUT/logs/imap-login.before-reopen.log" 2>/dev/null || true
+rm -f /var/log/yarilo/imap-login.log.accept
+
+# The supervisor killed: daemon -r starts a new one, which stops what the old
+# one left and starts one of everything.
+kill -KILL "$mpid" 2>/dev/null || true
+new=""
+for _ in $(seq 1 30); do
+  new=$(master_pid)
+  [ -n "$new" ] && [ "$new" != "$mpid" ] && [ "$(running)" = "$((PROCS - 1))" ] && break
+  sleep 1
+done
+sleep 2
+p=$(yarilo_procs)
+[ -n "$new" ] && [ "$new" != "$mpid" ] && [ "$(running)" = "$((PROCS - 1))" ] && [ "$p" = "$PROCS" ] &&
+  verdict "yarilo-master killed comes back" ok "new supervisor $new, $p yarilo processes, none doubled" ||
+  verdict "yarilo-master killed comes back" fail "supervisor '${new:-none}' (was $mpid), running $(running), processes $p of $PROCS"
+service yarilo status > "$OUT/logs/master-status.end" 2>&1 || true
 imap_start > "$OUT/imap-start.fts"
 
 echo "== smoketest with FTS"
@@ -214,6 +453,7 @@ grep -q "\"$mark\"" "$OUT/logs/metadata.log" && [ "$oks" = 4 ] && verdict "METAD
   verdict "METADATA round trip" fail "ok=$oks of 4 (LOGOUT included), value $(grep -c "$mark" "$OUT/logs/metadata.log" || true)"
 
 echo "== imaptest, one type at a time"
+cm=$(master_pid); cl=$(log_pid); m0=$(cpu_s "$cm"); l0=$(cpu_s "$cl"); t0=$(date +%s)
 for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do
   dom=${spec%%:*}
   as_client "$IMAPTEST host=127.0.0.1 port=143 user=u%d@$dom users=${spec##*:} pass='$PASS' clients=50 msgs=500 secs=90 mbox=$MBOX" > "$OUT/logs/imaptest-$dom.log" 2>&1 || true
@@ -223,6 +463,25 @@ for spec in d00001.test:3-20 d00002.test:53-70 d00003.test:103-120; do
   [ "$errors" = 0 ] && [ "$stalls" = 0 ] && [ -n "$logins" ] && verdict "imaptest $dom" ok "logins=$logins" ||
     verdict "imaptest $dom" fail "errors=$errors stalled=$stalls logins=${logins:-?}"
 done
+t1=$(date +%s)
+mc=$(awk -v a="$m0" -v b="$(cpu_s "$cm")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", (t > 0 ? (b - a) / t * 100 : 0) }')
+lc=$(awk -v a="$l0" -v b="$(cpu_s "$cl")" -v t=$((t1 - t0)) 'BEGIN { printf "%.1f", (t > 0 ? (b - a) / t * 100 : 0) }')
+# A process that went away during the part reads as no CPU at all: a restart
+# under load is what the run is there to catch, so a changed pid fails.
+if [ -z "$cm" ] || [ "$(master_pid)" != "$cm" ]; then
+  verdict "supervisor CPU during imaptest" fail "the supervisor changed or went away during imaptest: $cm -> $(master_pid)"
+elif awk -v c="$mc" -v m="$MASTER_CPU_MAX" 'BEGIN { exit !(c >= 0 && c < m) }'; then
+  verdict "supervisor CPU during imaptest" ok "$mc % (< $MASTER_CPU_MAX %)"
+else
+  verdict "supervisor CPU during imaptest" fail "$mc %, limit $MASTER_CPU_MAX %"
+fi
+if [ -z "$cl" ] || [ "$(log_pid)" != "$cl" ]; then
+  verdict "log process CPU during imaptest" fail "the log process changed or went away during imaptest: $cl -> $(log_pid)"
+elif awk -v c="$lc" -v m="$LOG_CPU_MAX" 'BEGIN { exit !(c >= 0 && c < m) }'; then
+  verdict "log process CPU during imaptest" ok "$lc % (< $LOG_CPU_MAX %)"
+else
+  verdict "log process CPU during imaptest" fail "$lc %, limit $LOG_CPU_MAX %"
+fi
 
 echo "== FTS short tokens"
 U=u101@d00003.test; T=$(date +%s)
@@ -268,8 +527,14 @@ awk '/^[^[:space:]#]/ { in_fts = ($0 ~ /^fts:/) } in_fts && /^  enabled: true$/ 
 changed=$(diff "$OUT/yarilo.yaml.start" "$CONF" | grep -c '^[<>]' || true)
 [ "$changed" = 2 ] && verdict "FTS off changes one line" ok "fts.enabled false" ||
   verdict "FTS off changes one line" fail "$changed changed lines, want 2 (one out, one in)"
-sed 's/ fts / /' "$OUT/rc.conf.start" > "$RCCONF"
-service yarilo stop fts > /dev/null 2>&1 || true
+# The component list is master_components now: fts leaves it, as a flow list
+# (one line) or a block list (a "- fts" item).
+awk '/^[^[:space:]#]/ { in_master = ($0 ~ /^master:/) }
+  in_master && /master_components:.*\[/ { gsub(/, *fts *,/, ","); gsub(/\[ *fts *, */, "["); gsub(/, *fts *\]/, "]") }
+  in_master && /^[[:space:]]+- *fts[[:space:]]*$/ { next }
+  { print }' "$CONF" > "$CONF.nofts" && cat "$CONF.nofts" > "$CONF" && rm -f "$CONF.nofts"
+grep -A30 '^master:' "$CONF" | grep -qw fts && verdict "fts out of master_components" fail "fts still listed" ||
+  verdict "fts out of master_components" ok "fts removed"
 service yarilo restart > /dev/null 2>&1 || true
 sleep 5
 imap_start > "$OUT/imap-start.nofts"
@@ -283,7 +548,7 @@ trap - EXIT
 restore
 sleep 6
 n=$(running)
-cmp -s "$OUT/yarilo.yaml.start" "$CONF" && [ "$n" = "$PROCS" ] && verdict "run config restored" ok "$n running" ||
+cmp -s "$OUT/yarilo.yaml.start" "$CONF" && [ "$n" = "$((PROCS - 1))" ] && verdict "run config restored" ok "$n running" ||
   verdict "run config restored" fail "running=$n config $(cmp -s "$OUT/yarilo.yaml.start" "$CONF" && echo same || echo differs)"
 date -u +"end %FT%TZ" >> "$OUT/times"
 

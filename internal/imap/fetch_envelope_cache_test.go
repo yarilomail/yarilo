@@ -33,14 +33,16 @@ func startEnvelopeCacheServer(t *testing.T) (root, addr string) {
 	return root, ln.Addr().String()
 }
 
+const envelopeMsg = "From: Alice Liddell <alice@example.com>\r\n" +
+	"To: bob@example.com\r\n" +
+	"Subject: Тема з UTF-8\r\n" +
+	"Message-ID: <m1@example.com>\r\n" +
+	"Date: Mon, 02 Jan 2006 15:04:05 -0700\r\n\r\nhi\r\n"
+
 func appendEnvelopeMsg(t *testing.T, rc *rawConn) {
 	t.Helper()
 	rc.seq++
-	body := "From: Alice Liddell <alice@example.com>\r\n" +
-		"To: bob@example.com\r\n" +
-		"Subject: Тема з UTF-8\r\n" +
-		"Message-ID: <m1@example.com>\r\n" +
-		"Date: Mon, 02 Jan 2006 15:04:05 -0700\r\n\r\nhi\r\n"
+	body := envelopeMsg
 	tag := "e001"
 	rc.conn.Write([]byte(tag + " APPEND INBOX {" + itoa(len(body)) + "}\r\n"))
 	rc.readLine() // continuation

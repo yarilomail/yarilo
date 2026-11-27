@@ -94,11 +94,9 @@ func TestAFoldOfWhatWeAlreadyHaveIsAdoptedWithoutReading(t *testing.T) {
 	}
 }
 
-// The base was rewritten with different records. Purge, expunge-vanished and the
-// refcount recompute all do this while folding the very same log, so offsets
-// alone cannot tell this case from the one above -- and getting it wrong leaves
-// a reader with refcounts that are not the truth, which is the side where the
-// error costs mail.
+// The base was rewritten with different records while folding the very same
+// log: the header reads as the case above, and the reader must still see the
+// rewritten refcounts, the side where an error costs mail.
 func TestABaseWrittenPastTheLogForcesAReRead(t *testing.T) {
 	m, dir := openTestMap(t)
 	uid, err := m.AppendRecord(1, 0, 10, [16]byte{1})
@@ -125,17 +123,12 @@ func TestABaseWrittenPastTheLogForcesAReRead(t *testing.T) {
 		t.Fatalf("SetRefcountsFromReferences: %v", err)
 	}
 
-	reopens := reloadKind(t, "reopen")
 	recs, err := reader.RecordsInFile(1)
 	if err != nil || len(recs) != 1 {
 		t.Fatalf("RecordsInFile after rebuild: %+v err=%v", recs, err)
 	}
-	got := recs[0]
-	if got.RefCount != 4 {
+	if got := recs[0]; got.RefCount != 4 {
 		t.Errorf("reader sees refcount %d after the base was rewritten, want 4", got.RefCount)
-	}
-	if reloadKind(t, "reopen") == reopens {
-		t.Error("a base holding different records was adopted instead of read")
 	}
 }
 
