@@ -393,6 +393,15 @@ if [ -n "$wrong" ]; then
   exit 1
 fi
 
+# Every pod with its uid and each container's restart count, once the deploy
+# has settled and again at the end: a restart or a replacement under load cut
+# sessions, and the arm's files are the only place to read it afterwards.
+pod_state() {
+  kube get pods -l '!job-name' -o jsonpath='{range .items[*]}{.metadata.deletionTimestamp}|{.metadata.name} {.metadata.uid}{range .status.containerStatuses[*]} {.name}={.restartCount}{end}{"\n"}{end}' |
+    awk -F'|' '$1 == "" { print $2 }' | sort
+}
+pod_state > "$OUT/pods-$ARM-start.txt"
+
 # One domain per storage type (#1943): a single domain puts the whole stand on
 # one backend under assignment_policy: domain, which is the policy working and
 # a window measuring half a cluster. The ranges are the accounts the sandbox
@@ -860,6 +869,19 @@ done
 kube exec "$authpod" -- sh -c \
   'wget -qO- http://127.0.0.1:8080/metrics 2>/dev/null | grep -E "^yarilo_auth_request_seconds_(bucket|count|sum)\{.*verb=\"AUTH\""' \
   > "$OUT/auth-$ARM-after.txt"
+
+pod_state > "$OUT/pods-$ARM-end.txt"
+# Restarts are the sum of each container's count moving; a pod whose uid is
+# new was replaced, and one gone without a successor is counted as gone.
+awk '
+  FNR == NR { uid[$1] = $2; for (i = 3; i <= NF; i++) { split($i, kv, "="); rc[$1 SUBSEP kv[1]] = kv[2] }; next }
+  { seen[$1] = 1
+    if (!($1 in uid)) { added++; next }
+    if (uid[$1] != $2) { replaced++; next }
+    for (i = 3; i <= NF; i++) { split($i, kv, "="); d = kv[2] - rc[$1 SUBSEP kv[1]]; if (d > 0) { restarts += d; who = who " " $1 "/" kv[1] "+" d } } }
+  END { for (p in uid) if (!(p in seen)) gone++
+        printf "-- pods: restarts=%d replaced=%d new=%d gone=%d%s (pods-%s-start.txt, pods-%s-end.txt)\n", restarts, replaced, added, gone, who, arm, arm }
+' arm="$ARM" "$OUT/pods-$ARM-start.txt" "$OUT/pods-$ARM-end.txt" | tee "$OUT/pods-$ARM.txt"
 
 # Every container's log of every backend pod, kept before the next arm's
 # deploy replaces the pods: an imaptest error that did not fail the arm is
