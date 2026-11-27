@@ -45,10 +45,15 @@ idle_rate() {
 }
 
 # runs ns label pod container host
+#
+# The idle is read before the runs and again after them. A run's line gives
+# its raw CPU and ms a message beside the figure less the mean of the two
+# idles, and the pair says so when the two disagree: a single high idle
+# reading once made a limit look cheaper than no limit (docs-internal#318).
 runs() {
-  local base a b t0 t1 r u
-  base=$(idle_rate "$1")
-  echo "== $2 idle ${base} cpu/s" >> "$L"
+  local before after a b t0 t1 r u n rows=""
+  n=$(($(echo "$USERS" | wc -w) * MSGS))
+  before=$(idle_rate "$1")
   for r in $(seq 1 "$RUNS"); do
     a=$(ns_cpu "$1"); t0=$(date +%s)
     for u in $USERS; do
@@ -56,11 +61,31 @@ runs() {
     done
     sleep 20 # what the delivery queued (indexing, fts) lands in the window
     b=$(ns_cpu "$1"); t1=$(date +%s)
-    awk -v a="$a" -v b="$b" -v base="$base" -v d=$((t1 - t0)) -v r="$r" -v n="$(($(echo "$USERS" | wc -w) * MSGS))" 'BEGIN {
-      used = b - a - base * d
-      printf "  run %d: cpu_s=%.1f over %ds, less idle %.1f, ms a message %.1f\n", r, b - a, d, used, used * 1000 / n
-    }' >> "$L"
+    rows="$rows$r $a $b $((t1 - t0))
+"
   done
+  after=$(idle_rate "$1")
+  idle_lines "$2" "$before" "$after" "$n" "$rows" >> "$L"
+}
+
+# idle_lines label before after messages rows: the idle line, the warning when
+# the two idles disagree, and one line a run. rows: "run a b seconds" each.
+# Disagree means apart by more than a quarter of the larger and by more than
+# 0.02 CPU/s: below that the cadvisor reading itself moves as much.
+idle_lines() {
+  printf '%s' "$5" | awk -v label="$1" -v before="$2" -v after="$3" -v n="$4" '
+    BEGIN {
+      base = (before + after) / 2
+      printf "== %s idle before %.3f, after %.3f, mean %.3f cpu/s\n", label, before, after, base
+      hi = before > after ? before : after
+      gap = before > after ? before - after : after - before
+      if (gap > 0.02 && gap > hi / 4)
+        printf "== %s WARNING idle before and after disagree (%.3f against %.3f): the less-idle figures rest on a reading that moved; compare the raw ones\n", label, before, after
+    }
+    NF == 4 {
+      raw = $3 - $2; used = raw - base * $4
+      printf "  run %d: cpu_s=%.1f over %ds, raw ms a message %.1f, less idle %.1f, ms a message %.1f\n", $1, raw, $4, raw * 1000 / n, used, used * 1000 / n
+    }'
 }
 
 # login_metrics <file>: yarilo-lmtp-login's metrics page, through a forward.
